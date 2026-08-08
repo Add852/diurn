@@ -1,0 +1,20 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body {
+  @apply bg-zinc-950 text-zinc-100 min-h-screen;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+:root {
+  --vvh: 100dvh;
+}
+
+.chat-fill {
+  height: calc(var(--vvh) - 4rem - env(safe-area-inset-bottom, 0px));
+}
