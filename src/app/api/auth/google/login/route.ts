@@ -1,10 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireAuth } from "@/lib/auth";
 import { getActiveProfile } from "@/lib/db";
 import { randomBytes } from "crypto";
+import { safeReturnTo } from "@/lib/safe-return";
 
 const OAUTH_REDIRECT_URI = "http://localhost:3000/api/auth/google/callback";
 
 export async function GET(req: NextRequest) {
+  const session = await requireAuth();
+  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const profile = getActiveProfile();
   if (!profile) return NextResponse.json({ error: "No active profile" }, { status: 400 });
 
@@ -20,7 +24,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.redirect(new URL("/settings", req.url));
   }
 
-  const returnTo = url.searchParams.get("return") || "/settings";
+  const returnTo = safeReturnTo(url.searchParams.get("return"));
   const stateCookieValue = `${randomBytes(16).toString("hex")}.${service}.${Buffer.from(returnTo).toString("base64url")}`;
 
   const params = new URLSearchParams({

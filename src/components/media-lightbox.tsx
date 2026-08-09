@@ -1,6 +1,6 @@
 "use client";
 
-interface MediaItem {
+export interface MediaItem {
   name: string;
   path: string;
   date?: string;
@@ -11,11 +11,9 @@ interface MediaItem {
 export function MediaLightbox({
   item,
   onClose,
-  showDate = false,
 }: {
   item: MediaItem;
   onClose: () => void;
-  showDate?: boolean;
 }) {
   return (
     <div
@@ -49,7 +47,7 @@ export function MediaLightbox({
           />
         )}
         <p className="text-xs text-zinc-400 text-center mt-2 truncate">
-          {showDate && item.date ? `${item.date} · ` : ""}{item.name}
+          {item.name}
         </p>
       </div>
     </div>

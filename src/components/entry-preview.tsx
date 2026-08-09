@@ -12,7 +12,7 @@ export const FM_LABELS: Record<string, string> = {
   weather: "Weather",
 };
 
-export function fmt(_key: string, value: any): string {
+export function fmt(value: any): string {
   if (value === true) return "yes";
   if (value === false) return "no";
   return String(value);
@@ -36,7 +36,7 @@ export function EntryPreview({ markdown, collapsible, defaultCollapsed }: EntryP
           {Object.entries(data).map(([key, value]) => (
             <div key={key} className="flex justify-between items-center min-w-0">
               <span className="text-xs text-zinc-500 truncate">{FM_LABELS[key] || key}</span>
-              <span className="text-xs text-zinc-200 font-medium ml-2">{fmt(key, value)}</span>
+              <span className="text-xs text-zinc-200 font-medium ml-2">{fmt(value)}</span>
             </div>
           ))}
         </div>

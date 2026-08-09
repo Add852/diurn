@@ -1,31 +1,23 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb, getActiveProfile, getProfile, getProfileQuestions } from "@/lib/db";
-import { chatCompletion } from "@/lib/ai";
+import { requireAuth } from "@/lib/auth";
+import { chatCompletion, llmConfig } from "@/lib/ai";
+import { buildChatContext } from "@/lib/chat-context";
+import { localDate } from "@/lib/timezone";
 import { randomUUID } from "crypto";
-import { getMediaFiles, needsRefresh, scanMediaFolder } from "@/lib/media-cache";
+import { scanMediaFolder } from "@/lib/media-cache";
 import { existsSync } from "fs";
+import { appendMessage, getFullMessages, getMessages } from "@/lib/conversation";
 
-type ProfileConfig = { endpoint: string; apiKey: string; model: string };
+const WRAPUP_PROMPT =
+  "All questions are answered. Wrap up warmly in your style. Tell the user their daily note is ready. Keep it short (1-2 lines).";
 
-function appendMessage(sessionId: string, role: string, content: string) {
-  getDb()
-    .prepare("INSERT INTO conversation_messages (session_id, role, content) VALUES (?, ?, ?)")
-    .run(sessionId, role, content);
-}
-
-function getMessages(sessionId: string): { role: "system" | "user" | "assistant"; content: string }[] {
-  return getDb()
-    .prepare("SELECT role, content FROM conversation_messages WHERE session_id = ? ORDER BY id")
-    .all(sessionId) as { role: "system" | "user" | "assistant"; content: string }[];
-}
-
-function getFullMessages(sessionId: string) {
-  return getDb().prepare("SELECT * FROM conversation_messages WHERE session_id = ? ORDER BY id").all(sessionId);
-}
 
 export async function GET(req: NextRequest) {
+  const session = await requireAuth();
+  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
   const url = new URL(req.url);
-  const date = url.searchParams.get("date") || new Date().toISOString().split("T")[0];
   const profileIdStr = url.searchParams.get("profile_id");
   const sessionIdFilter = url.searchParams.get("session_id");
   const profile = profileIdStr ? getProfile(Number(profileIdStr)) : getActiveProfile();
@@ -33,6 +25,8 @@ export async function GET(req: NextRequest) {
   if (!profile) {
     return NextResponse.json({ error: "No active profile" }, { status: 400 });
   }
+
+  const date = url.searchParams.get("date") || localDate(new Date(), profile.timezone);
 
   if (sessionIdFilter) {
     return NextResponse.json({ messages: getFullMessages(sessionIdFilter) });
@@ -45,36 +39,31 @@ export async function GET(req: NextRequest) {
   }
 
   const session_id = randomUUID();
-  const config = { endpoint: profile.llm_endpoint, apiKey: profile.llm_api_key, model: profile.llm_model };
+  const config = llmConfig(profile);
 
-  let mediaContext = "";
+  const ctx = await buildChatContext(profile, date, config);
+
+  const systemPrompt = profile.personality_prompt + ctx.text;
+
   if (profile.media_enabled && profile.media_folder && existsSync(profile.media_folder)) {
-    if (needsRefresh(profile.id)) {
-      scanMediaFolder(profile.media_folder, profile.id, profile.timezone).catch(() => {});
-    } else {
-      const media = getMediaFiles({ profileId: profile.id, date });
-      if (media.length > 0) {
-        const names = media.slice(0, 8).map((m) => m.name).join(", ");
-        mediaContext = `\n\nToday's media files: ${names}. The user may have taken photos or videos today. Reference these naturally only if relevant.`;
-      }
-    }
+    scanMediaFolder(profile.media_folder, profile.id, profile.timezone).catch(() => {});
   }
 
-  appendMessage(session_id, "system", profile.personality_prompt + mediaContext);
+  appendMessage(session_id, "system", systemPrompt);
 
   try {
     if (profile.asking_method === "ask_in_one_go") {
       const qs = askedQuestions.map((q, i) => `${i + 1}. ${q.question}`).join("\n");
       const greeting = await chatCompletion(config, [
-        { role: "system", content: profile.personality_prompt + mediaContext },
-        { role: "user", content: `Today's date is ${date}. Greet the user briefly, then ask ALL of these questions in one message, clearly numbered. Tell the user they can answer all at once:\n\n${qs}` },
+        { role: "system", content: systemPrompt },
+        { role: "user", content: `Today's date is ${date}. You have today's context in your system message. Acknowledge it lightly when relevant, then ask ALL of these questions in one message, clearly numbered. Tell the user they can answer all at once:\n\n${qs}` },
       ]);
       appendMessage(session_id, "assistant", greeting);
     } else {
       const first = askedQuestions[0];
       const greeting = await chatCompletion(config, [
-        { role: "system", content: profile.personality_prompt + mediaContext },
-        { role: "user", content: `Today is ${date}. Greet the user briefly in your personality, then ask ONLY this one question naturally: "${first.question}"` },
+        { role: "system", content: systemPrompt },
+        { role: "user", content: `Today is ${date}. You have today's context in your system message. Acknowledge it lightly when relevant, then ask ONLY this one question naturally: "${first.question}"` },
       ]);
       appendMessage(session_id, "assistant", greeting);
     }
@@ -87,20 +76,24 @@ export async function GET(req: NextRequest) {
   if (profile.media_enabled && profile.media_folder) enabled_integrations.push("media");
   if (profile.google_tasks_enabled) enabled_integrations.push("tasks");
   if (profile.google_calendar_enabled) enabled_integrations.push("calendar");
+  if (profile.obsidian_enabled && profile.obsidian_folder) enabled_integrations.push("notes");
 
   return NextResponse.json({
     session_id,
+    date,
     messages: getFullMessages(session_id),
     profile_id: profile.id,
     asking_method: profile.asking_method,
     total_questions: askedQuestions.length,
     remaining_identifiers: askedQuestions.map((q) => q.identifier),
-    media_context: mediaContext || null,
+    context: ctx.raw,
     enabled_integrations,
   });
 }
 
 export async function POST(req: NextRequest) {
+  const session = await requireAuth();
+  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const { session_id, message } = await req.json();
   const db = getDb();
 
@@ -119,45 +112,62 @@ export async function POST(req: NextRequest) {
 
   appendMessage(session_id, "user", message);
 
-  const config: ProfileConfig = { endpoint: profile.llm_endpoint, apiKey: profile.llm_api_key, model: profile.llm_model };
+  const config = llmConfig(profile);
   const askedQuestions = getProfileQuestions(profile.id).filter((q) => q.asked);
 
   try {
     const history = getMessages(session_id);
-
     if (askedQuestions.length > 0) {
+      // Full transcript, not just recent turns: an answer given many messages
+      // ago must still count. Each message is truncated to keep long chats cheap.
+      const transcript = history
+        .filter((m) => m.role !== "system")
+        .slice(-24)
+        .map((m) => `${m.role === "user" ? "user" : "assistant"}: ${m.content.length > 400 ? m.content.slice(0, 400) + "…" : m.content}`)
+        .join("\n");
       const checklist = askedQuestions.map((q, i) => `${i + 1}. ${q.question}`).join("\n");
       const checkRes = await chatCompletion(config, [
-        { role: "system", content: "You are a classifier. Read the conversation and decide if the user's latest message substantively addresses every question in the checklist. Respond with ONLY valid JSON in this exact shape: {\"covered\": true|false, \"missing\": [\"id1\", \"id2\"]}. Use the question's identifier (Q1, Q2, ...) for missing entries. If the user explicitly says 'done', 'that's it', 'no more', or asks to wrap up, treat all as covered." },
-        ...history.slice(-6),
-        { role: "user", content: `Checklist:\n${checklist}\n\nLatest user message: "${message}"` },
-      ], 15_000);
+        { role: "system", content: "You are a classifier. Evaluate the FULL transcript against the question checklist. A question counts as answered if its answer appears anywhere in the transcript, including earlier turns. Respond with ONLY valid JSON in this exact shape: {\"covered\": true|false, \"missing\": [\"id1\", \"id2\"]}. Use the question's identifier (Q1, Q2, ...) for missing entries. If every question is answered, missing MUST be an empty array and covered MUST be true. If the user explicitly says 'done', 'that's it', 'no more', or asks to wrap up, treat all as covered." },
+        { role: "user", content: `Checklist (identifier: question):\n${checklist}\n\nTranscript:\n${transcript}\n\nLatest user message: "${message}"` },
+      ], 20_000);
 
-      let parsed: any = null;
+      let parsed: unknown = null;
       try {
         parsed = JSON.parse(checkRes.match(/\{[\s\S]*\}/)?.[0] || "{}");
       } catch {
-        // classifier returned garbage; fall back to default branch
+        // classifier returned garbage; fall back to the awaiting-input branch below
       }
+      const rec = parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : null;
+      const covered = rec?.covered === true;
+      const missingIds = Array.isArray(rec?.missing)
+        ? rec.missing.filter((id): id is string => typeof id === "string" && askedQuestions.some((q) => q.identifier === id))
+        : [];
 
-      if (parsed && parsed.covered === true) {
+      // Stop condition: the full transcript answers every question.
+      if (covered) {
         const closing = await chatCompletion(config, [
           ...history,
-          { role: "user", content: "All questions are answered. Wrap up warmly in your style. Tell the user their daily note is ready. Keep it short (1-2 lines)." },
+          { role: "user", content: WRAPUP_PROMPT },
         ]);
         appendMessage(session_id, "assistant", closing);
         return NextResponse.json({ status: "complete", messages: getFullMessages(session_id) });
       }
 
+      if (missingIds.length === 0) {
+        // Nothing left missing but not flagged done: nudge, never re-ask answered questions.
+        const nudge = await chatCompletion(config, [
+          ...history,
+          { role: "user", content: "The user has answered the questions but hasn't confirmed they're done yet. In character, ask in one line if there's anything else they'd like to add before the note is written." },
+        ]);
+        appendMessage(session_id, "assistant", nudge);
+        return NextResponse.json({ status: "awaiting_input", messages: getFullMessages(session_id) });
+      }
       if (profile.asking_method === "ask_in_one_go") {
-        const ids = Array.isArray(parsed?.missing) && parsed.missing.length > 0
-          ? parsed.missing.filter((id: string) => askedQuestions.some((q) => q.identifier === id))
-          : askedQuestions.map((q) => q.identifier);
         const followUp = await chatCompletion(config, [
           ...history,
-          { role: "user", content: ids.length === askedQuestions.length
+          { role: "user", content: missingIds.length === askedQuestions.length
             ? `The user's last message didn't clearly answer the questions. Stay in character and gently ask them to elaborate or answer the questions.`
-            : `The user hasn't yet covered these: ${ids.join(", ")}. Gently ask the user to share those too. Stay in character. Keep it casual.` },
+            : `The user hasn't yet covered these: ${missingIds.join(", ")}. Gently ask the user to share those too. Stay in character. Keep it casual.` },
         ]);
         appendMessage(session_id, "assistant", followUp);
         return NextResponse.json({ status: "awaiting_input", messages: getFullMessages(session_id) });
@@ -169,7 +179,7 @@ export async function POST(req: NextRequest) {
       if (userMsgCount >= askedQuestions.length) {
         const closing = await chatCompletion(config, [
           ...history,
-          { role: "user", content: "All questions have been answered. Wrap up warmly in your style. Tell the user their note is ready. 1-2 lines." },
+          { role: "user", content: WRAPUP_PROMPT },
         ]);
         appendMessage(session_id, "assistant", closing);
         return NextResponse.json({ status: "complete", messages: getFullMessages(session_id) });

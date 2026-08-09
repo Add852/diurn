@@ -1,109 +1,187 @@
 "use client";
 
-export function IntegrationsPanel({ integrations }: { integrations: Record<string, any> }) {
-  const hasContent =
-    (integrations.media?.files?.length > 0) ||
-    (integrations.tasks?.connected && integrations.tasks?.tasks?.length > 0) ||
-    (integrations.calendar?.connected && integrations.calendar?.events?.length > 0);
+import { useState } from "react";
+import { MediaThumb } from "@/components/media-thumb";
 
-  const anyConnected =
-    (integrations.media?.files !== undefined) ||
-    integrations.tasks?.connected ||
-    integrations.calendar?.connected;
+const DEFAULT_LIMIT = 5;
 
-  if (!anyConnected) return null;
+function countFor(key: string, data: any): number {
+  if (key === "media") return data.media?.files?.length ?? 0;
+  if (key === "notes") return data.notes?.length ?? 0;
+  return data[key]?.[key]?.length ?? 0;
+}
 
-  const taskCount = integrations.tasks?.tasks?.length ?? 0;
-  const eventCount = integrations.calendar?.events?.length ?? 0;
-  const mediaCount = integrations.media?.files?.length ?? 0;
-  const total = mediaCount + taskCount + eventCount;
+function ShowAll({ expanded, total, onToggle }: { expanded: boolean; total: number; onToggle: () => void }) {
+  if (total <= DEFAULT_LIMIT) return null;
+  return (
+    <button onClick={onToggle} className="text-[11px] text-zinc-500 hover:text-zinc-300 underline mt-1">
+      {expanded ? "Show less" : `Show all (${total})`}
+    </button>
+  );
+}
+
+export function IntegrationsPanel({
+  enabled,
+  data,
+}: {
+  enabled: string[];
+  data: Record<string, any>;
+}) {
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+
+  if (enabled.length === 0) return null;
+
+  const total = enabled.reduce((acc, key) => acc + countFor(key, data), 0);
+  const hasContent = enabled.some((key) => countFor(key, data) > 0);
+  const toggle = (key: string) => setExpanded((prev) => ({ ...prev, [key]: !prev[key] }));
 
   return (
     <div className="mb-4 bg-zinc-900 border border-zinc-800 rounded-lg p-3">
-      <details>
+      <details open>
         <summary className="text-xs text-zinc-500 cursor-pointer flex items-center gap-2 list-none">
           <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
           </svg>
-          Today&rsquo;s integrations
+          Today&rsquo;s context
           <span className="text-[10px] text-zinc-600">({total})</span>
         </summary>
 
-        {!hasContent && (
-          <p className="mt-2 text-xs text-zinc-600">No context available for today.</p>
-        )}
-
-        {hasContent && (
         <div className="mt-2 space-y-3">
-          {integrations.media?.files !== undefined && integrations.media.files.length > 0 && (
-            <div>
-              <p className="text-xs text-zinc-500 mb-1">Media &middot; {integrations.media.files.length} files</p>
-              <div className="flex gap-2 overflow-x-auto pb-1">
-                {integrations.media.files.map((m: any) => (
-                  <a key={m.path} href={m.src} target="_blank" rel="noreferrer" className="flex-shrink-0 w-14 h-14 bg-zinc-800 rounded-lg border border-zinc-700 overflow-hidden hover:border-zinc-500 transition-colors">
-                    {m.type === "image" ? (
-                      <img src={m.src} alt={m.name} className="w-full h-full object-cover" loading="lazy" />
-                    ) : (
-                      <div className="w-full h-full relative bg-zinc-900">
-                        <video src={m.src} muted preload="auto" className="w-full h-full object-cover" />
-                        <div className="absolute inset-0 flex items-center justify-center bg-black/30">
-                          <svg className="w-3 h-3 text-white" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
-                        </div>
-                      </div>
-                    )}
-                  </a>
-                ))}
-              </div>
-            </div>
-          )}
-          {integrations.media?.files !== undefined && integrations.media.files?.length === 0 && (
-            <p className="text-xs text-zinc-600">No media taken today.</p>
+          {!hasContent && enabled.every((k) => data[k] !== undefined) && (
+            <p className="text-xs text-zinc-600">No context available for today.</p>
           )}
 
-          {integrations.tasks?.connected && integrations.tasks?.tasks?.length > 0 && (
-            <div>
-              <p className="text-xs text-zinc-500 mb-1">{integrations.tasks.tasks.length} task/s completed</p>
-              <div className="space-y-0.5">
-                {integrations.tasks.tasks.slice(0, 5).map((t: any, i: number) => (
-                  <div key={i} className="flex items-center gap-2 text-xs">
-                    <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${t.status === "completed" ? "bg-emerald-500" : "bg-yellow-500"}`} />
-                    <span className="text-zinc-300 truncate">{t.title}</span>
-                    <span className="text-zinc-600 ml-auto flex-shrink-0">{t.listName}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-          {integrations.tasks?.connected && integrations.tasks?.tasks?.length === 0 && (
-            <p className="text-xs text-zinc-600">No tasks completed today.</p>
-          )}
-
-          {integrations.calendar?.connected && integrations.calendar?.events?.length > 0 && (
-            <div>
-              <p className="text-xs text-zinc-500 mb-1">Calendar &middot; {integrations.calendar.events.length} events</p>
-              <div className="space-y-0.5">
-                {integrations.calendar.events.slice(0, 5).map((e: any, i: number) => (
-                  <div key={i} className="text-xs text-zinc-300 truncate">
-                    {e.start?.slice(11, 16) && <span className="text-zinc-600 mr-1">{e.start.slice(11, 16)}</span>}
-                    {e.summary}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-          {integrations.calendar?.connected && integrations.calendar?.events?.length === 0 && (
-            <p className="text-xs text-zinc-600">No events for today.</p>
-          )}
-
-          {integrations.tasks?.connected === false && integrations.tasks?.reason === "not_authenticated" && (
-            <p className="text-xs text-zinc-600">Google Tasks not connected &mdash; set up in <a href="/settings" className="text-zinc-400 underline">Settings</a></p>
-          )}
-          {integrations.calendar?.connected === false && integrations.calendar?.reason === "not_authenticated" && (
-            <p className="text-xs text-zinc-600">Google Calendar not connected &mdash; set up in <a href="/settings" className="text-zinc-400 underline">Settings</a></p>
-          )}
+          {enabled.map((key) => {
+            if (data[key] === undefined) {
+              return (
+                <div key={key} className="flex items-center gap-2 text-xs text-zinc-600">
+                  <span className="w-3 h-3 rounded-full bg-zinc-800 animate-pulse" />
+                  <span className="capitalize">{key} loading&hellip;</span>
+                </div>
+              );
+            }
+            return <Section key={key} kind={key} value={data[key]} expanded={!!expanded[key]} onToggle={() => toggle(key)} />;
+          })}
         </div>
-        )}
       </details>
+    </div>
+  );
+}
+
+function Section({ kind, value, expanded, onToggle }: { kind: string; value: any; expanded: boolean; onToggle: () => void }) {
+  if (kind === "media") return <MediaSection value={value} />;
+  if (kind === "notes") return <NotesSection value={value} expanded={expanded} onToggle={onToggle} />;
+  if (kind === "tasks") return <TasksSection value={value} expanded={expanded} onToggle={onToggle} />;
+  if (kind === "calendar") return <CalendarSection value={value} expanded={expanded} onToggle={onToggle} />;
+  return null;
+}
+
+function NotesSection({ value, expanded, onToggle }: { value: any; expanded: boolean; onToggle: () => void }) {
+  const notes: any[] = Array.isArray(value) ? value : value?.notes ?? [];
+  return (
+    <div>
+      <p className="text-xs text-zinc-500 mb-1">Notes &middot; {notes.length}</p>
+      {notes.length === 0 ? (
+        <p className="text-xs text-zinc-600">No notes for today.</p>
+      ) : (
+        <div className="space-y-1">
+          {(expanded ? notes : notes.slice(0, DEFAULT_LIMIT)).map((n, i) => (
+            <div key={i} className="text-xs text-zinc-300">
+              <span className="font-medium">{n.name}</span>
+              {n.summary ? <span className="text-zinc-500"> &mdash; {n.summary}</span> : null}
+            </div>
+          ))}
+        </div>
+      )}
+      <ShowAll expanded={expanded} total={notes.length} onToggle={onToggle} />
+    </div>
+  );
+}
+
+function MediaSection({ value }: { value: any }) {
+  const files: any[] = value?.files ?? [];
+  if (files.length === 0) {
+    return <p className="text-xs text-zinc-600">No media taken today.</p>;
+  }
+  return (
+    <div>
+      <p className="text-xs text-zinc-500 mb-1">Media &middot; {files.length} files</p>
+      <div className="flex gap-2 overflow-x-auto pb-1">
+        {files.map((m: any) => (
+          <a key={m.path} href={m.src} target="_blank" rel="noreferrer" className="flex-shrink-0 w-14 h-14 bg-zinc-800 rounded-lg border border-zinc-700 overflow-hidden hover:border-zinc-500 transition-colors">
+            {m.type === "image" ? (
+              <img src={m.src} alt={m.name} className="w-full h-full object-cover" loading="lazy" />
+            ) : (
+              <MediaThumb src={m.src} iconClass="w-3 h-3" />
+            )}
+          </a>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function TasksSection({ value, expanded, onToggle }: { value: any; expanded: boolean; onToggle: () => void }) {
+  const tasks: any[] = value?.tasks ?? [];
+  if (value?.connected === false) {
+    const reason = value?.reason;
+    return (
+      <p className="text-xs text-zinc-600">
+        Google Tasks {reason === "not_authenticated" ? "not connected" : `unavailable (${reason})`} &mdash; set up in{" "}
+        <a href="/settings" className="text-zinc-400 underline">Settings</a>
+      </p>
+    );
+  }
+  if (tasks.length === 0) {
+    return <p className="text-xs text-zinc-600">No tasks completed today.</p>;
+  }
+  return (
+    <div>
+      <p className="text-xs text-zinc-500 mb-1">{tasks.length} task/s</p>
+      <div className="space-y-0.5">
+        {(expanded ? tasks : tasks.slice(0, DEFAULT_LIMIT)).map((t: any, i: number) => (
+          <div key={i} className="flex items-start gap-2 text-xs">
+            <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 mt-1 ${t.status === "completed" ? "bg-emerald-500" : "bg-yellow-500"}`} />
+            <span className="min-w-0">
+              <span className="text-zinc-300 truncate block">{t.title}</span>
+              {t.description && <span className="text-zinc-600 truncate block">{t.description}</span>}
+            </span>
+            <span className="text-zinc-600 ml-auto flex-shrink-0">{t.listName}</span>
+          </div>
+        ))}
+      </div>
+      <ShowAll expanded={expanded} total={tasks.length} onToggle={onToggle} />
+    </div>
+  );
+}
+
+function CalendarSection({ value, expanded, onToggle }: { value: any; expanded: boolean; onToggle: () => void }) {
+  const events: any[] = value?.events ?? [];
+  if (value?.connected === false) {
+    const reason = value?.reason;
+    return (
+      <p className="text-xs text-zinc-600">
+        Google Calendar {reason === "not_authenticated" ? "not connected" : `unavailable (${reason})`} &mdash; set up in{" "}
+        <a href="/settings" className="text-zinc-400 underline">Settings</a>
+      </p>
+    );
+  }
+  if (events.length === 0) {
+    return <p className="text-xs text-zinc-600">No events for today.</p>;
+  }
+  return (
+    <div>
+      <p className="text-xs text-zinc-500 mb-1">Calendar &middot; {events.length} events</p>
+      <div className="space-y-0.5">
+        {(expanded ? events : events.slice(0, DEFAULT_LIMIT)).map((e: any, i: number) => (
+          <div key={i} className="text-xs text-zinc-300 min-w-0">
+            {e.start?.slice(11, 16) && <span className="text-zinc-600 mr-1">{e.start.slice(11, 16)}</span>}
+            <span className="truncate block">{e.summary}</span>
+            {e.description && <span className="text-zinc-600 truncate block">{e.description}</span>}
+          </div>
+        ))}
+      </div>
+      <ShowAll expanded={expanded} total={events.length} onToggle={onToggle} />
     </div>
   );
 }

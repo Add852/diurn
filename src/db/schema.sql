@@ -22,6 +22,10 @@ CREATE TABLE IF NOT EXISTS profiles (
   google_client_secret TEXT NOT NULL DEFAULT '',
   media_enabled INTEGER NOT NULL DEFAULT 0,
   media_folder TEXT NOT NULL DEFAULT '',
+  obsidian_enabled INTEGER NOT NULL DEFAULT 0,
+  obsidian_folder TEXT NOT NULL DEFAULT '',
+  obsidian_exclude_folders TEXT NOT NULL DEFAULT '',
+  obsidian_include_content INTEGER NOT NULL DEFAULT 0,
   llm_endpoint TEXT NOT NULL DEFAULT 'http://localhost:20128/v1',
   llm_model TEXT NOT NULL DEFAULT 'freethinkers',
   llm_api_key TEXT NOT NULL DEFAULT '',
@@ -62,16 +66,9 @@ CREATE TABLE IF NOT EXISTS conversation_messages (
   session_id TEXT NOT NULL,
   role TEXT NOT NULL CHECK(role IN ('system','user','assistant')),
   content TEXT NOT NULL,
-  metadata TEXT NOT NULL DEFAULT '{}',
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE TABLE IF NOT EXISTS streaks (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  profile_id INTEGER NOT NULL REFERENCES profiles(id),
-  date TEXT NOT NULL,
-  UNIQUE(profile_id, date)
-);
 
 CREATE TABLE IF NOT EXISTS media_cache (
   path TEXT NOT NULL,

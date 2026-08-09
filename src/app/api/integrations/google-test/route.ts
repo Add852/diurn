@@ -1,10 +1,13 @@
 import { NextResponse } from "next/server";
+import { requireAuth } from "@/lib/auth";
 import { getActiveProfile } from "@/lib/db";
 import { ensureAccessToken, parseConfig } from "@/lib/google-auth";
 
 type TokenStatus = "ok" | "no_token" | "expired" | "parse_error";
 
 export async function GET() {
+  const session = await requireAuth();
+  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const profile = getActiveProfile();
   if (!profile) return NextResponse.json({ error: "No active profile" }, { status: 400 });
 

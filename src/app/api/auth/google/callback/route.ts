@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb, getActiveProfile } from "@/lib/db";
 import { parseConfig } from "@/lib/google-auth";
-
+import { safeReturnTo } from "@/lib/safe-return";
 const OAUTH_REDIRECT_URI = "http://localhost:3000/api/auth/google/callback";
 
 export async function GET(req: NextRequest) {
@@ -21,7 +21,7 @@ export async function GET(req: NextRequest) {
       if (parts.length > restIdx) {
         try {
           const decoded = Buffer.from(parts[restIdx], "base64url").toString("utf8");
-          if (decoded.startsWith("/")) returnTo = decoded;
+          returnTo = safeReturnTo(decoded);
         } catch {}
       }
     }

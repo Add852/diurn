@@ -14,7 +14,8 @@ interface Message {
 function ChatContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const date = searchParams.get("date") || new Date().toISOString().split("T")[0];
+  const urlDate = searchParams.get("date") || "";
+  const [date, setDate] = useState(urlDate);
 
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
@@ -26,29 +27,9 @@ function ChatContent() {
   const [preview, setPreview] = useState<{ rendered: string } | null>(null);
   const [overwriteConfirm, setOverwriteConfirm] = useState(false);
   const [integrations, setIntegrations] = useState<Record<string, any>>({});
-
-  function loadIntegrations(enabled: string[]) {
-    const endpoints: Record<string, string> = {
-      media: `/api/media?date=${date}&limit=20`,
-      tasks: "/api/integrations/tasks/status",
-      calendar: "/api/integrations/calendar/status",
-    };
-
-    const fetchers: Promise<[string, any]>[] = enabled
-      .filter((k) => endpoints[k])
-      .map((k) => fetch(`${endpoints[k]}?date=${date}`).then((r) => r.json()).then((d) => [k, d] as const));
-
-    if (fetchers.length === 0) {
-      setIntegrations({});
-      return;
-    }
-
-    Promise.all(fetchers).then((results) => {
-      const map: Record<string, any> = {};
-      for (const [key, val] of results) map[key] = val;
-      setIntegrations(map);
-    }).catch(() => {});
-  }
+  const [enabledIntegrations, setEnabledIntegrations] = useState<string[]>([]);
+  const [rawContext, setRawContext] = useState<any>(null);
+  const [systemPrompt, setSystemPrompt] = useState("");
 
   async function generateNote(forceOverwrite = false) {
     setStatus("generating");
@@ -69,16 +50,18 @@ function ChatContent() {
       if (d.rendered) {
         setPreview({ rendered: d.rendered });
         setOverwriteConfirm(false);
+        setStatus("complete");
       } else {
         setError(d.error || "Failed to generate note");
+        setStatus("error");
       }
     } catch {
       setError("Failed to generate note. Try again?");
-    } finally {
-      setStatus("complete");
+      setStatus("error");
     }
   }
   const endRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const didInit = useRef(false);
 
   async function initSession() {
@@ -88,18 +71,33 @@ function ChatContent() {
     setMessages([]);
     setSessionId("");
     setPreview(null);
+    setRawContext(null);
+    setIntegrations({});
+    setEnabledIntegrations([]);
+    setSystemPrompt("");
 
     try {
-      const res = await fetch(`/api/chat?date=${date}&ts=${Date.now()}`);
+      const res = await fetch(`/api/chat?${urlDate ? `date=${urlDate}&` : ""}ts=${Date.now()}`);
       const d = await res.json();
       if (d.error) {
         setError(d.error);
         setStatus("error");
       } else if (d.messages) {
+        setDate(d.date || date);
         setMessages(d.messages.filter((m: any) => m.role !== "system"));
         setSessionId(d.session_id);
         setStatus("awaiting_input");
-        loadIntegrations(d.enabled_integrations || []);
+        const enabled = d.enabled_integrations || [];
+        setEnabledIntegrations(enabled);
+        const ctx = d.context || {};
+        setRawContext(ctx);
+        setSystemPrompt(d.messages.find((m: any) => m.role === "system")?.content || "");
+        const integ: Record<string, unknown> = {};
+        if (enabled.includes("notes") && ctx.notes) integ.notes = ctx.notes;
+        if (enabled.includes("tasks") && ctx.tasks) integ.tasks = ctx.tasks;
+        if (enabled.includes("calendar") && ctx.calendar) integ.calendar = ctx.calendar;
+        if (enabled.includes("media") && ctx.media) integ.media = ctx.media;
+        setIntegrations(integ);
       } else {
         setError("Unknown response");
         setStatus("error");
@@ -119,19 +117,6 @@ function ChatContent() {
     initSession();
   }, []);
 
-  useEffect(() => {
-    const update = () => {
-      const h = window.visualViewport?.height ?? window.innerHeight;
-      document.documentElement.style.setProperty("--vvh", `${h}px`);
-    };
-    update();
-    window.visualViewport?.addEventListener("resize", update);
-    window.addEventListener("resize", update);
-    return () => {
-      window.visualViewport?.removeEventListener("resize", update);
-      window.removeEventListener("resize", update);
-    };
-  }, []);
 
   async function sendMessage() {
     if (!input.trim() || status === "thinking" || status === "generating") return;
@@ -146,6 +131,7 @@ function ChatContent() {
 
     const userMsg = input;
     setInput("");
+    if (textareaRef.current) textareaRef.current.style.height = "auto";
     setMessages((prev) => [...prev, { id: Date.now(), role: "user", content: userMsg }]);
 
     try {
@@ -175,18 +161,15 @@ function ChatContent() {
   }
 
   return (
-    <div className="md:contents flex flex-col chat-fill -mx-4 -mt-4">
-      <div className="flex-1 overflow-y-auto px-4 pt-4 pb-2 min-h-0">
+    <div className="flex flex-col min-h-[calc(100dvh-3.5rem)] -m-4 md:m-0 md:min-h-0">
+      <div className="flex-1 px-4 pt-4 pb-2">
       <div className="mb-4 flex items-center justify-between">
         <h2 className="text-lg font-semibold text-zinc-300">{date}</h2>
         {status === "complete" && (
           <span className="text-xs text-emerald-400">Done</span>
         )}
       </div>
-
-      {Object.keys(integrations).length > 0 && (
-        <IntegrationsPanel integrations={integrations} />
-      )}
+      <IntegrationsPanel enabled={enabledIntegrations} data={integrations} />
 
       <div className="space-y-4 mb-4">
         {status === "loading" && (
@@ -260,20 +243,81 @@ function ChatContent() {
         <EntryPreview markdown={preview.rendered} collapsible defaultCollapsed />
       )}
 
+      {(preview || rawContext) && (
+        <details className="mb-4 bg-zinc-950 border border-zinc-800 rounded-lg p-3">
+          <summary className="text-xs text-zinc-500 cursor-pointer list-none">
+            Raw context &amp; input (debug)
+          </summary>
+          <div className="mt-3 space-y-3 text-xs text-zinc-500">
+            {systemPrompt && (
+              <div>
+                <p className="text-zinc-600 mb-1 font-medium">System prompt sent to the bot</p>
+                <pre className="whitespace-pre-wrap bg-zinc-900 rounded p-2 overflow-x-auto">{systemPrompt}</pre>
+              </div>
+            )}
+            {messages.filter((m) => m.role === "user").length > 0 && (
+              <div>
+                <p className="text-zinc-600 mb-1 font-medium">User input transcript</p>
+                <pre className="whitespace-pre-wrap bg-zinc-900 rounded p-2 overflow-x-auto">
+{messages.filter((m) => m.role === "user").map((m) => m.content).join("\n\n---\n\n")}
+                </pre>
+              </div>
+            )}
+            {rawContext?.notes?.length > 0 && (
+              <div>
+                <p className="text-zinc-600 mb-1 font-medium">Notes ({rawContext.notes.length})</p>
+                <pre className="whitespace-pre-wrap bg-zinc-900 rounded p-2 overflow-x-auto">
+{JSON.stringify(rawContext.notes, null, 2)}
+                </pre>
+              </div>
+            )}
+            {rawContext?.tasks?.length > 0 && (
+              <div>
+                <p className="text-zinc-600 mb-1 font-medium">Tasks ({rawContext.tasks.length})</p>
+                <pre className="whitespace-pre-wrap bg-zinc-900 rounded p-2 overflow-x-auto">
+{JSON.stringify(rawContext.tasks, null, 2)}
+                </pre>
+              </div>
+            )}
+            {rawContext?.calendar?.length > 0 && (
+              <div>
+                <p className="text-zinc-600 mb-1 font-medium">Calendar ({rawContext.calendar.length})</p>
+                <pre className="whitespace-pre-wrap bg-zinc-900 rounded p-2 overflow-x-auto">
+{JSON.stringify(rawContext.calendar, null, 2)}
+                </pre>
+              </div>
+            )}
+          </div>
+        </details>
+      )}
+
       </div>
 
       {status !== "complete" && (
-        <div className="flex-shrink-0 bg-zinc-950/95 backdrop-blur pt-2 pb-4 px-4 border-t border-zinc-800 safe-bottom">
+        <div className="sticky bottom-[calc(3.5rem+env(safe-area-inset-bottom,0px))] md:bottom-0 bg-zinc-950/95 backdrop-blur pt-2 pb-4 px-4 border-t border-zinc-800 safe-bottom">
           <form
             onSubmit={(e) => { e.preventDefault(); sendMessage(); }}
             className="flex gap-2"
           >
-            <input
+            <textarea
+              ref={textareaRef}
               value={input}
               onChange={(e) => setInput(e.target.value)}
+              onInput={(e) => {
+                const t = e.currentTarget;
+                t.style.height = "auto";
+                t.style.height = Math.min(t.scrollHeight, 160) + "px";
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  e.currentTarget.form?.requestSubmit();
+                }
+              }}
+              rows={1}
               placeholder="Type your answer..."
               disabled={status === "loading" || status === "thinking" || status === "generating"}
-              className="flex-1 bg-zinc-800 border border-zinc-700 rounded-full px-4 py-2 text-sm text-zinc-200 focus:outline-none focus:border-emerald-500 disabled:opacity-50 placeholder:text-zinc-500 box-border"
+              className="flex-1 bg-zinc-800 border border-zinc-700 rounded-2xl px-4 py-2 text-sm text-zinc-200 focus:outline-none focus:border-emerald-500 disabled:opacity-50 placeholder:text-zinc-500 box-border resize-none overflow-y-auto max-h-40"
             />
             <button
               type="submit"
@@ -287,7 +331,7 @@ function ChatContent() {
       )}
 
       {status === "complete" && (
-        <div className="flex-shrink-0 bg-zinc-950/95 backdrop-blur pt-2 pb-4 px-4 border-t border-zinc-800 safe-bottom">
+        <div className="sticky bottom-[calc(3.5rem+env(safe-area-inset-bottom,0px))] md:bottom-0 bg-zinc-950/95 backdrop-blur pt-2 pb-4 px-4 border-t border-zinc-800 safe-bottom">
           <div className="flex gap-2">
           <button
             onClick={() => router.push("/")}

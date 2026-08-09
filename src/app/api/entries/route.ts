@@ -1,16 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getDb, getActiveProfile, getProfileQuestions, getStreakCount } from "@/lib/db";
-import { chatCompletion } from "@/lib/ai";
+import { getDb, getActiveProfile, getProfileQuestions, getStreakCount, type ProfileQuestion } from "@/lib/db";
+import { requireAuth } from "@/lib/auth";
+import { chatCompletion, llmConfig } from "@/lib/ai";
 import { renderTemplate } from "@/lib/template";
-import { loadMediaContext } from "@/lib/media-cache";
-import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, renameSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "fs";
+import { readFile, readdir } from "fs/promises";
 import { join, extname } from "path";
+import { getMessages } from "@/lib/conversation";
 
 export async function GET(req: NextRequest) {
+  const session = await requireAuth();
+  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
   const url = new URL(req.url);
   const month = url.searchParams.get("month");
   const year = url.searchParams.get("year");
   const streakOnly = url.searchParams.get("streak") === "1";
+  const date = url.searchParams.get("date");
   const profile = getActiveProfile();
   const db = getDb();
 
@@ -32,45 +38,65 @@ export async function GET(req: NextRequest) {
     params.push(`${year}-${String(month).padStart(2, "0")}`);
   }
 
+  if (date) {
+    query += profile ? " AND" : " WHERE";
+    query += " date = ?";
+    params.push(date);
+  }
+
   query += " ORDER BY date DESC";
   const dbEntries = db.prepare(query).all(...params) as any[];
 
   const seenDates = new Set(dbEntries.map((e) => e.date));
   let fsOnlyId = 0;
 
-  if (profile?.daily_note_folder && existsSync(profile.daily_note_folder)) {
-    const files = readdirSync(profile.daily_note_folder).filter((f) => extname(f) === ".md");
-    for (const file of files) {
+    if (profile?.daily_note_folder) {
+      const dirFiles = await readdir(profile.daily_note_folder).catch(() => [] as string[]);
+    for (const file of dirFiles.filter((f) => extname(f) === ".md")) {
       const dateMatch = file.match(/^(\d{4}-\d{2}-\d{2})\.md$/);
       if (!dateMatch) continue;
       const date = dateMatch[1];
       if (seenDates.has(date)) continue;
       if (month && year && !date.startsWith(`${year}-${String(month).padStart(2, "0")}`)) continue;
+      if (date && dateMatch[1] !== date) continue;
 
-      try {
-        const content = readFileSync(join(profile.daily_note_folder, file), "utf-8");
-        seenDates.add(date);
-        dbEntries.push({
-          id: -(++fsOnlyId),
-          date,
-          rendered_markdown: content,
-          file_path: join(profile.daily_note_folder, file),
-          profile_id: profile.id,
-          _fs_only: true,
-        });
-      } catch {}
+      const content = await readFile(join(profile.daily_note_folder, file), "utf-8").catch(() => "");
+      if (!content) continue;
+      seenDates.add(date);
+      dbEntries.push({
+        id: -(++fsOnlyId),
+        date,
+        rendered_markdown: content,
+        file_path: join(profile.daily_note_folder, file),
+        profile_id: profile.id,
+        _fs_only: true,
+      });
     }
-  }
+    }
 
 dbEntries.sort((a, b) => b.date.localeCompare(a.date));
   return NextResponse.json(dbEntries);
 }
 
 export async function POST(req: NextRequest) {
+  const session = await requireAuth();
+  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
   const { session_id, date, overwrite } = await req.json();
   const profile = getActiveProfile();
   if (!profile) {
     return NextResponse.json({ error: "No active profile" }, { status: 400 });
+  }
+
+  const parsedDate = new Date(date + "T00:00:00");
+  if (
+    !/^\d{4}-\d{2}-\d{2}$/.test(date) ||
+    isNaN(parsedDate.getTime()) ||
+    parsedDate.getFullYear() !== Number(date.slice(0, 4)) ||
+    parsedDate.getMonth() !== Number(date.slice(5, 7)) - 1 ||
+    parsedDate.getDate() !== Number(date.slice(8, 10))
+  ) {
+    return NextResponse.json({ error: "Invalid date" }, { status: 400 });
   }
 
   const db = getDb();
@@ -79,42 +105,56 @@ export async function POST(req: NextRequest) {
   if (existing && !overwrite) {
     return NextResponse.json({ exists: true, error: "Entry already exists for this date" }, { status: 409 });
   }
-
   if (overwrite && existing) {
-    db.prepare("DELETE FROM entry_answers WHERE entry_id = ?").run((existing as any).id);
     db.prepare("DELETE FROM entries WHERE id = ?").run((existing as any).id);
   }
-  const messages = db
-    .prepare("SELECT role, content FROM conversation_messages WHERE session_id = ? ORDER BY id")
-    .all(session_id) as { role: string; content: string }[];
+  const messages = getMessages(session_id);
   const msgs = messages.map((m) => ({ role: m.role as "system" | "user" | "assistant", content: m.content }));
 
   if (messages.length === 0) {
     return NextResponse.json({ error: "No messages" }, { status: 400 });
   }
 
-  const questions = getProfileQuestions(profile.id) as any[];
+  const questions = getProfileQuestions(profile.id);
   let allUserInput = messages
     .filter((m) => m.role === "user")
     .map((m) => m.content)
     .join("\n\n");
-
-  const mediaFiles: string[] = [];
-  if (profile.media_enabled && profile.media_folder && existsSync(profile.media_folder)) {
-    const entries = await loadMediaContext(profile.id, profile.media_folder, profile.timezone, date, 10);
-    for (const e of entries) mediaFiles.push(e.name);
-    if (mediaFiles.length > 0) {
-      allUserInput += `\n\nMedia files from today: ${mediaFiles.slice(0, 10).join(", ")}`;
-    }
-  }
-
-  const config = { endpoint: profile.llm_endpoint, apiKey: profile.llm_api_key, model: profile.llm_model };
+  const config = llmConfig(profile);
 
   const systemMsg = msgs.filter((m) => m.role === "system").slice(0, 1);
   const answers: Record<string, { question: string; answer: string }> = {};
 
-  const ask = async (q: any) => {
-    const prompt = `Based on ALL of the user's input below, answer this:
+  if (questions.length > 0) {
+    const shape = `{ ${questions.map((q) => `"${q.identifier}": "<answer>"`).join(", ")} }`;
+    const batchPrompt = `Based on ALL of the user's input below, answer each question.
+
+User input:
+${allUserInput}
+
+${questions.map((q) => `Question "${q.identifier}" — ${q.question}\nInstructions: ${q.answer_prompt}`).join("\n\n")}
+
+Respond with ONLY valid JSON in exactly this shape, no text outside it:
+${shape}`;
+    try {
+      const raw = await chatCompletion(config, [...systemMsg, { role: "user", content: batchPrompt }], 60000);
+      // LLM JSON is untrusted: keys are validated per-question below.
+      const parsed: unknown = JSON.parse(raw.match(/\{[\s\S]*\}/)?.[0] || "{}");
+      if (parsed && typeof parsed === "object") {
+        const rec = parsed as Record<string, unknown>;
+        for (const q of questions) {
+          const value = rec[q.identifier];
+          answers[q.identifier] = { question: q.question, answer: typeof value === "string" ? value.trim() : "" };
+        }
+      }
+    } catch {}
+  }
+
+  // Fallback: ask individually for anything the batch call didn't answer.
+  const missing = questions.filter((q) => !answers[q.identifier]?.answer);
+  if (missing.length > 0) {
+    const ask = async (q: ProfileQuestion) => {
+      const prompt = `Based on ALL of the user's input below, answer this:
 
 User input:
 ${allUserInput}
@@ -123,19 +163,19 @@ For this question: "${q.question}"
 Instructions: ${q.answer_prompt}
 
 Provide ONLY the answer, no extra text. Keep under 3 lines.`;
-    try {
-      const answer = await chatCompletion(config, [
-        ...systemMsg,
-        { role: "user", content: prompt },
-      ], 45000);
-      return [q.identifier, { question: q.question, answer }] as const;
-    } catch {
-      return [q.identifier, { question: q.question, answer: "" }] as const;
-    }
-  };
-
-  const pairs = await Promise.all(questions.map(ask));
-  for (const [id, v] of pairs) answers[id] = v;
+      try {
+        const answer = await chatCompletion(config, [
+          ...systemMsg,
+          { role: "user", content: prompt },
+        ], 45000);
+        return [q.identifier, { question: q.question, answer }] as const;
+      } catch {
+        return [q.identifier, { question: q.question, answer: "" }] as const;
+      }
+    };
+    const pairs = await Promise.all(missing.map(ask));
+    for (const [id, v] of pairs) answers[id] = v;
+  }
 
   let templateContent = "";
   if (profile.template_note_path && existsSync(profile.template_note_path)) {

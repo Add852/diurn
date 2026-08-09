@@ -19,6 +19,10 @@ export interface Profile {
   google_client_secret: string;
   media_enabled: number;
   media_folder: string;
+  obsidian_enabled: number;
+  obsidian_folder: string;
+  obsidian_exclude_folders: string;
+  obsidian_include_content: number;
   llm_endpoint: string;
   llm_model: string;
   llm_api_key: string;
@@ -37,36 +41,43 @@ export function getDb(): Database.Database {
 
   if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
 
-  db = new Database(DB_PATH);
-  db.pragma("journal_mode = WAL");
-  db.pragma("foreign_keys = ON");
+  const d = new Database(DB_PATH);
+  db = d;
+  d.pragma("journal_mode = WAL");
+  d.pragma("foreign_keys = ON");
 
   const schema = readFileSync(join(process.cwd(), "src", "db", "schema.sql"), "utf-8");
-  db.exec(schema);
+  d.exec(schema);
 
-  migrateProfileColumns(db);
-  migrateMediaCacheColumns(db);
+  migrateProfileColumns(d);
+  migrateMediaCacheColumns(d);
+  migrateObsidianColumns(d);
 
   try {
-    const hasOldFk = db.prepare(
+    const hasOldFk = d.prepare(
       "SELECT 1 FROM sqlite_master WHERE type='table' AND name='entry_answers' AND sql NOT LIKE '%ON DELETE CASCADE%'"
     ).get();
     if (hasOldFk) {
-      db.exec(`
-        CREATE TABLE entry_answers_new (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          entry_id INTEGER NOT NULL REFERENCES entries(id) ON DELETE CASCADE,
-          question_id INTEGER NOT NULL REFERENCES profile_questions(id) ON DELETE CASCADE,
-          answer_text TEXT NOT NULL
-        );
-        INSERT INTO entry_answers_new SELECT * FROM entry_answers;
-        DROP TABLE entry_answers;
-        ALTER TABLE entry_answers_new RENAME TO entry_answers;
-      `);
+      try {
+        d.transaction(() => {
+          d.exec(`
+            CREATE TABLE entry_answers_new (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              entry_id INTEGER NOT NULL REFERENCES entries(id) ON DELETE CASCADE,
+              question_id INTEGER NOT NULL REFERENCES profile_questions(id) ON DELETE CASCADE,
+              answer_text TEXT NOT NULL
+            );
+            INSERT INTO entry_answers_new SELECT * FROM entry_answers;
+            DROP TABLE entry_answers;
+            ALTER TABLE entry_answers_new RENAME TO entry_answers;
+          `);
+        })();
+      } catch {}
     }
   } catch {}
 
-  return db;
+  return d;
+
 }
 
 function migrateProfileColumns(db: Database.Database) {
@@ -79,6 +90,19 @@ function migrateProfileColumns(db: Database.Database) {
   add("google_client_id", "TEXT NOT NULL DEFAULT ''");
   add("google_client_secret", "TEXT NOT NULL DEFAULT ''");
   add("timezone", "TEXT NOT NULL DEFAULT 'UTC'");
+}
+
+function migrateObsidianColumns(db: Database.Database) {
+  const cols = new Set((db.prepare("PRAGMA table_info(profiles)").all() as { name: string }[]).map((c) => c.name));
+  const add = (name: string, def: string) => {
+    if (!cols.has(name)) {
+      try { db.exec(`ALTER TABLE profiles ADD COLUMN ${name} ${def}`); } catch {}
+    }
+  };
+  add("obsidian_enabled", "INTEGER NOT NULL DEFAULT 0");
+  add("obsidian_folder", "TEXT NOT NULL DEFAULT ''");
+  add("obsidian_exclude_folders", "TEXT NOT NULL DEFAULT ''");
+  add("obsidian_include_content", "INTEGER NOT NULL DEFAULT 0");
 }
 
 function migrateMediaCacheColumns(db: Database.Database) {

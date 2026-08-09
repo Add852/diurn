@@ -26,10 +26,10 @@ src/
 │   │   ├── auth/        # login, logout, setup, needs-setup, google/{login,callback}
 │   │   ├── chat/, entries/, media/, settings/, ai-test/
 │   │   └── integrations/{tasks,calendar,google-test}/status
-│   ├── chat/, viewer/, settings/, media/, setup/, login/, preview/, page.tsx
-│   ├── layout.tsx       # body padding calc(4rem + safe-area-inset-bottom)
-│   └── globals.css      # --vvh, .chat-fill, .safe-bottom, .keyboard-safe
-├── components/          # bottom-nav, entry-preview, skeleton
+│   ├── chat/, viewer/, settings/, setup/, login/, page.tsx
+│   ├── layout.tsx       # body padding calc(3.5rem + safe-area-inset-bottom)
+│   └── globals.css      # 100dvh base, overscroll/overflow-anchor off, 16px inputs
+├── components/          # bottom-nav, entry-preview, media-lightbox, media-thumb, integrations-panel, skeleton
 └── middleware.ts        # redirect to /login if no diurn_session
 ```
 
@@ -66,13 +66,39 @@ src/
    - Atomic writes in `/api/entries` (`.tmp` + `renameSync`).
    - Settings tabs: pill tags → underline tab bar; `?google_ok=` renders a toast.
    - Streak derives from `entries` table (any consecutive-day entries), not insert-only `streaks` table. `streaks` kept for legacy data.
+14. **Integration context (2026-08):** chat session gathers context BEFORE greeting.
+   - `lib/chat-context.ts`: `buildChatContext(profile, date)` → notes + tasks + calendar, embedded in the persisted system message so every later turn + entry generation sees it. Each source fails independently (one broken source can't block greeting).
+   - Obsidian notes: `obsidian_*` columns (+migration). Scan defined folder recursively; match via `created` frontmatter (bare date or naive datetime → literal day; zone-suffixed → converted) else file birthtime/ctime. Excluded dirs (comma-separated names) skipped. `obsidian_include_content` → one batched LLM call returns JSON summaries (1–3 sentences each); failure degrades to title-only.
+   - Tasks/calendar fetch logic moved from status routes into `chat-context.ts` (`fetchDayTasks`/`fetchDayEvents`); routes slimmed to import them.
+   - Media REMOVED from LLM context — images stay async panel-only (load time + not needed for answers).
+   - `IntegrationsPanel` now renders immediately when any integration enabled (skeleton rows while loading), adds Notes section.
+   - Transparency: chat preview has collapsible (hidden by default) "Raw context & input" — system prompt + user transcript + notes/tasks/calendar objects.
+   - Setup: `PUT /api/settings` persists obsidian fields; Integrations tab in settings has Obsidian section.
 
 ## Open Work / Known Limitations
+15. **Cleanup pass (2026-08):**
+   - Shared `MediaItem` type (media-lightbox) + `MediaThumb` component replace 3 duplicated `MediaFile` interfaces and 3 video-thumb JSX blocks.
+   - `src/lib/conversation.ts`: shared `appendMessage`/`getMessages`/`getFullMessages` (was duplicated in chat + entries routes). `llmConfig(profile)` helper in `ai.ts` replaces 4 inline config literals.
+   - Dead code: `SkeletonRow`/`SkeletonCard`, `initialUser` prop chain (settings), `showDate` in lightbox, `fmt` unused param, `ctx.enabled` field, `conversation_messages.metadata` column (schema.sql), `/media` redirect page, empty `public/media/`.
+   - Bug fixes: chat double-`?date=` URL + UTC-vs-profile-tz date default (server now returns `date`), `generateNote` error state overwritten by `complete` in `finally`, `loadPage` in-flight race in media-view, `changePassword` ignoring non-OK responses.
+   - Security: OAuth `return` param sanitized (`safeReturnTo`, blocks protocol-relative + backslash), media file serving uses `realpath` containment (symlink escape), robust HTTP Range parsing (suffix ranges, clamping, 416).
+   - Nav: `[transform:translateZ(0)]` removed — plain fixed; Firefox-Android-owned-layer anchoring was the last suspect for viewer nav drift. `overflow-anchor: none` kept in globals.
 
+16. **Hardening + CI (2026-08):**
+   - Sync I/O on hot paths made async: media scan walk, Obsidian notes walk, entries daily-note merge → `fs/promises` (yields between files; no event-loop stalls on large folders). `ponytail:` true parallelism (worker threads) when folder sizes warrant it.
+   - Login rate limit: in-memory per-IP (5 fails → 60s lock, doubling to 15-min cap, `Retry-After` honored).
+   - `lib/range.ts` (single-range parser: suffix, clamping, 416 cases) extracted from media file route; `lib/safe-return.ts` extracted from google-auth. Both unit-tested.
+   - Tests: `node:test` (zero new deps), `npm test` = `node --experimental-strip-types --test`; 13 tests cover range parser, redirect guard, frontmatter, template, timezone. `npm run typecheck` added. GitHub Actions `ci.yml` (typecheck + test) — runs on push/PR.
+   - `entry_answers` table rebuild now inside a single transaction.
+17. **Context pipeline dedup (2026-08):**
+   - Chat page no longer re-fetches tasks/calendar/media: `buildChatContext` returns connection state for tasks/calendar and a media slice (`{files}` with `src`); the UI renders entirely from `context.raw`. `/api/chat` is now the only integration fetch the chat page makes.
+   - Entry generation: one batched LLM call returning `{Q1:…, Q2:…}` JSON (per-question `answer_prompt` included for transparency), with a per-question fallback for any identifier the batch missed. ~3 parallel calls → 1.
+   - System-prompt context is now compact JSON (`{notes, tasks, calendar}`), replacing the markdown bullet list — long multiline descriptions no longer collide with list formatting. Media stays out of the prompt (filenames carry no semantic signal) but still ships in `context.raw` for UI thumbnails.
+   - Classifier now evaluates the FULL transcript (last 24 messages, 400-char truncation per message) instead of `slice(-6)`, so answers given many turns ago stop being re-asked. Stop rules: `covered: true` → wrap-up + generate note; empty `missing` (never re-asks everything) → one-line nudge; otherwise follow-up asks only genuinely missing question ids.
 - **OAUTH_REDIRECT_URI hardcoded to `http://localhost:3000/api/auth/google/callback`:** Google requires public TLD. LAN access needs server-side OAuth completion (documented in settings UI as a warning).
 - **File watcher doesn't survive process restart:** first request after restart may serve stale cache until next watcher fire. Workaround: Re-scan button.
 - **No tests:** ad-hoc assert-based checks only. Trivial one-liners need no test.
-- **`/preview` page deleted** but its route path is now 404. Not linked from anywhere.
+- **`/media` page deleted** (was redirect to `/viewer?mode=media`); route is now 404. Not linked from anywhere.
 - **Settings timezone list:** hardcoded list of ~25 IANA zones in settings-client.tsx. Could use `Intl.supportedValuesOf("timeZone")` but browser support varies.
 
 ## Key Files & Their Roles
@@ -83,7 +109,7 @@ src/
 | `src/lib/auth.ts` | `iron-session` config, `hashPassword`/`verifyPassword` (scrypt + timingSafeEqual). |
 | `src/lib/ai.ts` | `chatCompletion(config, msgs, timeoutMs)`, `checkCoverage`. |
 | `src/lib/timezone.ts` | `localDate(epochMs|Date, tz)`, `dateRange(reqUrl, tz)`. |
-| `src/lib/frontmatter.ts` | `parseFrontmatter`, `writeFrontmatter`. |
+| `src/lib/frontmatter.ts` | `parseFrontmatter` splits `---` metadata from markdown body. |
 | `src/lib/template.ts` | `renderTemplate` replaces `{key.question}` / `{key.answer}` / `{date}` / `{day_of_week}` / `{day_number}`. |
 | `src/lib/google-auth.ts` | `parseConfig`, `getTokens`, `refreshTokens`, `ensureAccessToken(profile, integrationKey)`. |
 | `src/lib/media-cache.ts` | `scanMediaFolder`, `getMediaFiles`, `loadMediaContext`, `needsRefresh`, `isDirty`. Singleton `fs.watch` per profile. Incremental scan. |
@@ -96,11 +122,10 @@ src/
 | `src/app/api/integrations/calendar/status/route.ts` | Calendar events for the local day via `dateRange`. |
 | `src/app/api/integrations/google-test/route.ts` | Tests Google client creds, token freshness, live API calls. |
 | `src/app/api/auth/google/{login,callback}/route.ts` | OAuth state cookie = `{csrf}.{service}.{base64url(returnPath)}`. Callback decodes, stores tokens per integration. |
-| `src/app/chat/page.tsx` | Flex-col chat with `chat-fill`, visualViewport `--vvh`, `IntegrationsPanel`, sticky send form. `EntryPreview` collapsible. |
+| `src/app/chat/page.tsx` | Flex-col chat with `min-h-[calc(100dvh-3.5rem)]`, sticky bottom form, `IntegrationsPanel`, `EntryPreview` collapsible. |
 | `src/app/viewer/page.tsx` | Unified Journal/Media. `JournalView` (masonry by month) + `MediaView` (grid by day). No picker. |
 | `src/app/settings/{page,settings-client}.tsx` | Server reads initial data; client manages draft + dirty state + Save. |
-| `src/app/media/page.tsx` | One-line `redirect("/viewer?mode=media")`. |
-| `src/components/bottom-nav.tsx` | Tabs: Home, Journal, Settings. Hidden on `/login` and `/setup`. |
+| `src/components/bottom-nav.tsx` | Tabs: Home, Journal, Settings. `fixed bottom-0 h-14`, no compositor hacks. |
 | `src/components/entry-preview.tsx` | `FM_LABELS`, `fmt`, `EntryPreview` (markdown + FM grid, optional collapsible header). |
 | `src/middleware.ts` | Matcher excludes `_next`, `favicon`, `api/auth`, `login`, `setup`. Redirects unauth to `/login`. |
 

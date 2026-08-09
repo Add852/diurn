@@ -3,6 +3,10 @@ interface Message {
   content: string;
 }
 
+export function llmConfig(profile: { llm_endpoint: string; llm_api_key: string; llm_model: string }) {
+  return { endpoint: profile.llm_endpoint, apiKey: profile.llm_api_key, model: profile.llm_model };
+}
+
 interface ChatConfig {
   endpoint: string;
   apiKey: string;

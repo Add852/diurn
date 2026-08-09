@@ -5,7 +5,6 @@ export default async function SettingsPage() {
   const db = getDb();
   const profile = getActiveProfile();
   const profiles = db.prepare("SELECT * FROM profiles ORDER BY id").all() as any[];
-  const user = db.prepare("SELECT id, username FROM users LIMIT 1").get() as any;
 
   let questions: any[] = [];
   if (profile) {
@@ -17,7 +16,6 @@ export default async function SettingsPage() {
       initialProfile={profile as any || null}
       initialQuestions={questions}
       initialProfiles={profiles as any}
-      initialUser={user ? { id: user.id, username: user.username } : null}
     />
   );
 }

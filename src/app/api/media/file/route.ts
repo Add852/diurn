@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getActiveProfile } from "@/lib/db";
-import { getSession } from "@/lib/auth";
-import { createReadStream, existsSync, statSync } from "fs";
+import { requireAuth } from "@/lib/auth";
+import { createReadStream, existsSync, statSync, realpathSync } from "fs";
+import { parseByteRange } from "@/lib/range";
 import { extname, resolve, sep } from "path";
 
 const MIME: Record<string, string> = {
@@ -19,8 +20,8 @@ const MIME: Record<string, string> = {
 };
 
 export async function GET(req: NextRequest) {
-  const session = await getSession();
-  if (!session.userId) {
+  const session = await requireAuth();
+  if (!session) {
     return new NextResponse("Unauthorized", { status: 401 });
   }
 
@@ -40,10 +41,21 @@ export async function GET(req: NextRequest) {
     return new NextResponse("Missing path", { status: 400 });
   }
 
-  const resolved = resolve(filePath);
-  const mediaRoot = resolve(profile.media_folder) + sep;
+  // realpath resolves symlinks so a link inside media_folder can't escape it
+  let resolved: string;
+  try {
+    resolved = realpathSync(resolve(filePath));
+  } catch {
+    return new NextResponse("Not found", { status: 404 });
+  }
+  let mediaRoot: string;
+  try {
+    mediaRoot = realpathSync(resolve(profile.media_folder));
+  } catch {
+    return new NextResponse("Media folder unavailable", { status: 400 });
+  }
 
-  if (resolved !== mediaRoot.slice(0, -1) && !resolved.startsWith(mediaRoot)) {
+  if (resolved === mediaRoot || !resolved.startsWith(mediaRoot + sep)) {
     return new NextResponse("Forbidden", { status: 403 });
   }
 
@@ -74,18 +86,17 @@ export async function GET(req: NextRequest) {
   };
 
   if (range) {
-    const parts = range.replace("bytes=", "").split("-");
-    const start = parseInt(parts[0]);
-    const end = parts[1] ? parseInt(parts[1]) : fileSize - 1;
-    const chunkSize = end - start + 1;
-
-    const stream = createReadStream(resolved, { start, end });
+    const r = parseByteRange(range, fileSize);
+    if (!r) {
+      return new NextResponse(null, { status: 416, headers: { "Content-Range": `bytes */${fileSize}` } });
+    }
+    const stream = createReadStream(resolved, { start: r.start, end: r.end });
     return new NextResponse(stream as any, {
       status: 206,
       headers: {
         ...headers,
-        "Content-Range": `bytes ${start}-${end}/${fileSize}`,
-        "Content-Length": String(chunkSize),
+        "Content-Range": `bytes ${r.start}-${r.end}/${fileSize}`,
+        "Content-Length": String(r.end - r.start + 1),
       },
     });
   }

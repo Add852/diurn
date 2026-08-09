@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 
 export const config = {
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|api/auth|login|setup).*)",
+    // Pages only; API routes self-check auth and return JSON 401.
+    "/((?!_next/static|_next/image|favicon.ico|api|login|setup).*)",
   ],
 };
 

@@ -44,7 +44,7 @@ export function NavBar() {
       </nav>
 
       {/* Mobile bottom nav */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-zinc-900 border-t border-zinc-800 z-50">
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 h-14 bg-zinc-900 border-t border-zinc-800 z-50">
         <div className="flex max-w-2xl mx-auto safe-bottom">
           {tabs.map((t) => {
             const active = t.href === "/" ? path === "/" : path.startsWith(t.href);

@@ -4,17 +4,62 @@
 
 html, body {
   @apply bg-zinc-950 text-zinc-100 min-h-screen;
+  /* dynamic viewport: follows URL-bar collapse + keyboard, so content never jumps */
+  min-height: 100dvh;
+  /* no pull-to-refresh / rubber-band dragging the whole page incl. fixed nav */
+  overscroll-behavior-y: none;
+  /* image/column reflow re-anchoring drags fixed bars on Firefox Android */
+  overflow-anchor: none;
   -webkit-tap-highlight-color: transparent;
 }
 
-.safe-bottom {
-  padding-bottom: env(safe-area-inset-bottom, 0px);
+html {
+  /* stop landscape/rotate font-size boosting reflowing the layout */
+  -webkit-text-size-adjust: 100%;
 }
 
-:root {
-  --vvh: 100dvh;
+/*
+ * iOS auto-zooms any form control focused with font-size < 16px. The zoom
+ * detaches position:fixed elements (mobile nav) and leaves it floating.
+ * !important beats the tailwind text-sm utilities on these fields.
+ */
+input, select, textarea {
+  font-size: 16px !important;
 }
 
-.chat-fill {
-  height: calc(var(--vvh) - 4rem - env(safe-area-inset-bottom, 0px));
+/* double-tap zoom on controls has the same fixed-position side effect */
+a, button {
+  touch-action: manipulation;
 }
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(63 63 70) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: rgb(63 63 70);
+  border-radius: 9999px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: rgb(82 82 91);
+}
+
+textarea {
+  scrollbar-width: none;
+}
+
+textarea::-webkit-scrollbar {
+  display: none;
+}
+

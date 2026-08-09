@@ -17,12 +17,10 @@ export function SettingsClient({
   initialProfile,
   initialQuestions,
   initialProfiles,
-  initialUser,
 }: {
   initialProfile: Profile | null;
   initialQuestions: Question[];
   initialProfiles: Profile[];
-  initialUser: { id: number; username: string } | null;
 }) {
   const router = useRouter();
   const [profile, setProfile] = useState<Profile | null>(initialProfile);
@@ -220,8 +218,8 @@ export function SettingsClient({
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ change_password: { currentPassword: currentPass, newPassword: newPass } }),
     });
-    const d = await res.json();
-    if (d.error) { setMessage(d.error); return; }
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok || d.error) { setMessage(d.error || "Password change failed"); return; }
     setMessage("Password changed");
     setCurrentPass("");
     setNewPass("");
@@ -248,7 +246,7 @@ export function SettingsClient({
 
   return (
     <div className="space-y-6 pb-20">
-      <div className="flex border-b border-zinc-800 overflow-x-auto">
+      <div className="flex border-b border-zinc-800 overflow-x-auto overflow-y-hidden">
         {tabs.map((t) => (
           <button
             key={t}
@@ -401,6 +399,31 @@ export function SettingsClient({
             Media gallery
           </label>
           {draft.media_enabled ? <Field label="Media folder" value={draft.media_folder} onChange={(v) => updateDraft({ media_folder: v })} placeholder="/path/to/photos" /> : null}
+
+          <div className="pt-3 border-t border-zinc-800">
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={!!draft.obsidian_enabled} onChange={(e) => updateDraft({ obsidian_enabled: e.target.checked ? 1 : 0 })} />
+              Obsidian notes
+            </label>
+            {draft.obsidian_enabled ? (
+              <div className="mt-3 space-y-3">
+                <Field label="Note folder" value={draft.obsidian_folder} onChange={(v) => updateDraft({ obsidian_folder: v })} placeholder="/path/to/vault" />
+                <Field label="Excluded folders (comma-separated)"
+                  value={draft.obsidian_exclude_folders}
+                  onChange={(v) => updateDraft({ obsidian_exclude_folders: v })}
+                  placeholder="templates, attachments, archive"
+                />
+                <label className="flex items-center gap-2 text-sm">
+                  <input type="checkbox" checked={!!draft.obsidian_include_content} onChange={(e) => updateDraft({ obsidian_include_content: e.target.checked ? 1 : 0 })} />
+                  Include note content (generate a short summary of each note)
+                </label>
+                <p className="text-xs text-zinc-600">
+                  Notes are matched to the session date via <code className="text-zinc-400">created</code> frontmatter,
+                  falling back to file creation time. Includes same-day notes only.
+                </p>
+              </div>
+            ) : null}
+          </div>
         </div>
       )}
 

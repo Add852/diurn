@@ -1,14 +1,9 @@
 "use client";
 
 import { useEffect, useState, useRef, useCallback } from "react";
-
-interface MediaFile {
-  name: string;
-  path: string;
-  date?: string;
-  src: string;
-  type: "image" | "video";
-}
+import { type MediaItem } from "@/components/media-lightbox";
+import { MediaThumb } from "@/components/media-thumb";
+import { EntryDialog } from "@/components/entry-dialog";
 
 const DAY_LIMIT = 500;
 
@@ -27,18 +22,23 @@ function fmtDay(date?: string) {
 }
 
 export function MediaView() {
-  const [groups, setGroups] = useState<Record<string, MediaFile[]>>({});
+  const [groups, setGroups] = useState<Record<string, MediaItem[]>>({});
   const [dates, setDates] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [scanning, setScanning] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const [offset, setOffset] = useState(0);
-  const [selected, setSelected] = useState<{ item: MediaFile; group: MediaFile[]; index: number } | null>(null);
+  const [selected, setSelected] = useState<{ item: MediaItem; group: MediaItem[]; index: number } | null>(null);
+  const [entryDate, setEntryDate] = useState<string | null>(null);
+  const [entryDates, setEntryDates] = useState<Set<string> | null>(null);
 
   const sentinelRef = useRef<HTMLDivElement>(null);
   const seenGroups = useRef<Set<string>>(new Set());
+  const inflight = useRef(false);
 
   const loadPage = useCallback(async (reset: boolean) => {
+    if (inflight.current) return;
+    inflight.current = true;
     const next = reset ? 0 : offset;
     const url = `/api/media?limit=${DAY_LIMIT}&offset=${next}`;
     try {
@@ -50,11 +50,11 @@ export function MediaView() {
       }
       setScanning(false);
       if (reset) {
-        seenGroups.current = new Set();
+        seenGroups.current = new Set<string>();
         setGroups({});
         setDates([]);
       }
-      const files: MediaFile[] = d.files || [];
+      const files: MediaItem[] = d.files || [];
       if (files.length === 0) {
         setHasMore(false);
         return;
@@ -84,12 +84,22 @@ export function MediaView() {
     } catch {
       setHasMore(false);
     } finally {
+      inflight.current = false;
       setLoading(false);
     }
   }, [offset]);
 
   useEffect(() => {
     loadPage(true);
+  }, []);
+
+  useEffect(() => {
+    fetch("/api/entries")
+      .then((r) => r.json())
+      .then((list) => {
+        if (Array.isArray(list)) setEntryDates(new Set(list.map((e: any) => e.date)));
+      })
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -109,7 +119,7 @@ export function MediaView() {
     return () => clearInterval(t);
   }, [scanning, loadPage]);
 
-  function openLightbox(group: MediaFile[], index: number) {
+  function openLightbox(group: MediaItem[], index: number) {
     setSelected({ item: group[index], group, index });
   }
 
@@ -152,9 +162,17 @@ export function MediaView() {
         const items = groups[date] || [];
         return (
           <section key={date} className="space-y-2">
-            <h3 className="text-xs font-semibold text-zinc-500 uppercase tracking-wider sticky top-0 bg-zinc-950/90 backdrop-blur py-2 z-10">
-              {fmtDay(date)}
-              <span className="text-zinc-600 font-normal ml-2 normal-case">{items.length} {items.length === 1 ? "item" : "items"}</span>
+            <h3 className="flex items-baseline gap-3 text-xs font-semibold text-zinc-500 uppercase tracking-wider sticky top-0 bg-zinc-950/90 backdrop-blur py-2 z-10">
+              <span>{fmtDay(date)}</span>
+              <span className="text-zinc-600 font-normal ml-1 normal-case">{items.length} {items.length === 1 ? "item" : "items"}</span>
+              {entryDates?.has(date) && (
+                <button
+                  onClick={() => setEntryDate(date)}
+                  className="ml-auto normal-case font-medium text-emerald-400 hover:text-emerald-300 underline underline-offset-2"
+                >
+                  View entry
+                </button>
+              )}
             </h3>
             <div className="flex gap-2 overflow-x-auto pb-2 snap-x snap-mandatory -mx-4 px-4">
               {items.map((m, i) => (
@@ -166,12 +184,7 @@ export function MediaView() {
                   {m.type === "image" ? (
                     <img src={m.src} alt={m.name} loading="lazy" className="w-full h-full object-cover" />
                   ) : (
-                    <div className="relative w-full h-full bg-zinc-950">
-                      <video src={m.src} muted preload="metadata" className="w-full h-full object-cover" />
-                      <div className="absolute inset-0 flex items-center justify-center bg-black/30">
-                        <svg className="w-6 h-6 text-white" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
-                      </div>
-                    </div>
+                    <MediaThumb src={m.src} />
                   )}
                 </button>
               ))}
@@ -189,14 +202,6 @@ export function MediaView() {
             disabled={selected.index === 0}
             className="absolute left-2 top-1/2 -translate-y-1/2 z-10 bg-black/60 rounded-full w-10 h-10 flex items-center justify-center text-white text-xl hover:bg-black/80 disabled:opacity-30"
             aria-label="Previous"
-          >
-            ‹
-          </button>
-          <button
-            onClick={(e) => { e.stopPropagation(); nav(1); }}
-            disabled={selected.index === selected.group.length - 1}
-            className="absolute right-2 z-10 bg-black/60 rounded-full w-10 h-10 flex items-center justify-center text-white text-xl hover:bg-black/80 disabled:opacity-30"
-            aria-label="Next"
           >
             ›
           </button>
@@ -220,6 +225,7 @@ export function MediaView() {
           </button>
         </div>
       )}
+      {entryDate && <EntryDialog date={entryDate} onClose={() => setEntryDate(null)} />}
     </div>
   );
 }

@@ -12,6 +12,8 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
+  // Android: layout resizes with keyboard instead of panning fixed nav around
+  interactiveWidget: "resizes-content",
 };
 
 export default function RootLayout({
@@ -21,7 +23,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body className="pb-[calc(4rem+env(safe-area-inset-bottom,0px))] md:pb-0">
+      <body className="pb-[calc(3.5rem+env(safe-area-inset-bottom,0px))] md:pb-0">
         <NavBar />
         <main className="md:ml-48 px-4 pt-4 pb-4 max-w-3xl mx-auto md:max-w-none md:mx-0 lg:mr-8">{children}</main>
       </body>

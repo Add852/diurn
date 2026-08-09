@@ -1,5 +1,6 @@
 import { getDb } from "./db";
-import { readdirSync, statSync, existsSync, watch, FSWatcher } from "fs";
+import { existsSync, watch, FSWatcher } from "fs";
+import { readdir, stat } from "fs/promises";
 import { join, extname } from "path";
 import { localDate } from "./timezone";
 
@@ -35,17 +36,16 @@ async function dateFromExif(filePath: string, timezone?: string): Promise<Resolv
   return undefined;
 }
 
-function dateFromFS(filePath: string, timezone?: string): ResolvedDate | undefined {
+async function dateFromFS(filePath: string, timezone?: string): Promise<ResolvedDate | undefined> {
   try {
-    const s = statSync(filePath);
+    const s = await stat(filePath);
     const ms = (s.birthtime || s.mtime).getTime();
     return { date: localDate(ms, timezone), capturedAt: ms };
   } catch {}
   return undefined;
 }
-
 async function resolveDate(filePath: string, timezone?: string): Promise<ResolvedDate> {
-  return (await dateFromExif(filePath, timezone)) || dateFromFS(filePath, timezone) || { date: "unknown-date", capturedAt: null };
+  return (await dateFromExif(filePath, timezone)) || (await dateFromFS(filePath, timezone)) || { date: "unknown-date", capturedAt: null };
 }
 
 export interface MediaEntry {
@@ -91,29 +91,36 @@ async function _doScan(folder: string, profileId: number, timezone?: string): Pr
 
   const files: { path: string; name: string; mtime: number; type: "image" | "video" }[] = [];
 
-  function scanDir(dir: string) {
+  async function scanDir(dir: string) {
+    let entries;
     try {
-      for (const entry of readdirSync(dir, { withFileTypes: true })) {
-        const p = join(dir, entry.name);
-        if (entry.isDirectory() && !entry.name.startsWith(".")) {
-          scanDir(p);
-        } else {
-          const ext = extname(entry.name).toLowerCase();
-          if (!MEDIA_EXTS.has(ext)) continue;
-          try {
-            files.push({
-              path: p,
-              name: entry.name,
-              mtime: statSync(p).mtimeMs,
-              type: VIDEO_EXTS.has(ext) ? "video" : "image",
-            });
-          } catch {}
-        }
+      entries = await readdir(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    const subdirs: string[] = [];
+    for (const entry of entries) {
+      const p = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (!entry.name.startsWith(".")) subdirs.push(p);
+      } else {
+        const ext = extname(entry.name).toLowerCase();
+        if (!MEDIA_EXTS.has(ext)) continue;
+        try {
+          const s = await stat(p);
+          files.push({
+            path: p,
+            name: entry.name,
+            mtime: s.mtimeMs,
+            type: VIDEO_EXTS.has(ext) ? "video" : "image",
+          });
+        } catch {}
       }
-    } catch {}
+    }
+    await Promise.all(subdirs.map(scanDir));
   }
 
-  scanDir(folder);
+  await scanDir(folder);
   if (files.length === 0) {
     db.prepare("DELETE FROM media_cache WHERE profile_id = ?").run(profileId);
     return 0;
@@ -204,18 +211,4 @@ export function isDirty(profileId: number): boolean {
 export function needsRefresh(profileId: number): boolean {
   const row = getDb().prepare("SELECT COUNT(*) as cnt FROM media_cache WHERE profile_id = ?").get(profileId) as { cnt: number };
   return row.cnt === 0;
-}
-
-export async function loadMediaContext(
-  profileId: number,
-  mediaFolder: string,
-  timezone: string,
-  date: string,
-  limit = 100
-): Promise<MediaEntry[]> {
-  if (needsRefresh(profileId) || isDirty(profileId)) {
-    _dirty.delete(profileId);
-    await scanMediaFolder(mediaFolder, profileId, timezone);
-  }
-  return getMediaFiles({ profileId, date, limit });
 }

@@ -1,10 +1,21 @@
 "use client";
 
-import { useEffect, useState, useCallback, useMemo } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef } from "react";
+import { useSearchParams } from "next/navigation";
 import { parseFrontmatter } from "@/lib/frontmatter";
-import { EntryPreview, FM_LABELS, fmt } from "@/components/entry-preview";
-import { MediaLightbox } from "@/components/media-lightbox";
+import { FM_LABELS, fmt } from "@/components/entry-preview";
+import { EntryDialog } from "@/components/entry-dialog";
+import { MediaThumb } from "@/components/media-thumb";
 
+// Journal icon used by media-less entries.
+function JournalIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4" aria-hidden="true">
+      <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+      <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+    </svg>
+  );
+}
 interface Entry {
   id: number;
   date: string;
@@ -18,12 +29,9 @@ interface FMEntry extends Entry {
   monthLabel: string;
 }
 
-interface MediaFile {
-  name: string;
-  path: string;
-  date?: string;
+interface Thumb {
   src: string;
-  type: "image" | "video";
+  type: string;
 }
 
 const FULL_MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
@@ -34,38 +42,123 @@ function monthLabel(dateStr: string) {
   return `${FULL_MONTHS[m - 1] || "?"} ${y}`;
 }
 
-function monthKey(dateStr: string) { return dateStr.slice(0, 7); }
 
-function distributeColumns<T>(items: T[], colCount: number): T[][] {
-  const cols: T[][] = Array.from({ length: colCount }, () => []);
-  for (let i = 0; i < items.length; i++) {
-    cols[i % colCount].push(items[i]);
-  }
+function useColumnCount(): number {
+  const [cols, setCols] = useState(2);
+  useEffect(() => {
+    const cb = () => setCols(window.innerWidth >= 1024 ? 4 : window.innerWidth >= 768 ? 3 : 2);
+    cb();
+    window.addEventListener("resize", cb);
+    return () => window.removeEventListener("resize", cb);
+  }, []);
   return cols;
 }
 
+// Pinterest-style shortest-column split: entries keep their chronological
+// order, but each one lands in the currently-shortest column so columns stay
+// balanced. Heights are estimated from card shape (4/3 thumb + info bar, or
+// frontmatter card); `ponytail:` pixel-exact balancing via ResizeObserver if
+// imbalance ever becomes visible.
+function masonrySplit(cards: { e: FMEntry; thumb?: Thumb }[], cols: number, colWidth: number) {
+  const buckets: { e: FMEntry; thumb?: Thumb }[][] = Array.from({ length: cols }, () => []);
+  const heights = new Array<number>(cols).fill(0);
+  for (const card of cards) {
+    const i = heights.indexOf(Math.min(...heights));
+    buckets[i].push(card);
+    if (card.thumb) {
+      heights[i] += colWidth * 0.75 + 90;
+      continue;
+    }
+    const chipLines = Math.ceil(Math.min(Object.keys(card.e.frontmatter).length, 3) / 2);
+    heights[i] += 58 + chipLines * 22 + (chipLines ? 12 : 0);
+  }
+  return buckets;
+}
+
+
+
+
+function EntryCard({ entry, thumb, onOpen }: { entry: FMEntry; thumb?: Thumb; onOpen: () => void }) {
+  if (!thumb) {
+    const chips = Object.entries(entry.frontmatter).slice(0, 3);
+    return (
+      <button
+        onClick={onOpen}
+        className="group w-full rounded-xl border border-zinc-800/60 bg-zinc-900/60 p-4 text-left cursor-pointer hover:border-zinc-600/70 hover:bg-zinc-900 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+      >
+        <div className="flex items-start gap-3">
+          <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg border border-zinc-800 bg-zinc-800/60 text-zinc-500">
+            <JournalIcon />
+          </div>
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-zinc-100">{entry.date}</p>
+            {chips.length > 0 && (
+              <div className="mt-1.5 flex flex-wrap gap-1">
+                {chips.map(([k, v]) => (
+                  <span key={k} className="inline-flex items-center gap-1 rounded-md bg-zinc-800 px-1.5 py-0.5 text-[11px]">
+                    <span className="text-zinc-500">{FM_LABELS[k] || k}</span>
+                    <span className="font-medium text-zinc-200">{fmt(v)}</span>
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </button>
+    );
+  }
+
+  const chips = Object.entries(entry.frontmatter).slice(0, 3);
+  const chipsEl = chips.length > 0 && (
+    <div className="flex flex-wrap gap-1">
+      {chips.map(([k, v]) => (
+        <span key={k} className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-black/40 backdrop-blur-sm rounded-md text-[11px] shadow">
+          <span className="text-zinc-400">{FM_LABELS[k] || k}</span>
+          <span className="text-zinc-100 font-medium">{fmt(v)}</span>
+        </span>
+      ))}
+    </div>
+  );
+  return (
+      <button
+        onClick={onOpen}
+        className="group relative w-full rounded-xl overflow-hidden bg-zinc-800/40 cursor-pointer text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+      >
+        {thumb.type === "image" ? (
+          <img
+            src={thumb.src}
+            alt=""
+            loading="lazy"
+            className="w-full aspect-[4/3] object-cover group-hover:scale-[1.02] transition-transform duration-300"
+          />
+        ) : (
+          <div className="aspect-[4/3]">
+            <MediaThumb src={thumb.src} />
+          </div>
+        )}
+        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/10 to-transparent" />
+        <div className="absolute bottom-0 left-0 right-0 p-3">
+          <p className="text-sm font-semibold text-white drop-shadow">{entry.date}</p>
+          {chipsEl}
+        </div>
+      </button>
+    );
+  }
+
 export function JournalView() {
+  const searchParams = useSearchParams();
+  const pendingDate = searchParams.get("date");
+  const openedFor = useRef<string | null>(null);
   const [rawEntries, setRawEntries] = useState<Entry[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selected, setSelected] = useState<FMEntry | null>(null);
-  const [selectedMedia, setSelectedMedia] = useState<MediaFile[]>([]);
-  const [mediaLoading, setMediaLoading] = useState(false);
-  const [mediaLightbox, setMediaLightbox] = useState<MediaFile | null>(null);
-  const [thumbnails, setThumbnails] = useState<Record<string, string>>({});
-  const [greyscale, setGreyscale] = useState(false);
-  const [cols, setCols] = useState(2);
-
-  useEffect(() => {
-    function update() { setCols(window.innerWidth >= 1024 ? 4 : window.innerWidth >= 640 ? 3 : 2); }
-    update();
-    window.addEventListener("resize", update);
-    return () => window.removeEventListener("resize", update);
-  }, []);
+  const [dialogDate, setDialogDate] = useState<string | null>(null);
+  const [thumbnails, setThumbnails] = useState<Record<string, Thumb>>({});
+  const cols = useColumnCount();
 
   const entries = useMemo(() =>
     rawEntries.map((e) => {
       const fm = parseFrontmatter(e.rendered_markdown);
-      return { ...e, frontmatter: fm.data, body: fm.body, monthKey: monthKey(e.date), monthLabel: monthLabel(e.date) };
+      return { ...e, frontmatter: fm.data, body: fm.body, monthKey: e.date.slice(0, 7), monthLabel: monthLabel(e.date) };
     }),
     [rawEntries]
   );
@@ -81,7 +174,7 @@ export function JournalView() {
 
   useEffect(() => {
     setRawEntries([]);
-    setSelected(null);
+    setDialogDate(null);
     setLoading(true);
     fetch("/api/entries")
       .then((r) => r.json())
@@ -102,7 +195,7 @@ export function JournalView() {
         const r = await fetch(`/api/media?date=${dates[0]}&limit=1`);
         const j = await r.json();
         if (j.files?.length > 0) {
-          setThumbnails({ [dates[0]]: j.files[0].src });
+          setThumbnails({ [dates[0]]: { src: j.files[0].src, type: j.files[0].type } });
         }
       } catch {}
       return;
@@ -110,10 +203,10 @@ export function JournalView() {
     try {
       const r = await fetch(`/api/media?dates=${dates.join(",")}`);
       const j = await r.json();
-      const t: Record<string, string> = {};
+      const t: Record<string, Thumb> = {};
       for (const f of j.files || []) {
         if (f.date && !t[f.date]) {
-          t[f.date] = f.src;
+          t[f.date] = { src: f.src, type: f.type };
         }
       }
       setThumbnails(t);
@@ -121,26 +214,20 @@ export function JournalView() {
   }, []);
 
   function openEntry(e: FMEntry) {
-    setSelected(e);
-    setSelectedMedia([]);
-    setMediaLightbox(null);
-    setMediaLoading(true);
-    fetch(`/api/media?date=${e.date}`)
-      .then((r) => r.json())
-      .then((d) => setSelectedMedia(d.files || []))
-      .catch(() => setSelectedMedia([]))
-      .finally(() => setMediaLoading(false));
+    setDialogDate(e.date);
   }
+
+  useEffect(() => {
+    if (!pendingDate || openedFor.current === pendingDate) return;
+    const entry = entries.find((e) => e.date === pendingDate);
+    if (!entry) return;
+    openedFor.current = pendingDate;
+    openEntry(entry);
+  }, [pendingDate, entries]);
+
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-end">
-        <label className="flex items-center gap-1.5 text-xs text-zinc-500">
-          <input type="checkbox" checked={greyscale} onChange={(e) => setGreyscale(e.target.checked)} />
-          greyscale
-        </label>
-      </div>
-
       {loading && (
         <p className="text-zinc-500 text-sm text-center py-8">Loading...</p>
       )}
@@ -154,45 +241,23 @@ export function JournalView() {
       {!loading && entries.length > 0 && (
         <div className="space-y-10">
           {grouped.map(([mk, monthEntries]) => {
-            const columns = distributeColumns(monthEntries, cols);
+            const winW = typeof window !== "undefined" ? window.innerWidth : 1200;
+            const colWidth = Math.max(140, (winW - 32 - 12 * (cols - 1)) / cols);
+            const buckets = masonrySplit(
+              monthEntries.map((e) => ({ e, thumb: thumbnails[e.date] })),
+              cols,
+              colWidth
+            );
             return (
               <div key={mk}>
                 <h3 className="text-xs font-semibold text-zinc-500 uppercase tracking-wider mb-3 sticky top-0 bg-zinc-950/90 backdrop-blur py-1 z-10">
                   {monthEntries[0]?.monthLabel || mk}
                 </h3>
-                <div className="flex gap-3">
-                  {columns.map((col, ci) => (
-                    <div key={ci} className="flex-1 flex flex-col gap-3">
-                      {col.map((e) => (
-                        <div
-                          key={`${e.id}-${e.date}`}
-                          onClick={() => openEntry(e)}
-                          className="bg-zinc-900 border border-zinc-800 rounded-lg overflow-hidden cursor-pointer transition-colors hover:border-zinc-700"
-                        >
-                          {thumbnails[e.date] && (
-                            <div className="aspect-video bg-zinc-800">
-                              <img
-                                src={thumbnails[e.date]}
-                                alt=""
-                                className={`w-full h-full object-cover ${greyscale ? "grayscale" : ""}`}
-                                loading="lazy"
-                              />
-                            </div>
-                          )}
-                          <div className="p-3">
-                            <p className="text-sm font-medium text-zinc-300 mb-1">{e.date}</p>
-                            {Object.keys(e.frontmatter).length > 0 && (
-                              <div className="flex flex-wrap gap-1">
-                                {Object.entries(e.frontmatter).slice(0, 3).map(([k, v]) => (
-                                  <span key={k} className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-zinc-800 border border-zinc-700 rounded text-[11px]">
-                                    <span className="text-zinc-500">{FM_LABELS[k] || k}</span>
-                                    <span className="text-zinc-300 font-medium">{fmt(k, v)}</span>
-                                  </span>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        </div>
+                <div className="flex items-start gap-3">
+                  {buckets.map((col, ci) => (
+                    <div key={ci} className="flex-1 min-w-0 space-y-3">
+                      {col.map((c) => (
+                        <EntryCard key={c.e.id} entry={c.e} thumb={c.thumb} onOpen={() => openEntry(c.e)} />
                       ))}
                     </div>
                   ))}
@@ -203,58 +268,7 @@ export function JournalView() {
         </div>
       )}
 
-      {selected && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={() => { setSelected(null); setMediaLightbox(null); }}>
-          <div className="absolute inset-0 bg-black/70" />
-          <div
-            className="relative bg-zinc-900 border border-zinc-700 rounded-xl w-full max-w-lg max-h-[85vh] overflow-y-auto p-5 shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between mb-3 sticky top-0 bg-zinc-900 pb-2 border-b border-zinc-800">
-              <h3 className="text-sm font-semibold text-emerald-400">{selected.date}</h3>
-              <button
-                onClick={() => setSelected(null)}
-                className="text-zinc-500 hover:text-zinc-300 text-xl leading-none"
-              >
-                &times;
-              </button>
-            </div>
-
-            {!mediaLoading && selectedMedia.length > 0 && (
-              <div className="mb-3">
-                <div className="flex gap-2 overflow-x-auto pb-2">
-                  {selectedMedia.map((m) => (
-                    <button
-                      key={m.path}
-                      onClick={() => setMediaLightbox(m)}
-                      className="flex-shrink-0 w-16 h-16 bg-zinc-800 rounded-lg border border-zinc-700 overflow-hidden hover:border-zinc-500 transition-colors"
-                    >
-                      {m.type === "image" ? (
-                        <img src={m.src} alt={m.name} className="w-full h-full object-cover" />
-                      ) : (
-                        <div className="w-full h-full relative bg-zinc-900">
-                          <video src={m.src} muted preload="auto" crossOrigin="anonymous" className="w-full h-full object-cover" />
-                          <div className="absolute inset-0 flex items-center justify-center bg-black/30">
-                            <svg className="w-4 h-4 text-white" viewBox="0 0 24 24" fill="currentColor">
-                              <path d="M8 5v14l11-7z" />
-                            </svg>
-                          </div>
-                        </div>
-                      )}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            <EntryPreview markdown={selected.rendered_markdown} />
-          </div>
-        </div>
-      )}
-
-      {mediaLightbox && (
-        <MediaLightbox item={mediaLightbox} onClose={() => setMediaLightbox(null)} />
-      )}
+      {dialogDate && <EntryDialog date={dialogDate} onClose={() => setDialogDate(null)} />}
     </div>
   );
 }

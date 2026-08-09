@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb, getActiveProfile, getProfileQuestions } from "@/lib/db";
-import { hashPassword, verifyPassword } from "@/lib/auth";
+import { requireAuth, hashPassword, verifyPassword } from "@/lib/auth";
 
 export async function GET() {
+  const session = await requireAuth();
+  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const db = getDb();
   const profile = getActiveProfile();
   const profiles = db.prepare("SELECT * FROM profiles ORDER BY id").all();
@@ -17,6 +19,8 @@ export async function GET() {
 }
 
 export async function PUT(req: NextRequest) {
+  const session = await requireAuth();
+  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const body = await req.json();
   const db = getDb();
 
@@ -31,6 +35,7 @@ db.prepare(`UPDATE profiles SET
       google_tasks_enabled=?, google_tasks_config=?, google_calendar_enabled=?,
       google_calendar_config=?, google_client_id=?, google_client_secret=?,
       media_enabled=?, media_folder=?,
+      obsidian_enabled=?, obsidian_folder=?, obsidian_exclude_folders=?, obsidian_include_content=?,
       llm_endpoint=?, llm_model=?,
       llm_api_key=?, personality_prompt=?, asking_method=?, timezone=?
       WHERE id=?`).run(
@@ -38,6 +43,7 @@ db.prepare(`UPDATE profiles SET
       p.google_tasks_enabled ? 1 : 0, p.google_tasks_config || "{}", p.google_calendar_enabled ? 1 : 0,
       p.google_calendar_config || "{}", p.google_client_id || "", p.google_client_secret || "",
       p.media_enabled ? 1 : 0, p.media_folder || "",
+      p.obsidian_enabled ? 1 : 0, p.obsidian_folder || "", p.obsidian_exclude_folders || "", p.obsidian_include_content ? 1 : 0,
       p.llm_endpoint, p.llm_model,
       p.llm_api_key || "", p.personality_prompt || "", p.asking_method || "ask_in_one_go",
       p.timezone || "UTC",
@@ -109,8 +115,14 @@ db.prepare(`UPDATE profiles SET
     if (!profile) return NextResponse.json({ error: "Not found" }, { status: 404 });
     if (profile.is_default) return NextResponse.json({ error: "Cannot delete default profile" }, { status: 400 });
     db.transaction(() => {
+      const wasActive = profile.is_active === 1;
       db.prepare("DELETE FROM profiles WHERE id = ?").run(body.delete_profile_id);
       db.prepare("DELETE FROM profile_questions WHERE profile_id = ?").run(body.delete_profile_id);
+      // Deleting the active profile would leave the app with no active profile.
+      if (wasActive) {
+        const next = db.prepare("SELECT id FROM profiles ORDER BY id LIMIT 1").get() as { id: number } | undefined;
+        if (next) db.prepare("UPDATE profiles SET is_active = 1 WHERE id = ?").run(next.id);
+      }
     })();
     return NextResponse.json({ ok: true });
   }
