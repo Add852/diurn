@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { parseByteRange } from "../src/lib/range.ts";
 import { safeReturnTo } from "../src/lib/safe-return.ts";
 import { parseFrontmatter } from "../src/lib/frontmatter.ts";
-import { renderTemplate } from "../src/lib/template.ts";
+import { renderTemplate, formatTemplateDate, identifierError } from "../src/lib/template.ts";
 import { localDate, dateRange } from "../src/lib/timezone.ts";
 
 test("parseByteRange: explicit range", () => {
@@ -67,7 +67,7 @@ test("parseFrontmatter: missing frontmatter", () => {
 test("renderTemplate: meta and answer substitution", () => {
   const out = renderTemplate(
     "X {date} {Q1.question} {Q1.answer}",
-    { Q1: { question: "Happened?", answer: "Stuff" } },
+    { Q1: { question: "Happened?", answer: "Stuff", asked: true, prompt: "p" } },
     { date: "2026-08-09", day_of_week: "Sunday", day_number: "1" }
   );
   assert.equal(out, "X 2026-08-09 Happened? Stuff");
@@ -84,4 +84,36 @@ test("dateRange: offset formatting", () => {
   const r = dateRange("http://x?date=2026-08-09", "America/New_York");
   assert.equal(r.min, "2026-08-09T00:00:00-04:00");
   assert.equal(r.max, "2026-08-09T23:59:59-04:00");
+});
+
+test("formatTemplateDate: .NET specifiers", () => {
+  assert.equal(formatTemplateDate("2026-08-10", "dddd"), "Monday");
+  assert.equal(formatTemplateDate("2026-08-10", "yyyy-MM-dd"), "2026-08-10");
+  assert.equal(formatTemplateDate("2026-08-10", "yyyy-MM-DD"), "2026-08-10"); // D aliased to d
+  assert.equal(formatTemplateDate("2026-08-10", "MMMM d, yyyy"), "August 10, 2026");
+  assert.equal(formatTemplateDate("2026-08-10", "ddd MMM"), "Mon Aug");
+  assert.equal(formatTemplateDate("2026-08-10", "yy"), "26");
+  assert.equal(formatTemplateDate("2026-08-10", "HH:mm"), "00:00");
+  assert.equal(formatTemplateDate("2026-08-10", "'day' dd"), "day 10");
+  assert.equal(formatTemplateDate("2026-08-10", "\\d\\d"), "dd");
+  assert.equal(formatTemplateDate("2026-08-10", "Q"), "Q"); // unknown chars pass through
+});
+
+test("renderTemplate: $date and full variable fields", () => {
+  const tpl = '$date("dddd") | {date} | {Q1.question}: {Q1.answer} asked={Q1.asked} prompt={Q1.prompt}';
+  const out = renderTemplate(
+    tpl,
+    { Q1: { question: "Happened?", answer: "Stuff", asked: true, prompt: "short" } },
+    { date: "2026-08-10", day_of_week: "Monday", day_number: "10" }
+  );
+  assert.equal(out, "Monday | 2026-08-10 | Happened?: Stuff asked=true prompt=short");
+});
+
+test("identifierError: rejects reserved, duplicates, invalid names", () => {
+  assert.equal(identifierError("date", []), '"date" is reserved by the template syntax.');
+  assert.equal(identifierError("answer", []), '"answer" is reserved by the template syntax.');
+  assert.equal(identifierError("Q1", ["Q1"]), 'Variable "Q1" already exists.');
+  assert.equal(identifierError("Q 1", []), "Use only letters, numbers, and underscores.");
+  assert.equal(identifierError("", []), "Variable name is required.");
+  assert.equal(identifierError("Q2", ["Q1"]), null);
 });

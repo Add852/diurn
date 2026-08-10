@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth";
 import { getActiveProfile } from "@/lib/db";
-import { getMediaFiles, isDirty, needsRefresh, scanMediaFolder } from "@/lib/media-cache";
+import { getMediaFiles, isDirty, needsRefresh, scanMediaFolder, pendingScan, maybeBackgroundScan } from "@/lib/media-cache";
 import { existsSync } from "fs";
 
 export async function GET(req: NextRequest) {
@@ -18,6 +18,10 @@ export async function GET(req: NextRequest) {
   const offset = Math.max(parseInt(url.searchParams.get("offset") || "0"), 0);
   const filterDate = url.searchParams.get("date") || undefined;
   const filterMonth = url.searchParams.get("month") || undefined;
+
+  maybeBackgroundScan();
+  const pending = pendingScan(profile.id);
+  if (pending) await pending;
 
   if (refresh || needsRefresh(profile.id) || isDirty(profile.id)) {
     scanMediaFolder(profile.media_folder, profile.id, profile.timezone).catch(() => {});

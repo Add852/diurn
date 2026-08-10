@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getDb, getActiveProfile, getProfileQuestions, getStreakCount, type ProfileQuestion } from "@/lib/db";
 import { requireAuth } from "@/lib/auth";
 import { chatCompletion, llmConfig } from "@/lib/ai";
-import { renderTemplate } from "@/lib/template";
+import { renderTemplate, type TemplateVar } from "@/lib/template";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "fs";
 import { readFile, readdir } from "fs/promises";
 import { join, extname } from "path";
@@ -123,7 +123,7 @@ export async function POST(req: NextRequest) {
   const config = llmConfig(profile);
 
   const systemMsg = msgs.filter((m) => m.role === "system").slice(0, 1);
-  const answers: Record<string, { question: string; answer: string }> = {};
+  const answers: Record<string, TemplateVar> = {};
 
   if (questions.length > 0) {
     const shape = `{ ${questions.map((q) => `"${q.identifier}": "<answer>"`).join(", ")} }`;
@@ -144,7 +144,7 @@ ${shape}`;
         const rec = parsed as Record<string, unknown>;
         for (const q of questions) {
           const value = rec[q.identifier];
-          answers[q.identifier] = { question: q.question, answer: typeof value === "string" ? value.trim() : "" };
+          answers[q.identifier] = { question: q.question, answer: typeof value === "string" ? value.trim() : "", asked: !!q.asked, prompt: q.answer_prompt || "" };
         }
       }
     } catch {}
@@ -174,7 +174,10 @@ Provide ONLY the answer, no extra text. Keep under 3 lines.`;
       }
     };
     const pairs = await Promise.all(missing.map(ask));
-    for (const [id, v] of pairs) answers[id] = v;
+    for (const [id, kv] of pairs) {
+      const t = answers[id];
+      if (t) t.answer = kv.answer;
+    }
   }
 
   let templateContent = "";

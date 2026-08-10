@@ -1,4 +1,4 @@
-import { getDb } from "./db";
+import { getDb, getActiveProfile } from "./db";
 import { existsSync, watch, FSWatcher } from "fs";
 import { readdir, stat } from "fs/promises";
 import { join, extname } from "path";
@@ -48,6 +48,10 @@ async function resolveDate(filePath: string, timezone?: string): Promise<Resolve
   return (await dateFromExif(filePath, timezone)) || (await dateFromFS(filePath, timezone)) || { date: "unknown-date", capturedAt: null };
 }
 
+export function pendingScan(profileId: number): Promise<number> | undefined {
+  return _scanLocks.get(profileId);
+}
+
 export interface MediaEntry {
   path: string;
   name: string;
@@ -68,6 +72,21 @@ export function startWatcher(folder: string, profileId: number) {
   } catch {}
 }
 
+let _bootScanned = false;
+// Background scan on first request after server start — warms the cache so
+// chat's await path (route.ts) is a no-op in the common case. Guarded so the
+// root layout's per-request render only triggers it once per process.
+export function maybeBackgroundScan() {
+  if (_bootScanned) return;
+  _bootScanned = true;
+  try {
+    const profile = getActiveProfile();
+    if (profile?.media_enabled && profile.media_folder) {
+      scanMediaFolder(profile.media_folder, profile.id, profile.timezone).catch(() => {});
+    }
+  } catch {}
+}
+
 export async function scanMediaFolder(folder: string, profileId: number, timezone?: string): Promise<number> {
   startWatcher(folder, profileId);
   const existing = _scanLocks.get(profileId);
@@ -79,6 +98,7 @@ export async function scanMediaFolder(folder: string, profileId: number, timezon
     return await promise;
   } finally {
     _scanLocks.delete(profileId);
+    _dirty.delete(profileId);
   }
 }
 

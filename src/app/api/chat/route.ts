@@ -5,7 +5,7 @@ import { chatCompletion, llmConfig } from "@/lib/ai";
 import { buildChatContext } from "@/lib/chat-context";
 import { localDate } from "@/lib/timezone";
 import { randomUUID } from "crypto";
-import { scanMediaFolder } from "@/lib/media-cache";
+import { scanMediaFolder, pendingScan, needsRefresh, isDirty, maybeBackgroundScan } from "@/lib/media-cache";
 import { existsSync } from "fs";
 import { appendMessage, getFullMessages, getMessages } from "@/lib/conversation";
 
@@ -40,14 +40,23 @@ export async function GET(req: NextRequest) {
 
   const session_id = randomUUID();
   const config = llmConfig(profile);
+  if (profile.media_enabled && profile.media_folder && existsSync(profile.media_folder)) {
+    // Fresh media guaranteed before answering. Static-prerendered pages mean
+    // the layout's boot scan never ran on pure /api flows, so self-trigger
+    // it (idempotent, once per process) and wait out any scan that is
+    // running or needed. Normal case — scan done, nothing changed — no-op.
+    maybeBackgroundScan();
+    const pending = pendingScan(profile.id);
+    if (pending) {
+      await pending;
+    } else if (needsRefresh(profile.id) || isDirty(profile.id)) {
+      await scanMediaFolder(profile.media_folder, profile.id, profile.timezone);
+    }
+  }
 
   const ctx = await buildChatContext(profile, date, config);
 
   const systemPrompt = profile.personality_prompt + ctx.text;
-
-  if (profile.media_enabled && profile.media_folder && existsSync(profile.media_folder)) {
-    scanMediaFolder(profile.media_folder, profile.id, profile.timezone).catch(() => {});
-  }
 
   appendMessage(session_id, "system", systemPrompt);
 

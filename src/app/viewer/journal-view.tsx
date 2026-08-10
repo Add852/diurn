@@ -250,7 +250,7 @@ export function JournalView() {
             );
             return (
               <div key={mk}>
-                <h3 className="text-xs font-semibold text-zinc-500 uppercase tracking-wider mb-3 sticky top-0 bg-zinc-950/90 backdrop-blur py-1 z-10">
+                <h3 className="text-xs font-semibold text-zinc-500 uppercase tracking-wider mb-3 sticky top-0 -mx-4 px-4 bg-zinc-950 py-1 z-10">
                   {monthEntries[0]?.monthLabel || mk}
                 </h3>
                 <div className="flex items-start gap-3">

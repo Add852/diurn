@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb, getActiveProfile, getProfileQuestions } from "@/lib/db";
 import { requireAuth, hashPassword, verifyPassword } from "@/lib/auth";
+import { identifierError } from "@/lib/template";
+import { existsSync, readFileSync } from "fs";
 
 export async function GET() {
   const session = await requireAuth();
@@ -15,7 +17,14 @@ export async function GET() {
     questions = db.prepare("SELECT * FROM profile_questions WHERE profile_id = ? ORDER BY sort_order").all(profile.id);
   }
 
-  return NextResponse.json({ profile, profiles, questions, user: user ? { id: user.id, username: user.username } : null });
+  let templateContent: string | null = null;
+  if (profile?.template_note_path && existsSync(profile.template_note_path)) {
+    try {
+      templateContent = readFileSync(profile.template_note_path, "utf-8");
+    } catch {}
+  }
+
+  return NextResponse.json({ profile, profiles, questions, template_content: templateContent, user: user ? { id: user.id, username: user.username } : null });
 }
 
 export async function PUT(req: NextRequest) {
@@ -61,6 +70,18 @@ db.prepare(`UPDATE profiles SET
     if (!profile) return NextResponse.json({ error: "No active profile" }, { status: 400 });
     try {
       const incoming = body.questions as any[];
+      const seen: string[] = [];
+      const nameError = incoming
+        .map((q: any) => {
+          if (!q?.identifier) return null;
+          const err = identifierError(q.identifier, seen);
+          if (!err) seen.push(q.identifier);
+          return err;
+        })
+        .find(Boolean);
+      if (nameError) {
+        return NextResponse.json({ error: nameError }, { status: 400 });
+      }
       const upsert = db.prepare(
         "INSERT INTO profile_questions (id, profile_id, identifier, question, answer_prompt, asked, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET identifier=excluded.identifier, question=excluded.question, answer_prompt=excluded.answer_prompt, asked=excluded.asked, sort_order=excluded.sort_order"
       );
@@ -153,5 +174,12 @@ db.prepare(`UPDATE profiles SET
     return NextResponse.json({ ok: true });
   }
 
-  return NextResponse.json({ ok: true });
+  let templateContent: string | null = null;
+  const fresh = getActiveProfile();
+  if (fresh?.template_note_path && existsSync(fresh.template_note_path)) {
+    try {
+      templateContent = readFileSync(fresh.template_note_path, "utf-8");
+    } catch {}
+  }
+  return NextResponse.json({ ok: true, template_content: templateContent });
 }

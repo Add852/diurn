@@ -1,8 +1,23 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { Profile } from "@/lib/db";
+import { renderTemplate, formatTemplateDate, identifierError, type TemplateVar } from "@/lib/template";
+import { localDate } from "@/lib/timezone";
+
+const TEMPLATE_SYNTAX_DOC = `Daily note placeholders:
+{Q1.question}  - question text
+{Q1.answer}    - previous answer
+{Q1.asked}     - true/false
+{Q1.prompt}    - LLM answer prompt
+{date}         - entry date (yyyy-MM-dd)
+{day_of_week}  - e.g. "Monday"
+{day_number}   - e.g. "10"
+
+$date("...")   - format the entry date:
+$date("dddd")  - Monday
+$date("MMMM d, yyyy") - August 10, 2026`;
 
 interface Question {
   id?: number;
@@ -17,15 +32,18 @@ export function SettingsClient({
   initialProfile,
   initialQuestions,
   initialProfiles,
+  initialTemplateContent,
 }: {
   initialProfile: Profile | null;
   initialQuestions: Question[];
   initialProfiles: Profile[];
+  initialTemplateContent: string | null;
 }) {
   const router = useRouter();
   const [profile, setProfile] = useState<Profile | null>(initialProfile);
   const [draft, setDraft] = useState<Profile | null>(initialProfile ? { ...initialProfile } : null);
   const [questions, setQuestions] = useState<Question[]>(initialQuestions);
+  const [templateContent, setTemplateContent] = useState<string | null>(initialTemplateContent);
   const [profiles, setProfiles] = useState<Profile[]>(initialProfiles);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
@@ -38,6 +56,22 @@ export function SettingsClient({
   const [dirty, setDirty] = useState(false);
   const [currentPass, setCurrentPass] = useState("");
   const [newPass, setNewPass] = useState("");
+  const preview = useMemo(() => {
+    const tpl = templateContent ?? "No template file set — the app falls back to its built-in default template.";
+    const vars: Record<string, TemplateVar> = {};
+    for (const q of questions) {
+      vars[q.identifier] = { question: q.question || "?", answer: "Nothing much.", asked: q.asked, prompt: q.answer_prompt || "..." };
+    }
+    const dateStr = localDate(Date.now(), draft?.timezone || "UTC");
+    return {
+      tpl,
+      rendered: renderTemplate(tpl, vars, {
+        date: dateStr,
+        day_of_week: formatTemplateDate(dateStr, "dddd"),
+        day_number: formatTemplateDate(dateStr, "d"),
+      }),
+    };
+  }, [questions, draft, templateContent]);
 
   useEffect(() => {
     const ok = new URLSearchParams(window.location.search).get("google_ok");
@@ -88,6 +122,13 @@ export function SettingsClient({
     setMessage("");
     try {
       if (dirty) {
+        const bad = questions
+          .map((q, i) => identifierError(q.identifier, questions.slice(0, i).map((x) => x.identifier)))
+          .find(Boolean);
+        if (bad) {
+          setMessage(bad);
+          return;
+        }
         const res = await fetch("/api/settings", {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
@@ -98,6 +139,7 @@ export function SettingsClient({
           setMessage(d.error || `Save failed (${res.status})`);
           return;
         }
+        if (d.template_content !== undefined) setTemplateContent(d.template_content);
       }
       setMessage("Saved");
       setDirty(false);
@@ -139,6 +181,7 @@ export function SettingsClient({
     setProfile(d.profile);
     if (d.profile) setDraft({ ...d.profile });
     setQuestions(d.questions || []);
+    setTemplateContent(d.template_content ?? null);
     setProfiles(d.profiles || []);
     setDirty(false);
     setMessage("Profile activated");
@@ -245,8 +288,10 @@ export function SettingsClient({
   const tabs = ["general", "ai", "questions", "integrations", "profiles", "account"];
 
   return (
-    <div className="space-y-6 pb-20">
-      <div className="flex border-b border-zinc-800 overflow-x-auto overflow-y-hidden">
+    <div className="-mx-4 flex h-full flex-col">
+      {/* Fixed tab bar; content scrolls underneath (same pattern as viewer). */}
+      <div className="bg-zinc-950 border-b border-zinc-800">
+        <div className="flex overflow-x-auto overflow-y-hidden">
         {tabs.map((t) => (
           <button
             key={t}
@@ -261,11 +306,37 @@ export function SettingsClient({
           </button>
         ))}
       </div>
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-none px-4 pt-4 pb-4">
+        <div className="space-y-6">
 
       {tab === "general" && (
         <div className="space-y-3">
           <Field label="Daily note folder" value={draft.daily_note_folder} onChange={(v) => updateDraft({ daily_note_folder: v })} placeholder="/path/to/obsidian/vault/1 Dailies" />
           <Field label="Template note path" value={draft.template_note_path} onChange={(v) => updateDraft({ template_note_path: v })} placeholder="/path/to/template.md" />
+          <details className="bg-zinc-900 border border-zinc-800 rounded-lg p-3">
+            <summary className="text-sm cursor-pointer text-zinc-300 list-none">Template syntax &amp; preview</summary>
+            <div className="mt-3 space-y-3 text-xs text-zinc-500 leading-relaxed">
+              <p>Daily note template is plain Markdown with these placeholders:</p>
+              <pre className="bg-zinc-950 border border-zinc-800 rounded p-3 overflow-x-auto text-zinc-300">{TEMPLATE_SYNTAX_DOC}</pre>
+              <p>
+                <code>$date("...")</code> follows{' '}
+                <a href="https://learn.microsoft.com/en-us/dotnet/standard/base-types/custom-date-and-time-format-strings" target="_blank" rel="noreferrer" className="text-emerald-400 underline">
+                  .NET custom date and time format strings
+                </a>{' '}
+                and formats the entry's date. Common codes: <code>dddd</code> full day, <code>MMMM</code> full month, <code>yyyy</code> year, <code>MM</code> month, <code>dd</code> day. <code>D</code> is accepted as <code>d</code>.
+              </p>
+              <p><strong className="text-zinc-300">Template preview</strong> — renders with today's date and your saved questions:</p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                <pre className="bg-zinc-950 border border-zinc-800 rounded p-3 overflow-x-auto text-zinc-300 whitespace-pre-wrap">{preview.tpl}</pre>
+                <pre className="bg-zinc-950 border border-zinc-800 rounded p-3 overflow-x-auto text-zinc-300 whitespace-pre-wrap">{preview.rendered}</pre>
+              </div>
+              {!templateContent && (
+                <p className="text-amber-400/80 bg-amber-900/20 rounded p-2">No template file set or readable — the app falls back to its built-in default template.</p>
+              )}
+            </div>
+          </details>
           <div>
             <label className="block text-xs text-zinc-500 mb-1">Timezone</label>
             <select
@@ -319,28 +390,33 @@ export function SettingsClient({
             />
             Ask all questions at once
           </label>
-          {questions.map((q, i) => (
-            <div key={`q-${i}`} className="bg-zinc-900 border border-zinc-800 rounded-lg p-3 space-y-2">
-              <div className="flex items-center gap-2">
-                <button onClick={() => moveQuestion(i, -1)} disabled={i === 0} className="text-zinc-600 hover:text-zinc-400 disabled:opacity-30 text-xs" title="Move up">&uarr;</button>
-                <button onClick={() => moveQuestion(i, 1)} disabled={i === questions.length - 1} className="text-zinc-600 hover:text-zinc-400 disabled:opacity-30 text-xs" title="Move down">&darr;</button>
-                <input
-                  value={q.identifier}
-                  onChange={(e) => updateQuestion(i, { identifier: e.target.value })}
-                  className="w-16 bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-200"
-                  placeholder="ID"
-                />
-                <label className="flex items-center gap-1 text-xs text-zinc-500">
-                  <input type="checkbox" checked={q.asked} onChange={(e) => updateQuestion(i, { asked: e.target.checked })} />
-                  asked
-                </label>
-                <div className="flex-1" />
-                <button onClick={() => removeQuestion(i)} className="text-red-600 hover:text-red-400 text-xs" title="Delete">&times;</button>
+          {questions.map((q, i) => {
+            const nameErr = identifierError(q.identifier, questions.slice(0, i).map((x) => x.identifier));
+            return (
+              <div key={`q-${i}`} className="bg-zinc-900 border border-zinc-800 rounded-lg p-3 space-y-2">
+                <div className="flex items-center gap-2">
+                  <button onClick={() => moveQuestion(i, -1)} disabled={i === 0} className="text-zinc-600 hover:text-zinc-400 disabled:opacity-30 text-xs" title="Move up">&uarr;</button>
+                  <button onClick={() => moveQuestion(i, 1)} disabled={i === questions.length - 1} className="text-zinc-600 hover:text-zinc-400 disabled:opacity-30 text-xs" title="Move down">&darr;</button>
+                  <input
+                    value={q.identifier}
+                    onChange={(e) => updateQuestion(i, { identifier: e.target.value })}
+                    className={`w-16 bg-zinc-800 border rounded px-2 py-1 text-xs text-zinc-200 ${nameErr ? "border-red-500" : "border-zinc-700"}`}
+                    placeholder="ID"
+                    title={nameErr ?? undefined}
+                  />
+                  <label className="flex items-center gap-1 text-xs text-zinc-500">
+                    <input type="checkbox" checked={q.asked} onChange={(e) => updateQuestion(i, { asked: e.target.checked })} />
+                    asked
+                  </label>
+                  <div className="flex-1" />
+                  <button onClick={() => removeQuestion(i)} className="text-red-600 hover:text-red-400 text-xs" title="Delete">&times;</button>
+                </div>
+                {nameErr && <p className="text-xs text-red-400">{nameErr}</p>}
+                <input value={q.question} onChange={(e) => updateQuestion(i, { question: e.target.value })} placeholder="Question text" className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1.5 text-sm text-zinc-200" />
+                <input value={q.answer_prompt} onChange={(e) => updateQuestion(i, { answer_prompt: e.target.value })} placeholder="LLM answer prompt" className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1.5 text-sm text-zinc-200" />
               </div>
-              <input value={q.question} onChange={(e) => updateQuestion(i, { question: e.target.value })} placeholder="Question text" className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1.5 text-sm text-zinc-200" />
-              <input value={q.answer_prompt} onChange={(e) => updateQuestion(i, { answer_prompt: e.target.value })} placeholder="LLM answer prompt" className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1.5 text-sm text-zinc-200" />
-            </div>
-          ))}
+            );
+          })}
           <button onClick={addQuestion} className="text-xs text-emerald-400 hover:text-emerald-300">
             + Add question
           </button>
@@ -468,6 +544,8 @@ export function SettingsClient({
           <button onClick={handleLogout} className="text-xs text-red-400 hover:text-red-300">Log out</button>
         </div>
       )}
+        </div>
+      </div>
 
       {dirty && (
         <button

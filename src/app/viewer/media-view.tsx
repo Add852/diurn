@@ -162,7 +162,7 @@ export function MediaView() {
         const items = groups[date] || [];
         return (
           <section key={date} className="space-y-2">
-            <h3 className="flex items-baseline gap-3 text-xs font-semibold text-zinc-500 uppercase tracking-wider sticky top-0 bg-zinc-950/90 backdrop-blur py-2 z-10">
+            <h3 className="flex items-baseline gap-3 text-xs font-semibold text-zinc-500 uppercase tracking-wider sticky top-0 -mx-4 px-4 bg-zinc-950 py-2 z-10">
               <span>{fmtDay(date)}</span>
               <span className="text-zinc-600 font-normal ml-1 normal-case">{items.length} {items.length === 1 ? "item" : "items"}</span>
               {entryDates?.has(date) && (
