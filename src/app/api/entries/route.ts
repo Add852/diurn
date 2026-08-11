@@ -3,11 +3,21 @@ import { getDb, getActiveProfile, getProfileQuestions, getStreakCount, type Prof
 import { requireAuth } from "@/lib/auth";
 import { chatCompletion, llmConfig } from "@/lib/ai";
 import { renderTemplate, type TemplateVar } from "@/lib/template";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "fs";
 import { readFile, readdir } from "fs/promises";
 import { join, extname } from "path";
 import { getMessages } from "@/lib/conversation";
 
+function isValidDate(date: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return false;
+  const d = new Date(date + "T00:00:00");
+  return (
+    !isNaN(d.getTime()) &&
+    d.getFullYear() === Number(date.slice(0, 4)) &&
+    d.getMonth() === Number(date.slice(5, 7)) - 1 &&
+    d.getDate() === Number(date.slice(8, 10))
+  );
+}
 export async function GET(req: NextRequest) {
   const session = await requireAuth();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -88,14 +98,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "No active profile" }, { status: 400 });
   }
 
-  const parsedDate = new Date(date + "T00:00:00");
-  if (
-    !/^\d{4}-\d{2}-\d{2}$/.test(date) ||
-    isNaN(parsedDate.getTime()) ||
-    parsedDate.getFullYear() !== Number(date.slice(0, 4)) ||
-    parsedDate.getMonth() !== Number(date.slice(5, 7)) - 1 ||
-    parsedDate.getDate() !== Number(date.slice(8, 10))
-  ) {
+  if (!isValidDate(date)) {
     return NextResponse.json({ error: "Invalid date" }, { status: 400 });
   }
 
@@ -219,6 +222,84 @@ Provide ONLY the answer, no extra text. Keep under 3 lines.`;
   }
 
   return NextResponse.json({ entry_id: entryId, file_path: filePath, rendered, answers });
+}
+
+export async function PUT(req: NextRequest) {
+  const session = await requireAuth();
+  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const { date, markdown } = await req.json();
+  if (typeof date !== "string" || !isValidDate(date)) {
+    return NextResponse.json({ error: "Invalid date" }, { status: 400 });
+  }
+  if (typeof markdown !== "string" || !markdown.trim()) {
+    return NextResponse.json({ error: "Markdown is required" }, { status: 400 });
+  }
+
+  const profile = getActiveProfile();
+  if (!profile) {
+    return NextResponse.json({ error: "No active profile" }, { status: 400 });
+  }
+
+  const db = getDb();
+  type EntryRow = { id: number; file_path: string | null };
+  const existing = db.prepare("SELECT id, file_path FROM entries WHERE profile_id = ? AND date = ?").get(profile.id, date) as EntryRow | undefined;
+  if (!existing) {
+    return NextResponse.json({ error: "Entry not found" }, { status: 404 });
+  }
+
+  // Keep the Obsidian note in sync with the edit (same atomic write as POST).
+  let filePath: string | null = null;
+  if (profile.daily_note_folder) {
+    filePath = join(profile.daily_note_folder, `${date}.md`);
+    const dir = profile.daily_note_folder;
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    const tmp = filePath + ".tmp";
+    writeFileSync(tmp, markdown, "utf-8");
+    renameSync(tmp, filePath);
+  }
+
+  db.prepare("UPDATE entries SET rendered_markdown = ?, file_path = ? WHERE id = ?").run(
+    markdown,
+    filePath,
+    existing.id
+  );
+  return NextResponse.json({ ok: true, id: existing.id, file_path: filePath });
+}
+
+export async function DELETE(req: NextRequest) {
+  const session = await requireAuth();
+  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const url = new URL(req.url);
+  const date = url.searchParams.get("date") || "";
+  if (!isValidDate(date)) {
+    return NextResponse.json({ error: "Invalid date" }, { status: 400 });
+  }
+
+  const profile = getActiveProfile();
+  if (!profile) {
+    return NextResponse.json({ error: "No active profile" }, { status: 400 });
+  }
+
+  const db = getDb();
+  type EntryRow = { id: number; file_path: string | null };
+  const existing = db.prepare("SELECT id, file_path FROM entries WHERE profile_id = ? AND date = ?").get(profile.id, date) as EntryRow | undefined;
+  if (!existing) {
+    return NextResponse.json({ error: "Entry not found" }, { status: 404 });
+  }
+
+  db.prepare("DELETE FROM entries WHERE id = ?").run(existing.id);
+
+  // Only remove the note file when it lives under the configured notes folder —
+  // never delete a path the app didn't create.
+  const fp = existing.file_path;
+  if (fp && profile.daily_note_folder) {
+    const base = profile.daily_note_folder.replace(/\/+$/, "");
+    if (fp.startsWith(base + "/")) rmSync(fp, { force: true });
+  }
+
+  return NextResponse.json({ ok: true });
 }
 
 const DEFAULT_TEMPLATE = `---

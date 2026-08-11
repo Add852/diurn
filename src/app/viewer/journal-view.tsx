@@ -3,9 +3,10 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { useSearchParams } from "next/navigation";
 import { parseFrontmatter } from "@/lib/frontmatter";
-import { FM_LABELS, fmt } from "@/components/entry-preview";
+import { fmt } from "@/components/entry-preview";
 import { EntryDialog } from "@/components/entry-dialog";
 import { MediaThumb } from "@/components/media-thumb";
+import { SkeletonLines } from "@/components/skeleton";
 
 // Journal icon used by media-less entries.
 function JournalIcon() {
@@ -96,7 +97,7 @@ function EntryCard({ entry, thumb, onOpen }: { entry: FMEntry; thumb?: Thumb; on
               <div className="mt-1.5 flex flex-wrap gap-1">
                 {chips.map(([k, v]) => (
                   <span key={k} className="inline-flex items-center gap-1 rounded-md bg-zinc-800 px-1.5 py-0.5 text-[11px]">
-                    <span className="text-zinc-500">{FM_LABELS[k] || k}</span>
+                    <span className="text-zinc-500">{k}</span>
                     <span className="font-medium text-zinc-200">{fmt(v)}</span>
                   </span>
                 ))}
@@ -113,7 +114,7 @@ function EntryCard({ entry, thumb, onOpen }: { entry: FMEntry; thumb?: Thumb; on
     <div className="flex flex-wrap gap-1">
       {chips.map(([k, v]) => (
         <span key={k} className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-black/40 backdrop-blur-sm rounded-md text-[11px] shadow">
-          <span className="text-zinc-400">{FM_LABELS[k] || k}</span>
+          <span className="text-zinc-400">{k}</span>
           <span className="text-zinc-100 font-medium">{fmt(v)}</span>
         </span>
       ))}
@@ -172,20 +173,7 @@ export function JournalView() {
     return Object.entries(map).sort((a, b) => b[0].localeCompare(a[0]));
   }, [entries]);
 
-  useEffect(() => {
-    setRawEntries([]);
-    setDialogDate(null);
-    setLoading(true);
-    fetch("/api/entries")
-      .then((r) => r.json())
-      .then((d) => {
-        const list: Entry[] = Array.isArray(d) ? d : [];
-        setRawEntries(list);
-        loadThumbnails(list);
-      })
-      .catch(() => setRawEntries([]))
-      .finally(() => setLoading(false));
-  }, []);
+
 
   const loadThumbnails = useCallback(async (list: Entry[]) => {
     const dates = [...new Set(list.map((e) => e.date))];
@@ -212,6 +200,23 @@ export function JournalView() {
       setThumbnails(t);
     } catch {}
   }, []);
+  const loadEntries = useCallback(async () => {
+    try {
+      const r = await fetch("/api/entries");
+      const d = await r.json();
+      const list: Entry[] = Array.isArray(d) ? d : [];
+      setRawEntries(list);
+      loadThumbnails(list);
+    } catch {
+      setRawEntries([]);
+    }
+  }, [loadThumbnails]);
+  useEffect(() => {
+    setRawEntries([]);
+    setDialogDate(null);
+    setLoading(true);
+    loadEntries().finally(() => setLoading(false));
+  }, [loadEntries]);
 
   function openEntry(e: FMEntry) {
     setDialogDate(e.date);
@@ -228,9 +233,7 @@ export function JournalView() {
 
   return (
     <div className="space-y-4">
-      {loading && (
-        <p className="text-zinc-500 text-sm text-center py-8">Loading...</p>
-      )}
+      {loading && <SkeletonLines />}
 
       {!loading && entries.length === 0 && (
         <p className="text-zinc-500 text-sm text-center py-8">
@@ -268,7 +271,9 @@ export function JournalView() {
         </div>
       )}
 
-      {dialogDate && <EntryDialog date={dialogDate} onClose={() => setDialogDate(null)} />}
+      {dialogDate && (
+        <EntryDialog date={dialogDate} onClose={() => setDialogDate(null)} onChanged={loadEntries} />
+      )}
     </div>
   );
 }

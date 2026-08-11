@@ -4,6 +4,7 @@ import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { JournalView } from "./journal-view";
 import { MediaView } from "./media-view";
+import { SkeletonLines } from "@/components/skeleton";
 
 function ViewerContent({ initialMode }: { initialMode: "journal" | "media" }) {
   const router = useRouter();
@@ -52,7 +53,7 @@ function ViewerContent({ initialMode }: { initialMode: "journal" | "media" }) {
 
 export default function ViewerPage() {
   return (
-    <Suspense fallback={<p className="text-zinc-500 text-sm py-8 text-center">Loading...</p>}>
+    <Suspense fallback={<SkeletonLines />}>
       <ViewerContentFromSearch />
     </Suspense>
   );

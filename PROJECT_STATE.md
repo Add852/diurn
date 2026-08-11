@@ -95,9 +95,13 @@ src/
    - Entry generation: one batched LLM call returning `{Q1:…, Q2:…}` JSON (per-question `answer_prompt` included for transparency), with a per-question fallback for any identifier the batch missed. ~3 parallel calls → 1.
    - System-prompt context is now compact JSON (`{notes, tasks, calendar}`), replacing the markdown bullet list — long multiline descriptions no longer collide with list formatting. Media stays out of the prompt (filenames carry no semantic signal) but still ships in `context.raw` for UI thumbnails.
    - Classifier now evaluates the FULL transcript (last 24 messages, 400-char truncation per message) instead of `slice(-6)`, so answers given many turns ago stop being re-asked. Stop rules: `covered: true` → wrap-up + generate note; empty `missing` (never re-asks everything) → one-line nudge; otherwise follow-up asks only genuinely missing question ids.
+18. **View-entry flow + final cleanup (2026-08):**
+   - Chat page: `date` now server-provided (no UTC `toISOString` default), single error state (duplicate render removed), `generateNote` reaches `complete` on overwrite-confirm. Completion shows "View entry" → `EntryDialog` (edit markdown / re-run in chat / delete). Edit hits new `/api/entries` PUT.
+   - `--vvh`/`chat-fill` CSS-var scheme removed — plain `100dvh` flex column. Nav: `translateZ(0)` dropped (plain `fixed bottom-0`); `overflow-anchor: none` kept. Firefox-Android drift fix verified pinned at multiple scroll depths in Chromium + Firefox.
+   - `loadPage` in-flight guard in media-view (overfetch race); `changePassword` checks `res.ok`.
 - **OAUTH_REDIRECT_URI hardcoded to `http://localhost:3000/api/auth/google/callback`:** Google requires public TLD. LAN access needs server-side OAuth completion (documented in settings UI as a warning).
 - **File watcher doesn't survive process restart:** first request after restart may serve stale cache until next watcher fire. Workaround: Re-scan button.
-- **No tests:** ad-hoc assert-based checks only. Trivial one-liners need no test.
+- **Tests:** `node:test` in `tests/*.test.ts` — 16 cases (range parser, safe-return, frontmatter, template, timezone). `npm test` + `npm run typecheck` wired; CI runs both. One-off logic verified with ad-hoc asserts.
 - **`/media` page deleted** (was redirect to `/viewer?mode=media`); route is now 404. Not linked from anywhere.
 - **Settings timezone list:** hardcoded list of ~25 IANA zones in settings-client.tsx. Could use `Intl.supportedValuesOf("timeZone")` but browser support varies.
 
@@ -114,7 +118,7 @@ src/
 | `src/lib/google-auth.ts` | `parseConfig`, `getTokens`, `refreshTokens`, `ensureAccessToken(profile, integrationKey)`. |
 | `src/lib/media-cache.ts` | `scanMediaFolder`, `getMediaFiles`, `loadMediaContext`, `needsRefresh`, `isDirty`. Singleton `fs.watch` per profile. Incremental scan. |
 | `src/app/api/chat/route.ts` | GET: create session + first question. POST: store user msg, ask next. Returns `enabled_integrations`. |
-| `src/app/api/entries/route.ts` | GET: list entries + read from `daily_note_folder` for unsynced. POST: generate note via template + per-question LLM call, write file, save `entry_answers`. |
+| `src/app/api/entries/route.ts` | GET: list entries + read from `daily_note_folder` for unsynced. POST: generate note via template + one batched LLM call, write file, save `entry_answers`. PUT: edit existing entry, keeps Obsidian file in sync (atomic tmp+rename). |
 | `src/app/api/settings/route.ts` | GET: profile + questions + user. PUT: profile update, questions CRUD, create/delete/activate/export profile, change password. |
 | `src/app/api/media/route.ts` | GET list with date/dates/month/limit/offset filters. Triggers background scan if dirty or `needsRefresh`. |
 | `src/app/api/media/file/route.ts` | Stream file with Range/ETag/304 support. Path validated inside `media_folder`. |
@@ -122,7 +126,7 @@ src/
 | `src/app/api/integrations/calendar/status/route.ts` | Calendar events for the local day via `dateRange`. |
 | `src/app/api/integrations/google-test/route.ts` | Tests Google client creds, token freshness, live API calls. |
 | `src/app/api/auth/google/{login,callback}/route.ts` | OAuth state cookie = `{csrf}.{service}.{base64url(returnPath)}`. Callback decodes, stores tokens per integration. |
-| `src/app/chat/page.tsx` | Flex-col chat with `min-h-[calc(100dvh-3.5rem)]`, sticky bottom form, `IntegrationsPanel`, `EntryPreview` collapsible. |
+| `src/app/chat/page.tsx` | Flex-col `h-full` chat; form is flex-shrink-0 (non-sticky), scroll region `min-h-0`. `IntegrationsPanel`, collapsible "Raw context & input", "View entry" → `EntryDialog` when complete. |
 | `src/app/viewer/page.tsx` | Unified Journal/Media. `JournalView` (masonry by month) + `MediaView` (grid by day). No picker. |
 | `src/app/settings/{page,settings-client}.tsx` | Server reads initial data; client manages draft + dirty state + Save. |
 | `src/components/bottom-nav.tsx` | Tabs: Home, Journal, Settings. `fixed bottom-0 h-14`, no compositor hacks. |

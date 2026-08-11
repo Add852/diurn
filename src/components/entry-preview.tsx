@@ -4,13 +4,6 @@ import { useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { parseFrontmatter } from "@/lib/frontmatter";
 
-export const FM_LABELS: Record<string, string> = {
-  dayOfWeek: "Day",
-  mood: "Mood",
-  energy: "Energy",
-  tags: "Tags",
-  weather: "Weather",
-};
 
 export function fmt(value: any): string {
   if (value === true) return "yes";
@@ -35,7 +28,7 @@ export function EntryPreview({ markdown, collapsible, defaultCollapsed }: EntryP
         <div className="mb-3 grid grid-cols-2 gap-x-3 gap-y-1.5 bg-zinc-800/50 rounded-lg p-3">
           {Object.entries(data).map(([key, value]) => (
             <div key={key} className="flex justify-between items-center min-w-0">
-              <span className="text-xs text-zinc-500 truncate">{FM_LABELS[key] || key}</span>
+              <span className="text-xs text-zinc-500 truncate">{key}</span>
               <span className="text-xs text-zinc-200 font-medium ml-2">{fmt(value)}</span>
             </div>
           ))}

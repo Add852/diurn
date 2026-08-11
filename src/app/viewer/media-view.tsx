@@ -1,10 +1,10 @@
 "use client";
 
 import { useEffect, useState, useRef, useCallback } from "react";
-import { type MediaItem } from "@/components/media-lightbox";
+import { MediaLightbox, type MediaItem } from "@/components/media-lightbox";
 import { MediaThumb } from "@/components/media-thumb";
 import { EntryDialog } from "@/components/entry-dialog";
-
+import { SkeletonLines } from "@/components/skeleton";
 const DAY_LIMIT = 500;
 
 function fmtDay(date?: string) {
@@ -26,9 +26,10 @@ export function MediaView() {
   const [dates, setDates] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [scanning, setScanning] = useState(false);
+  const [disabled, setDisabled] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const [offset, setOffset] = useState(0);
-  const [selected, setSelected] = useState<{ item: MediaItem; group: MediaItem[]; index: number } | null>(null);
+  const [lightbox, setLightbox] = useState<{ items: MediaItem[]; index: number } | null>(null);
   const [entryDate, setEntryDate] = useState<string | null>(null);
   const [entryDates, setEntryDates] = useState<Set<string> | null>(null);
 
@@ -44,6 +45,12 @@ export function MediaView() {
     try {
       const r = await fetch(url);
       const d = await r.json();
+      if (d.disabled) {
+        setDisabled(true);
+        setLoading(false);
+        return;
+      }
+      setDisabled(false);
       if (d.scanning) {
         setScanning(true);
         return;
@@ -120,29 +127,19 @@ export function MediaView() {
   }, [scanning, loadPage]);
 
   function openLightbox(group: MediaItem[], index: number) {
-    setSelected({ item: group[index], group, index });
+    setLightbox({ items: group, index });
   }
-
-  function nav(delta: number) {
-    if (!selected) return;
-    const next = selected.index + delta;
-    if (next < 0 || next >= selected.group.length) return;
-    setSelected({ item: selected.group[next], group: selected.group, index: next });
-  }
-
-  useEffect(() => {
-    if (!selected) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "ArrowRight") nav(1);
-      else if (e.key === "ArrowLeft") nav(-1);
-      else if (e.key === "Escape") setSelected(null);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [selected]);
-
   if (loading) {
-    return <p className="text-zinc-500 text-sm text-center py-8">Loading...</p>;
+    return <SkeletonLines />;
+  }
+
+  if (disabled) {
+    return (
+      <p className="text-zinc-500 text-sm text-center py-8">
+        Media view is disabled. Enable the media gallery in{" "}
+        <a href="/settings" className="text-emerald-400 hover:underline">Settings</a>.
+      </p>
+    );
   }
 
   if (dates.length === 0) {
@@ -194,36 +191,12 @@ export function MediaView() {
       })}
       <div ref={sentinelRef} className="h-1" />
       {hasMore && <p className="text-xs text-zinc-600 text-center">Loading more...</p>}
-      {selected && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center" onClick={() => setSelected(null)}>
-          <div className="absolute inset-0 bg-black/90" />
-          <button
-            onClick={(e) => { e.stopPropagation(); nav(-1); }}
-            disabled={selected.index === 0}
-            className="absolute left-2 top-1/2 -translate-y-1/2 z-10 bg-black/60 rounded-full w-10 h-10 flex items-center justify-center text-white text-xl hover:bg-black/80 disabled:opacity-30"
-            aria-label="Previous"
-          >
-            ›
-          </button>
-          <div className="relative max-w-5xl max-h-[85vh] w-full px-12" onClick={(e) => e.stopPropagation()}>
-            {selected.item.type === "image" ? (
-              <img src={selected.item.src} alt={selected.item.name} className="w-full h-auto max-h-[85vh] object-contain rounded-xl mx-auto" />
-            ) : (
-              <video src={selected.item.src} controls autoPlay className="w-full h-auto max-h-[85vh] rounded-xl mx-auto" />
-            )}
-            <p className="text-xs text-zinc-400 text-center mt-2 truncate">
-              {fmtDay(selected.item.date)} · {selected.item.name}
-              <span className="text-zinc-600 ml-2">{selected.index + 1}/{selected.group.length}</span>
-            </p>
-          </div>
-          <button
-            onClick={() => setSelected(null)}
-            className="absolute top-2 right-2 z-10 bg-black/60 rounded-full w-8 h-8 flex items-center justify-center text-white text-lg hover:bg-black/80"
-            aria-label="Close"
-          >
-            ×
-          </button>
-        </div>
+      {lightbox && (
+        <MediaLightbox
+          items={lightbox.items}
+          initialIndex={lightbox.index}
+          onClose={() => setLightbox(null)}
+        />
       )}
       {entryDate && <EntryDialog date={entryDate} onClose={() => setEntryDate(null)} />}
     </div>

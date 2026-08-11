@@ -20,6 +20,7 @@ export default function HomePage() {
   const [streak, setStreak] = useState(0);
   const [profileName, setProfileName] = useState("");
   const [hasEntry, setHasEntry] = useState<boolean | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -28,13 +29,13 @@ export default function HomePage() {
       .then((r) => r.json())
       .then((list) => {
         if (cancelled) return;
-        setHasEntry(Array.isArray(list) && list.some((e: any) => e.date === date));
+        setHasEntry(Array.isArray(list) && list.some((e: { date: string }) => e.date === date));
       })
       .catch(() => {
         if (!cancelled) setHasEntry(false);
       });
     return () => { cancelled = true; };
-  }, [date]);
+  }, [date, refreshKey]);
   useEffect(() => {
     fetch("/api/settings")
       .then((r) => r.json())
@@ -125,7 +126,13 @@ export default function HomePage() {
           <p className="text-xs text-zinc-500">view journal</p>
         </Link>
       </div>
-      {previewDate && <EntryDialog date={previewDate} onClose={() => setPreviewDate(null)} />}
+      {previewDate && (
+        <EntryDialog
+          date={previewDate}
+          onClose={() => setPreviewDate(null)}
+          onChanged={() => setRefreshKey((k) => k + 1)}
+        />
+      )}
     </div>
   );
 }

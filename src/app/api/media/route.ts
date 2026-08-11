@@ -9,8 +9,8 @@ export async function GET(req: NextRequest) {
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const profile = getActiveProfile();
   if (!profile) return NextResponse.json({ error: "No active profile" }, { status: 400 });
-  if (!profile.media_enabled || !profile.media_folder) return NextResponse.json({ files: [] });
-  if (!existsSync(profile.media_folder)) return NextResponse.json({ files: [] });
+  if (!profile.media_enabled || !profile.media_folder) return NextResponse.json({ files: [], disabled: true });
+  if (!existsSync(profile.media_folder)) return NextResponse.json({ files: [], disabled: true });
 
   const url = new URL(req.url);
   const refresh = url.searchParams.get("refresh") === "1";

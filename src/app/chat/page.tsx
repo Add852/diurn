@@ -2,8 +2,9 @@
 
 import { Suspense, useEffect, useState, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { EntryPreview } from "@/components/entry-preview";
+import { EntryDialog } from "@/components/entry-dialog";
 import { IntegrationsPanel } from "@/components/integrations-panel";
+import { SkeletonLines } from "@/components/skeleton";
 
 interface Message {
   id: number;
@@ -24,7 +25,7 @@ function ChatContent() {
   >("loading");
   const [sessionId, setSessionId] = useState("");
   const [error, setError] = useState("");
-  const [preview, setPreview] = useState<{ rendered: string } | null>(null);
+  const [viewEntry, setViewEntry] = useState(false);
   const [overwriteConfirm, setOverwriteConfirm] = useState(false);
   const [integrations, setIntegrations] = useState<Record<string, any>>({});
   const [enabledIntegrations, setEnabledIntegrations] = useState<string[]>([]);
@@ -48,7 +49,6 @@ function ChatContent() {
       }
 
       if (d.rendered) {
-        setPreview({ rendered: d.rendered });
         setOverwriteConfirm(false);
         setStatus("complete");
       } else {
@@ -60,9 +60,23 @@ function ChatContent() {
       setStatus("error");
     }
   }
-  const endRef = useRef<HTMLDivElement>(null);
+
+  // Entry edited or deleted from the viewing dialog — if it no longer
+  // exists, let the user generate again.
+  async function handleEntryChanged() {
+    try {
+      const r = await fetch(`/api/entries?date=${encodeURIComponent(date)}`);
+      const list = await r.json();
+      if (Array.isArray(list) && !list.some((e) => e.date === date)) {
+        setStatus("awaiting_input");
+        setOverwriteConfirm(false);
+      }
+    } catch {}
+  }
+  const scrollerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const didInit = useRef(false);
+  const stuck = useRef(true); // pinned to bottom until the user scrolls up
 
   async function initSession() {
     didInit.current = true;
@@ -70,7 +84,7 @@ function ChatContent() {
     setError("");
     setMessages([]);
     setSessionId("");
-    setPreview(null);
+    setViewEntry(false);
     setRawContext(null);
     setIntegrations({});
     setEnabledIntegrations([]);
@@ -107,10 +121,38 @@ function ChatContent() {
       setStatus("error");
     }
   }
-
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "smooth" });
+    const sc = scrollerRef.current;
+    if (!sc) return;
+    if (stuck.current) sc.scrollTop = sc.scrollHeight;
   }, [messages, status]);
+
+  // While pinned, keep following new content; release the moment the user
+  // scrolls up away from the bottom, re-pin when they come back down.
+  // Also re-pin when the viewport shrinks (mobile keyboard with
+  // interactive-widget=resizes-content): the scroller gets shorter and the
+  // latest message would otherwise drop out of view.
+  useEffect(() => {
+    const sc = scrollerRef.current;
+    if (!sc) return;
+    const onScroll = () => {
+      stuck.current = sc.scrollHeight - sc.scrollTop - sc.clientHeight <= 80;
+    };
+    const onResize = () => {
+      if (!stuck.current) return;
+      requestAnimationFrame(() => {
+        if (stuck.current) sc.scrollTop = sc.scrollHeight;
+      });
+    };
+    sc.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("resize", onResize);
+    window.visualViewport?.addEventListener("resize", onResize);
+    return () => {
+      sc.removeEventListener("scroll", onScroll);
+      window.removeEventListener("resize", onResize);
+      window.visualViewport?.removeEventListener("resize", onResize);
+    };
+  }, []);
 
   useEffect(() => {
     if (didInit.current) return;
@@ -159,16 +201,18 @@ function ChatContent() {
       setStatus("awaiting_input");
     }
   }
-
   return (
-    <div className="flex flex-col min-h-[calc(100dvh-3.5rem)] -m-4 md:m-0 md:min-h-0">
-      <div className="flex-1 px-4 pt-4 pb-2">
+    <div className="-mx-4 flex h-full flex-col">
+      <div className="bg-zinc-950 px-4 pb-2 pt-4">
       <div className="mb-4 flex items-center justify-between">
         <h2 className="text-lg font-semibold text-zinc-300">{date}</h2>
         {status === "complete" && (
           <span className="text-xs text-emerald-400">Done</span>
         )}
       </div>
+      </div>
+
+      <div ref={scrollerRef} className="min-h-0 flex-1 overflow-y-auto overscroll-none px-4 pt-2 pb-4">
       <IntegrationsPanel enabled={enabledIntegrations} data={integrations} />
 
       <div className="space-y-4 mb-4">
@@ -214,7 +258,6 @@ function ChatContent() {
             </button>
           </div>
         )}
-        <div ref={endRef} />
       </div>
 
       {overwriteConfirm && (
@@ -239,11 +282,18 @@ function ChatContent() {
         </div>
       )}
 
-      {preview && (
-        <EntryPreview markdown={preview.rendered} collapsible defaultCollapsed />
+      {status === "complete" && !overwriteConfirm && (
+        <div className="flex justify-center mb-4">
+          <button
+            onClick={() => setViewEntry(true)}
+            className="rounded-lg bg-emerald-600 hover:bg-emerald-500 px-4 py-2 text-sm font-medium text-white"
+          >
+            View entry
+          </button>
+        </div>
       )}
 
-      {(preview || rawContext) && (
+      {(status === "complete" || rawContext) && (
         <details className="mb-4 bg-zinc-950 border border-zinc-800 rounded-lg p-3">
           <summary className="text-xs text-zinc-500 cursor-pointer list-none">
             Raw context &amp; input (debug)
@@ -292,9 +342,8 @@ function ChatContent() {
       )}
 
       </div>
-
       {status !== "complete" && (
-        <div className="sticky bottom-[calc(3.5rem+env(safe-area-inset-bottom,0px))] md:bottom-0 bg-zinc-950/95 backdrop-blur pt-2 pb-4 px-4 border-t border-zinc-800 safe-bottom">
+        <div className="bg-zinc-950 px-4 pt-2 pb-4 border-t border-zinc-800 safe-bottom">
           <form
             onSubmit={(e) => { e.preventDefault(); sendMessage(); }}
             className="flex gap-2"
@@ -331,7 +380,7 @@ function ChatContent() {
       )}
 
       {status === "complete" && (
-        <div className="sticky bottom-[calc(3.5rem+env(safe-area-inset-bottom,0px))] md:bottom-0 bg-zinc-950/95 backdrop-blur pt-2 pb-4 px-4 border-t border-zinc-800 safe-bottom">
+        <div className="bg-zinc-950 px-4 pt-2 pb-4 border-t border-zinc-800 safe-bottom">
           <div className="flex gap-2">
           <button
             onClick={() => router.push("/")}
@@ -342,13 +391,16 @@ function ChatContent() {
           </div>
         </div>
       )}
+      {viewEntry && (
+        <EntryDialog date={date} onClose={() => setViewEntry(false)} onChanged={handleEntryChanged} />
+      )}
     </div>
   );
 }
 
 export default function ChatPage() {
   return (
-    <Suspense fallback={<p className="text-zinc-500 text-sm py-8 text-center">Loading...</p>}>
+    <Suspense fallback={<SkeletonLines />}>
       <ChatContent />
     </Suspense>
   );
