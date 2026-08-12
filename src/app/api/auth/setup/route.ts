@@ -7,9 +7,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Already set up" }, { status: 403 });
   }
 
-  const { password } = await req.json();
+  const { password, timezone } = await req.json();
+  const validTZ = timezone && typeof timezone === "string" && /^[A-Za-z_\/+-]+$/.test(timezone) ? timezone : "UTC";
   if (!password || password.length < 4) {
-    return NextResponse.json({ error: "Password too short" }, { status: 400 });
   }
 
   const { hash, salt } = hashPassword(password);
@@ -22,17 +22,17 @@ export async function POST(req: NextRequest) {
   const userId = (db.prepare("SELECT id FROM users WHERE username = 'admin'").get() as any).id;
 
   db.prepare(
-    `INSERT INTO profiles (user_id, name, is_default, is_active, llm_endpoint, llm_model, personality_prompt, asking_method)
-     VALUES (?, ?, 1, 1, ?, ?, ?, ?)`
+    `INSERT INTO profiles (user_id, name, is_default, is_active, llm_endpoint, llm_model, personality_prompt, asking_method, timezone)
+     VALUES (?, ?, 1, 1, ?, ?, ?, ?, ?)`
   ).run(
     userId,
     "Default",
     "http://localhost:20128/v1",
     "freethinkers",
     "You are a thoughtful daily journaling companion. You help the user reflect on their day with warmth and directness. Ask questions to capture the day's texture — concise, natural, no therapy-fluff. No bullet points in conversation — save those for notes.",
-    "ask_in_one_go"
+    "ask_in_one_go",
+    validTZ
   );
-
   const profileId = (db.prepare("SELECT id FROM profiles WHERE user_id = ? AND is_default = 1").get() as any).id;
 
   const questions = [

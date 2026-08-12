@@ -9,7 +9,7 @@ export default function SetupPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const router = useRouter();
-
+  const browserTZ = typeof Intl !== "undefined" ? Intl.DateTimeFormat().resolvedOptions().timeZone : "UTC";
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (password !== confirm) return setError("Passwords don't match");
@@ -20,7 +20,7 @@ export default function SetupPage() {
     const res = await fetch("/api/auth/setup", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ password }),
+      body: JSON.stringify({ password, timezone: browserTZ }),
     });
     if (!res.ok) {
       let msg = "Failed";
