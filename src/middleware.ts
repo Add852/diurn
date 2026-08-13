@@ -3,7 +3,8 @@ import { NextRequest, NextResponse } from "next/server";
 export const config = {
   matcher: [
     // Pages only; API routes self-check auth and return JSON 401.
-    "/((?!_next/static|_next/image|favicon.ico|api|login|setup).*)",
+    // Exclude PWA files: service worker, workbox, manifest, icons
+    "/((?!_next/static|_next/image|favicon.ico|api|login|setup|sw\\.js|workbox-|manifest\\.json|icon-).*)",
   ],
 };
 
