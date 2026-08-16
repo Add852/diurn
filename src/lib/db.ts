@@ -2,6 +2,7 @@ import Database from "better-sqlite3";
 import { readFileSync, mkdirSync, existsSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
+import { localDate } from "@/lib/timezone";
 
 export interface Profile {
   id: number;
@@ -145,18 +146,46 @@ export function getProfileQuestions(profileId: number): ProfileQuestion[] {
     .all(profileId) as ProfileQuestion[];
 }
 
-export function getStreakCount(profileId: number): number {
-  const rows = getDb()
+export function getStreakCount(profileId: number, timezone?: string): number {
+  const db = getDb();
+  const rows = db
     .prepare(`SELECT DISTINCT date FROM entries WHERE profile_id = ? ORDER BY date DESC`)
     .all(profileId) as { date: string }[];
 
   if (rows.length === 0) return 0;
 
+  const today = localDate(new Date(), timezone);
+  const yesterday = localDate(Date.now() - 86_400_000, timezone);
+
+  const hasToday = rows.some((r) => r.date === today);
+  const hasYesterday = rows.some((r) => r.date === yesterday);
+
+  // No entry today or yesterday -> streak broken
+  if (!hasToday && !hasYesterday) return 0;
+
+  // Start counting from today if it has entry, else from yesterday
+  const startDate = hasToday ? today : yesterday;
   let streak = 1;
+
   for (let i = 0; i < rows.length - 1; i++) {
+    if (rows[i].date !== startDate) continue;
     const diff = (new Date(rows[i].date).getTime() - new Date(rows[i + 1].date).getTime()) / 86_400_000;
     if (diff === 1) streak++;
     else break;
   }
   return streak;
+}
+
+export function getStreakStatus(profileId: number, timezone?: string): { streak: number; active: boolean } {
+  const db = getDb();
+  const rows = db
+    .prepare(`SELECT DISTINCT date FROM entries WHERE profile_id = ? ORDER BY date DESC`)
+    .all(profileId) as { date: string }[];
+
+  if (rows.length === 0) return { streak: 0, active: false };
+
+  const today = localDate(new Date(), timezone);
+  const hasToday = rows.some((r) => r.date === today);
+
+  return { streak: getStreakCount(profileId, timezone), active: hasToday };
 }

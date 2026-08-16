@@ -16,11 +16,12 @@ function todayIn(timeZone?: string): string {
 export default function HomePage() {
   const [date, setDate] = useState(todayIn());
   const touchedRef = useRef(false);
-  const [previewDate, setPreviewDate] = useState<string | null>(null);
-  const [streak, setStreak] = useState(0);
-  const [profileName, setProfileName] = useState("");
-  const [hasEntry, setHasEntry] = useState<boolean | null>(null);
-  const [refreshKey, setRefreshKey] = useState(0);
+const [previewDate, setPreviewDate] = useState<string | null>(null);
+const [streak, setStreak] = useState(0);
+const [streakActive, setStreakActive] = useState(false);
+const [profileName, setProfileName] = useState("");
+const [hasEntry, setHasEntry] = useState<boolean | null>(null);
+const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -50,7 +51,10 @@ export default function HomePage() {
     fetch("/api/entries?streak=1")
       .then((r) => r.json())
       .then((d) => {
-        if (d.streak !== undefined) setStreak(d.streak);
+        if (d.streak !== undefined) {
+          setStreak(d.streak);
+          if (d.active !== undefined) setStreakActive(d.active);
+        }
       })
       .catch(() => {});
   }, []);
@@ -114,8 +118,16 @@ export default function HomePage() {
       </Link>
 
       <div className="grid grid-cols-2 gap-4 mt-8 text-center">
-        <div className="bg-zinc-900 rounded-lg p-4">
-          <p className="text-2xl font-bold text-emerald-400">{streak}</p>
+        <div className="bg-zinc-900 rounded-lg p-4 relative">
+          {streakActive && streak > 0 && (
+            <div
+              className="absolute inset-0 rounded-lg bg-emerald-400/30 blur-[30px] animate-pulse"
+              aria-hidden="true"
+            />
+          )}
+          <p className={`text-2xl font-bold relative ${streakActive && streak > 0 ? "text-emerald-300 drop-shadow-[0_0_8px_rgba(16,185,129,0.6)]" : "text-emerald-400"}`}>
+            {streak}
+          </p>
           <p className="text-xs text-zinc-500">day streak</p>
         </div>
         <Link

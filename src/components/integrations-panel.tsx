@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { MediaThumb } from "@/components/media-thumb";
+import { MediaLightbox, type MediaItem } from "@/components/media-lightbox";
 
 const DEFAULT_LIMIT = 5;
 
@@ -99,7 +100,8 @@ function NotesSection({ value, expanded, onToggle }: { value: any; expanded: boo
 }
 
 function MediaSection({ value }: { value: any }) {
-  const files: any[] = value?.files ?? [];
+  const files: MediaItem[] = value?.files ?? [];
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   if (files.length === 0) {
     return <p className="text-xs text-zinc-600">No media taken today.</p>;
   }
@@ -107,16 +109,23 @@ function MediaSection({ value }: { value: any }) {
     <div>
       <p className="text-xs text-zinc-500 mb-1">Media &middot; {files.length} files</p>
       <div className="flex gap-2 overflow-x-auto pb-1">
-        {files.map((m: any) => (
-          <a key={m.path} href={m.src} target="_blank" rel="noreferrer" className="flex-shrink-0 w-14 h-14 bg-zinc-800 rounded-lg border border-zinc-700 overflow-hidden hover:border-zinc-500 transition-colors">
+        {files.map((m, i) => (
+          <button
+            key={m.path}
+            onClick={() => setLightboxIndex(i)}
+            className="flex-shrink-0 w-14 h-14 bg-zinc-800 rounded-lg border border-zinc-700 overflow-hidden hover:border-zinc-500 transition-colors"
+          >
             {m.type === "image" ? (
               <img src={m.src} alt={m.name} className="w-full h-full object-cover" loading="lazy" />
             ) : (
               <MediaThumb src={m.src} iconClass="w-3 h-3" />
             )}
-          </a>
+          </button>
         ))}
       </div>
+      {lightboxIndex !== null && (
+        <MediaLightbox items={files} initialIndex={lightboxIndex} onClose={() => setLightboxIndex(null)} />
+      )}
     </div>
   );
 }

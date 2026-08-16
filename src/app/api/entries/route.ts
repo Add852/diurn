@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getDb, getActiveProfile, getProfileQuestions, getStreakCount, type ProfileQuestion } from "@/lib/db";
+import { getDb, getActiveProfile, getProfileQuestions, getStreakStatus, type ProfileQuestion } from "@/lib/db";
 import { requireAuth } from "@/lib/auth";
 import { chatCompletion, llmConfig } from "@/lib/ai";
 import { renderTemplate, type TemplateVar } from "@/lib/template";
@@ -26,12 +26,12 @@ export async function GET(req: NextRequest) {
   const month = url.searchParams.get("month");
   const year = url.searchParams.get("year");
   const streakOnly = url.searchParams.get("streak") === "1";
-  const date = url.searchParams.get("date");
+  const queryDate = url.searchParams.get("date");
   const profile = getActiveProfile();
   const db = getDb();
 
   if (streakOnly && profile) {
-    return NextResponse.json({ streak: getStreakCount(profile.id) });
+    return NextResponse.json(getStreakStatus(profile.id, profile.timezone));
   }
 
   let query = "SELECT * FROM entries";
@@ -48,10 +48,10 @@ export async function GET(req: NextRequest) {
     params.push(`${year}-${String(month).padStart(2, "0")}`);
   }
 
-  if (date) {
+  if (queryDate) {
     query += profile ? " AND" : " WHERE";
     query += " date = ?";
-    params.push(date);
+    params.push(queryDate);
   }
 
   query += " ORDER BY date DESC";
@@ -68,7 +68,7 @@ export async function GET(req: NextRequest) {
       const date = dateMatch[1];
       if (seenDates.has(date)) continue;
       if (month && year && !date.startsWith(`${year}-${String(month).padStart(2, "0")}`)) continue;
-      if (date && dateMatch[1] !== date) continue;
+      if (queryDate && date !== queryDate) continue;
 
       const content = await readFile(join(profile.daily_note_folder, file), "utf-8").catch(() => "");
       if (!content) continue;
@@ -119,69 +119,51 @@ export async function POST(req: NextRequest) {
   }
 
   const questions = getProfileQuestions(profile.id);
-  let allUserInput = messages
+  const allUserInput = messages
     .filter((m) => m.role === "user")
     .map((m) => m.content)
     .join("\n\n");
   const config = llmConfig(profile);
 
-  const systemMsg = msgs.filter((m) => m.role === "system").slice(0, 1);
+  // The chat session's system message carries the conversational persona and
+  // date context; reusing it for extraction makes the model answer in chat
+  // voice and claim it can't see the input. Extraction needs its own prompt.
+  const extractionSystemMsg = {
+    role: "system" as const,
+    content:
+      "You are a precise data extractor for a daily journal. Extract or infer a concise answer for the given item strictly from the provided user input. Do not respond conversationally, do not mention missing context, tools, or external data, and do not add commentary. Output ONLY the answer text — no JSON, no markdown, no formatting.",
+  };
   const answers: Record<string, TemplateVar> = {};
 
   if (questions.length > 0) {
-    const shape = `{ ${questions.map((q) => `"${q.identifier}": "<answer>"`).join(", ")} }`;
-    const batchPrompt = `Based on ALL of the user's input below, answer each question.
+    for (const q of questions) {
+      const title = q.question ? `"${q.question}"` : `Key "${q.identifier}"`;
+      const prompt = `Based ONLY on the user's input below, answer this item.
 
 User input:
 ${allUserInput}
 
-${questions.map((q) => `Question "${q.identifier}" — ${q.question}\nInstructions: ${q.answer_prompt}`).join("\n\n")}
+Item: ${title}
+Instructions: ${q.answer_prompt || "Extract the relevant details from the user's input."}
 
-Respond with ONLY valid JSON in exactly this shape, no text outside it:
-${shape}`;
-    try {
-      const raw = await chatCompletion(config, [...systemMsg, { role: "user", content: batchPrompt }], 60000);
-      // LLM JSON is untrusted: keys are validated per-question below.
-      const parsed: unknown = JSON.parse(raw.match(/\{[\s\S]*\}/)?.[0] || "{}");
-      if (parsed && typeof parsed === "object") {
-        const rec = parsed as Record<string, unknown>;
-        for (const q of questions) {
-          const value = rec[q.identifier];
-          answers[q.identifier] = { question: q.question, answer: typeof value === "string" ? value.trim() : "", asked: !!q.asked, prompt: q.answer_prompt || "" };
-        }
-      }
-    } catch {}
-  }
-
-  // Fallback: ask individually for anything the batch call didn't answer.
-  const missing = questions.filter((q) => !answers[q.identifier]?.answer);
-  if (missing.length > 0) {
-    const ask = async (q: ProfileQuestion) => {
-      const prompt = `Based on ALL of the user's input below, answer this:
-
-User input:
-${allUserInput}
-
-For this question: "${q.question}"
-Instructions: ${q.answer_prompt}
-
-Provide ONLY the answer, no extra text. Keep under 3 lines.`;
+Respond with ONLY the answer, no extra text. Keep under 3 lines.`;
       try {
         const answer = await chatCompletion(config, [
-          ...systemMsg,
+          extractionSystemMsg,
           { role: "user", content: prompt },
         ], 45000);
-        return [q.identifier, { question: q.question, answer }] as const;
+        answers[q.identifier] = {
+          question: q.question,
+          answer: typeof answer === "string" ? answer.trim() : String(answer || "").trim(),
+          asked: !!q.asked,
+          prompt: q.answer_prompt || "",
+        };
       } catch {
-        return [q.identifier, { question: q.question, answer: "" }] as const;
+        answers[q.identifier] = { question: q.question, answer: "", asked: !!q.asked, prompt: q.answer_prompt || "" };
       }
-    };
-    const pairs = await Promise.all(missing.map(ask));
-    for (const [id, kv] of pairs) {
-      const t = answers[id];
-      if (t) t.answer = kv.answer;
     }
   }
+
 
   let templateContent = "";
   if (profile.template_note_path && existsSync(profile.template_note_path)) {
