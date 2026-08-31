@@ -22,7 +22,7 @@ export async function GET(req: NextRequest) {
   if (pending) await pending;
 
   if (refresh || needsRefresh(profile.id) || isDirty(profile.id)) {
-    scanMediaFolder(profile.media_folder, profile.id, profile.timezone).catch(() => {});
+    scanMediaFolder(profile.media_folder, profile.id, profile.timezone, profile.day_offset_hours).catch(() => {});
     return NextResponse.json({ files: [], scanning: true });
   }
 

@@ -31,7 +31,7 @@ export async function GET(req: NextRequest) {
   const db = getDb();
 
   if (streakOnly && profile) {
-    return NextResponse.json(getStreakStatus(profile.id, profile.timezone));
+    return NextResponse.json(getStreakStatus(profile.id, profile.timezone, profile.day_offset_hours));
   }
 
   let query = "SELECT * FROM entries";

@@ -38,11 +38,19 @@ export async function PUT(req: NextRequest) {
     if (!p.id) {
       return NextResponse.json({ error: "Profile missing id" }, { status: 400 });
     }
+    if (p.day_offset_hours !== undefined && (!Number.isInteger(p.day_offset_hours) || p.day_offset_hours < 0 || p.day_offset_hours > 24)) {
+      return NextResponse.json({ error: "day_offset_hours must be an integer 0-24" }, { status: 400 });
+    }
+    const current = db.prepare("SELECT * FROM profiles WHERE id = ?").get(p.id) as any;
+    if (!current) {
+      return NextResponse.json({ error: "Profile not found" }, { status: 404 });
+    }
     try {
 db.prepare(`UPDATE profiles SET
       name=?, daily_note_folder=?, template_note_path=?,
       google_tasks_enabled=?, google_tasks_config=?, google_calendar_enabled=?,
       google_calendar_config=?, google_client_id=?, google_client_secret=?,
+      day_offset_hours=?,
       media_enabled=?, media_folder=?,
       obsidian_enabled=?, obsidian_folder=?, obsidian_exclude_folders=?, obsidian_include_content=?,
       llm_endpoint=?, llm_model=?,
@@ -51,6 +59,7 @@ db.prepare(`UPDATE profiles SET
       p.name, p.daily_note_folder || "", p.template_note_path || "",
       p.google_tasks_enabled ? 1 : 0, p.google_tasks_config || "{}", p.google_calendar_enabled ? 1 : 0,
       p.google_calendar_config || "{}", p.google_client_id || "", p.google_client_secret || "",
+      p.day_offset_hours ?? current.day_offset_hours,
       p.media_enabled ? 1 : 0, p.media_folder || "",
       p.obsidian_enabled ? 1 : 0, p.obsidian_folder || "", p.obsidian_exclude_folders || "", p.obsidian_include_content ? 1 : 0,
       p.llm_endpoint, p.llm_model,
@@ -59,6 +68,9 @@ db.prepare(`UPDATE profiles SET
       p.id,
     );
       console.log("[settings PUT] profile updated id:", p.id);
+      if (p.day_offset_hours !== undefined && p.day_offset_hours !== current.day_offset_hours) {
+        getDb().prepare("DELETE FROM media_cache WHERE profile_id = ?").run(p.id);
+      }
     } catch (err: any) {
       console.error("[settings PUT] profile update failed:", err.message);
       return NextResponse.json({ error: `Profile save failed: ${err.message}` }, { status: 500 });

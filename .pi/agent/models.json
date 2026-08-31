@@ -1,0 +1,53 @@
+{
+  "providers": {
+    "9router": {
+      "baseUrl": "http://localhost:20128/v1",
+      "api": "openai-completions",
+      "apiKey": "9router_custom",
+      "models": [
+        {
+          "id": "orca/deepseek/deepseek-v4-flash-free",
+          "name": "DeepSeek V4 Flash Orca",
+          "reasoning": true,
+          "input": ["text"],
+          "contextWindow": 28000,
+          "maxTokens": 8192,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0
+          }
+        },
+        {
+          "id": "openrouter/minimax/minimax-m3:free",
+          "name": "minimax-m3",
+          "reasoning": true,
+          "input": ["text"],
+          "contextWindow": 200000,
+          "maxTokens": 8192,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0
+          }
+        },
+        {
+          "id": "nemotron-ultra",
+          "name": "nemotron-ultra",
+          "reasoning": true,
+          "input": ["text"],
+          "contextWindow": 200000,
+          "maxTokens": 8192,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0
+          }
+        }
+      ]
+    }
+  }
+}

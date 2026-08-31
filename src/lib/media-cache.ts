@@ -10,7 +10,7 @@ const IMAGE_EXTS = new Set([".jpg", ".jpeg", ".png", ".heic", ".heif", ".webp"])
 
 type ResolvedDate = { date: string; capturedAt: number | null };
 
-async function dateFromExif(filePath: string, timezone?: string): Promise<ResolvedDate | undefined> {
+async function dateFromExif(filePath: string, timezone?: string, offsetHours?: number): Promise<ResolvedDate | undefined> {
   if (!IMAGE_EXTS.has(extname(filePath).toLowerCase())) return undefined;
   try {
     const exifr = (await import("exifr")).default;
@@ -23,7 +23,7 @@ async function dateFromExif(filePath: string, timezone?: string): Promise<Resolv
       if (raw) {
         const d = new Date(String(raw));
         if (!isNaN(d.getTime())) {
-          return { date: localDate(d, timezone), capturedAt: d.getTime() };
+          return { date: localDate(d, timezone, offsetHours), capturedAt: d.getTime() };
         }
         const m = String(raw).match(/(\d{4})[-:](\d{2})[-:](\d{2})/);
         if (m) {
@@ -36,16 +36,16 @@ async function dateFromExif(filePath: string, timezone?: string): Promise<Resolv
   return undefined;
 }
 
-async function dateFromFS(filePath: string, timezone?: string): Promise<ResolvedDate | undefined> {
+async function dateFromFS(filePath: string, timezone?: string, offsetHours?: number): Promise<ResolvedDate | undefined> {
   try {
     const s = await stat(filePath);
     const ms = (s.birthtime || s.mtime).getTime();
-    return { date: localDate(ms, timezone), capturedAt: ms };
+    return { date: localDate(ms, timezone, offsetHours), capturedAt: ms };
   } catch {}
   return undefined;
 }
-async function resolveDate(filePath: string, timezone?: string): Promise<ResolvedDate> {
-  return (await dateFromExif(filePath, timezone)) || (await dateFromFS(filePath, timezone)) || { date: "unknown-date", capturedAt: null };
+async function resolveDate(filePath: string, timezone?: string, offsetHours?: number): Promise<ResolvedDate> {
+  return (await dateFromExif(filePath, timezone, offsetHours)) || (await dateFromFS(filePath, timezone, offsetHours)) || { date: "unknown-date", capturedAt: null };
 }
 
 export function pendingScan(profileId: number): Promise<number> | undefined {
@@ -82,17 +82,17 @@ export function maybeBackgroundScan() {
   try {
     const profile = getActiveProfile();
     if (profile?.media_enabled && profile.media_folder) {
-      scanMediaFolder(profile.media_folder, profile.id, profile.timezone).catch(() => {});
+      scanMediaFolder(profile.media_folder, profile.id, profile.timezone, profile.day_offset_hours).catch(() => {});
     }
   } catch {}
 }
 
-export async function scanMediaFolder(folder: string, profileId: number, timezone?: string): Promise<number> {
+export async function scanMediaFolder(folder: string, profileId: number, timezone?: string, offsetHours?: number): Promise<number> {
   startWatcher(folder, profileId);
   const existing = _scanLocks.get(profileId);
   if (existing) return existing;
 
-  const promise = _doScan(folder, profileId, timezone);
+  const promise = _doScan(folder, profileId, timezone, offsetHours);
   _scanLocks.set(profileId, promise);
   try {
     return await promise;
@@ -102,7 +102,7 @@ export async function scanMediaFolder(folder: string, profileId: number, timezon
   }
 }
 
-async function _doScan(folder: string, profileId: number, timezone?: string): Promise<number> {
+async function _doScan(folder: string, profileId: number, timezone?: string, offsetHours?: number): Promise<number> {
   const db = getDb();
   const cached = new Map<string, number>();
   for (const r of db.prepare("SELECT path, mtime FROM media_cache WHERE profile_id = ?").all(profileId) as { path: string; mtime: number }[]) {
@@ -164,7 +164,7 @@ async function _doScan(folder: string, profileId: number, timezone?: string): Pr
     const BATCH = 16;
     for (let i = 0; i < fresh.length; i += BATCH) {
       const batch = fresh.slice(i, i + BATCH);
-      const resolved = await Promise.all(batch.map((f) => resolveDate(f.path, timezone)));
+      const resolved = await Promise.all(batch.map((f) => resolveDate(f.path, timezone, offsetHours)));
       db.transaction(() => {
         for (let j = 0; j < batch.length; j++) {
           insert.run(batch[j].path, profileId, resolved[j].date, resolved[j].capturedAt, batch[j].type, batch[j].mtime);

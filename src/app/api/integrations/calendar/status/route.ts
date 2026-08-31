@@ -8,7 +8,7 @@ export async function GET(req: NextRequest) {
   if (guard instanceof NextResponse) return guard;
   const { profile } = guard;
 
-  const date = new URL(req.url).searchParams.get("date") || localDate(new Date(), profile.timezone);
+  const date = new URL(req.url).searchParams.get("date") || localDate(new Date(), profile.timezone, profile.day_offset_hours);
   const { connected, reason, events } = await fetchDayEvents(profile, date);
 
   return NextResponse.json({ connected, reason, count: events.length, events });

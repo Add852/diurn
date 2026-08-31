@@ -81,9 +81,35 @@ test("localDate: timezone-correct date boundary", () => {
 });
 
 test("dateRange: offset formatting", () => {
-  const r = dateRange("http://x?date=2026-08-09", "America/New_York");
+  const r = dateRange("2026-08-09", "America/New_York");
   assert.equal(r.min, "2026-08-09T00:00:00-04:00");
-  assert.equal(r.max, "2026-08-09T23:59:59-04:00");
+  assert.equal(r.max, "2026-08-10T00:00:00-04:00");
+});
+
+test("dateRange: day offset shifts the window", () => {
+  // offset 4 means "day starts at 04:00 in the user's tz"
+  const r = dateRange("2026-08-09", "America/New_York", 4);
+  assert.equal(r.min, "2026-08-09T04:00:00-04:00");
+  assert.equal(r.max, "2026-08-10T04:00:00-04:00");
+});
+
+test("dateRange: zero offset matches default behavior", () => {
+  const r = dateRange("2026-08-09", "America/New_York", 0);
+  assert.equal(r.min, "2026-08-09T00:00:00-04:00");
+  assert.equal(r.max, "2026-08-10T00:00:00-04:00");
+});
+
+test("localDate: day offset shifts early-morning timestamps to prior day", () => {
+  // 2026-08-09T02:00 UTC = 22:00 prev day in NY (EDT, -4)
+  // With offset 0, that's still 2026-08-08 in NY
+  // With offset 12 (day starts at noon), 2am UTC is 14:00 prev day in NY → still 2026-08-08
+  // More useful: 2026-08-09T08:00 UTC = 04:00 in NY → with offset 4, day just started, still 2026-08-09
+  // 2026-08-09T06:00 UTC = 02:00 in NY → with offset 4, before day start, still 2026-08-08
+  const msEarly = Date.UTC(2026, 7, 9, 6, 0, 0); // 02:00 NY
+  const msLate = Date.UTC(2026, 7, 9, 8, 0, 0); // 04:00 NY
+  assert.equal(localDate(msEarly, "America/New_York", 0), "2026-08-09");
+  assert.equal(localDate(msEarly, "America/New_York", 4), "2026-08-08");
+  assert.equal(localDate(msLate, "America/New_York", 4), "2026-08-09");
 });
 
 test("formatTemplateDate: .NET specifiers", () => {

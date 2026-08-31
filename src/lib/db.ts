@@ -18,6 +18,7 @@ export interface Profile {
   google_calendar_config: string;
   google_client_id: string;
   google_client_secret: string;
+  day_offset_hours: number;
   media_enabled: number;
   media_folder: string;
   obsidian_enabled: number;
@@ -117,6 +118,7 @@ function migrateProfileColumns(db: Database.Database) {
   add("google_client_id", "TEXT NOT NULL DEFAULT ''");
   add("google_client_secret", "TEXT NOT NULL DEFAULT ''");
   add("timezone", "TEXT NOT NULL DEFAULT 'UTC'");
+  add("day_offset_hours", "INTEGER NOT NULL DEFAULT 0");
 }
 
 function migrateObsidianColumns(db: Database.Database) {
@@ -172,7 +174,7 @@ export function getProfileQuestions(profileId: number): ProfileQuestion[] {
     .all(profileId) as ProfileQuestion[];
 }
 
-export function getStreakStatus(profileId: number, timezone?: string): { streak: number; active: boolean } {
+export function getStreakStatus(profileId: number, timezone?: string, offsetHours?: number): { streak: number; active: boolean } {
   const db = getDb();
   const rows = db
     .prepare(`SELECT DISTINCT date FROM entries WHERE profile_id = ? ORDER BY date DESC`)
@@ -180,8 +182,8 @@ export function getStreakStatus(profileId: number, timezone?: string): { streak:
 
   if (rows.length === 0) return { streak: 0, active: false };
 
-  const today = localDate(new Date(), timezone);
-  const yesterday = localDate(Date.now() - 86_400_000, timezone);
+  const today = localDate(new Date(), timezone, offsetHours);
+  const yesterday = localDate(Date.now() - 86_400_000, timezone, offsetHours);
   const hasToday = rows.some((r) => r.date === today);
   const hasYesterday = rows.some((r) => r.date === yesterday);
 

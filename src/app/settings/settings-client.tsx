@@ -352,6 +352,7 @@ export function SettingsClient({
               ))}
             </select>
           </div>
+          <DayOffsetField value={draft.day_offset_hours ?? 0} onChange={(v) => updateDraft({ day_offset_hours: v })} />
         </div>
       )}
 
@@ -572,6 +573,38 @@ function Field({ label, value, onChange, placeholder, type = "text" }: { label: 
     <div>
       <label className="block text-xs text-zinc-500 mb-1">{label}</label>
       <input type={type} value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-none focus:border-emerald-500 placeholder:text-zinc-500" />
+    </div>
+  );
+}
+
+function DayOffsetField({ value, onChange }: { value: number; onChange: (v: number) => void }) {
+  const n = Math.max(0, Math.min(24, Math.trunc(Number.isFinite(value) ? value : 0)));
+  const endH = (n + 24) % 24;
+  const endDayOffset = Math.floor((n + 24) / 24);
+  const endLabel = endDayOffset === 0 ? "" : ` (+${endDayOffset} day${endDayOffset > 1 ? "s" : ""})`;
+  return (
+    <div>
+      <label className="block text-xs text-zinc-500 mb-1">Day start (hours offset)</label>
+      <div className="flex items-center gap-2">
+        <input
+          type="number"
+          min={0}
+          max={24}
+          step={1}
+          value={n}
+          onChange={(e) => {
+            const v = Math.round(Number(e.target.value));
+            if (Number.isFinite(v)) onChange(Math.max(0, Math.min(24, v)));
+          }}
+          className="w-24 bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-none focus:border-emerald-500"
+        />
+        <span className="text-xs text-zinc-500">
+          Day starts at {String(n).padStart(2, "0")}:00 local, ends at {String(endH).padStart(2, "0")}:00 next day{endLabel}
+        </span>
+      </div>
+      <p className="text-xs text-zinc-500 mt-1">
+        Useful for night owls or shift workers. 0 = midnight (default). 4 = 4am. Applied to today&apos;s date, streaks, tasks, calendar, and media bucketing.
+      </p>
     </div>
   );
 }

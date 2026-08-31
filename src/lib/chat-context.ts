@@ -43,7 +43,7 @@ export interface EventCtx {
 
 type LlmConfig = { endpoint: string; apiKey: string; model: string };
 
-async function noteDate(filePath: string, timezone?: string): Promise<string | undefined> {
+async function noteDate(filePath: string, timezone?: string, offsetHours?: number): Promise<string | undefined> {
   try {
     const content = await readFile(filePath, "utf-8");
     const created = parseFrontmatter(content).data.created;
@@ -53,17 +53,17 @@ async function noteDate(filePath: string, timezone?: string): Promise<string | u
       const hasExplicitZone = /(?:Z|[+-]\d{2}:?\d{2})$/.test(raw);
       if (bare && !hasExplicitZone) return `${bare[1]}-${bare[2]}-${bare[3]}`;
       const d = new Date(raw);
-      if (!isNaN(d.getTime())) return localDate(d.getTime(), timezone);
+      if (!isNaN(d.getTime())) return localDate(d.getTime(), timezone, offsetHours);
     }
   } catch {}
   try {
     const s = await stat(filePath);
-    return localDate(s.birthtimeMs || s.ctimeMs, timezone);
+    return localDate(s.birthtimeMs || s.ctimeMs, timezone, offsetHours);
   } catch {}
   return undefined;
 }
 
-async function walkNotesFolder(folder: string, exclude: string[], tz: string | undefined, date: string): Promise<string[]> {
+async function walkNotesFolder(folder: string, exclude: string[], tz: string | undefined, offsetHours: number | undefined, date: string): Promise<string[]> {
   const found: string[] = [];
   const walk = async (dir: string) => {
     let entries;
@@ -81,7 +81,7 @@ async function walkNotesFolder(folder: string, exclude: string[], tz: string | u
         await walk(p);
       } else if (extname(entry.name).toLowerCase() === ".md") {
         if (exclude.some((e) => rel.split(/[\\/]/).some((seg) => seg === e))) continue;
-        if (await noteDate(p, tz) === date) found.push(p);
+        if (await noteDate(p, tz, offsetHours) === date) found.push(p);
       }
     }
   };
@@ -124,7 +124,7 @@ export async function buildNotesContext(
   if (!existsSync(folder)) return [];
 
   const exclude = (profile.obsidian_exclude_folders || "").split(",").map((s) => s.trim()).filter(Boolean);
-  const paths = (await walkNotesFolder(folder, exclude, profile.timezone, date)).slice(0, NOTES_LIMIT);
+  const paths = (await walkNotesFolder(folder, exclude, profile.timezone, profile.day_offset_hours, date)).slice(0, NOTES_LIMIT);
   if (paths.length === 0) return [];
 
   const items: NoteCtx[] = paths.map((p) => {
@@ -187,7 +187,7 @@ export async function fetchDayTasks(
         if (!r.ok) continue;
         for (const t of (await r.json()).items || []) {
           if (!t.title) continue;
-          if (t.status === "completed" && t.completed && localDate(t.completed, profile.timezone) === date) {
+          if (t.status === "completed" && t.completed && localDate(t.completed, profile.timezone, profile.day_offset_hours) === date) {
             completedToday.push({ title: t.title, status: t.status, listName: list.title, description: t.notes || undefined });
           } else if (t.due && t.due.startsWith(date)) {
             dueToday.push({ title: t.title, status: t.status || "needsAction", listName: list.title, description: t.notes || undefined });
@@ -217,7 +217,7 @@ export async function fetchDayEvents(
     return { connected: false, reason: cfg.tokens ? "auth_expired" : "not_authenticated", events: [] };
   }
   try {
-    const { min, max } = dateRange(`https://x?date=${date}`, profile.timezone);
+    const { min, max } = dateRange(date, profile.timezone, profile.day_offset_hours);
     const res = await fetch(
       `https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${encodeURIComponent(min)}&timeMax=${encodeURIComponent(max)}&singleEvents=true&orderBy=startTime&maxResults=25`,
       { headers: { Authorization: `Bearer ${token}` } }

@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS profiles (
   google_calendar_config TEXT NOT NULL DEFAULT '{}',
   google_client_id TEXT NOT NULL DEFAULT '',
   google_client_secret TEXT NOT NULL DEFAULT '',
+  day_offset_hours INTEGER NOT NULL DEFAULT 0,
   media_enabled INTEGER NOT NULL DEFAULT 0,
   media_folder TEXT NOT NULL DEFAULT '',
   obsidian_enabled INTEGER NOT NULL DEFAULT 0,

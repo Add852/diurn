@@ -3,23 +3,17 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { EntryDialog } from "@/components/entry-dialog";
-
-function todayIn(timeZone?: string): string {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(new Date());
-}
+import { localDate } from "@/lib/timezone";
 
 export default function HomeClient() {
-  const [date, setDate] = useState(todayIn());
+  const [date, setDate] = useState(localDate(new Date()));
   const touchedRef = useRef(false);
   const [previewDate, setPreviewDate] = useState<string | null>(null);
   const [streak, setStreak] = useState(0);
   const [streakActive, setStreakActive] = useState(false);
   const [profileName, setProfileName] = useState("");
+  const [profileTz, setProfileTz] = useState<string | undefined>(undefined);
+  const [profileOffset, setProfileOffset] = useState<number | undefined>(undefined);
   const [hasEntry, setHasEntry] = useState<boolean | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
 
@@ -30,13 +24,14 @@ export default function HomeClient() {
       .then((r) => r.json())
       .then((list) => {
         if (cancelled) return;
-        setHasEntry(Array.isArray(list) && list.some((e: { date: string }) => e.date === date));
+        const today = localDate(new Date(), profileTz, profileOffset);
+        setHasEntry(Array.isArray(list) && list.some((e: { date: string }) => e.date === today));
       })
       .catch(() => {
         if (!cancelled) setHasEntry(false);
       });
     return () => { cancelled = true; };
-  }, [date, refreshKey]);
+  }, [date, refreshKey, profileTz, profileOffset]);
 
   useEffect(() => {
     fetch("/api/settings")
@@ -44,7 +39,9 @@ export default function HomeClient() {
       .then((d) => {
         if (d.profile) {
           setProfileName(d.profile.name);
-          if (d.profile.timezone && !touchedRef.current) setDate(todayIn(d.profile.timezone));
+          setProfileTz(d.profile.timezone);
+          setProfileOffset(d.profile.day_offset_hours);
+          if (!touchedRef.current) setDate(localDate(new Date(), d.profile.timezone, d.profile.day_offset_hours));
         }
       })
       .catch(() => {});
@@ -94,7 +91,7 @@ export default function HomeClient() {
             type="date"
             value={date}
             onChange={(e) => { touchedRef.current = true; setDate(e.target.value); }}
-            max={todayIn()}
+            max={localDate(new Date(), profileTz, profileOffset)}
             className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-emerald-500 text-zinc-200 [color-scheme:dark]"
           />
           {hasEntry && (

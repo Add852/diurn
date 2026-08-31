@@ -1,5 +1,7 @@
-export function localDate(input: number | string | Date, timezone?: string): string {
-  const d = input instanceof Date ? input : new Date(input);
+export function localDate(input: number | string | Date, timezone?: string, offsetHours?: number): string {
+  const offset = offsetHours != null && Number.isFinite(offsetHours) ? Math.trunc(offsetHours) : 0;
+  const raw = input instanceof Date ? input.getTime() : new Date(input).getTime();
+  const d = new Date(raw - offset * 3_600_000);
   if (!timezone || timezone === "UTC") {
     return d.toISOString().split("T")[0];
   }
@@ -15,8 +17,8 @@ export function localDate(input: number | string | Date, timezone?: string): str
   }
 }
 
-export function dateRange(reqUrl: string, timezone?: string): { min: string; max: string } {
-  const date = new URL(reqUrl).searchParams.get("date");
+export function dateRange(date: string, timezone?: string, offsetHours?: number): { min: string; max: string } {
+  const offset = offsetHours != null && Number.isFinite(offsetHours) ? Math.trunc(offsetHours) : 0;
   const target = date || todayUTC();
 
   if (!timezone || timezone === "UTC") {
@@ -24,13 +26,11 @@ export function dateRange(reqUrl: string, timezone?: string): { min: string; max
   }
 
   try {
-    const offset = getOffsetMinutes(timezone, target);
-    const offsetStr = offset >= 0
-      ? `+${String(Math.floor(offset / 60)).padStart(2, "0")}:${String(offset % 60).padStart(2, "0")}`
-      : `-${String(Math.floor(-offset / 60)).padStart(2, "0")}:${String(-offset % 60).padStart(2, "0")}`;
+    const tzOffsetMin = getOffsetMinutes(timezone, target);
+    const offsetStr = formatOffset(tzOffsetMin);
     return {
-      min: `${target}T00:00:00${offsetStr}`,
-      max: `${target}T23:59:59${offsetStr}`,
+      min: isoAtHour(target, offset, offsetStr),
+      max: isoAtHour(target, offset + 24, offsetStr),
     };
   } catch {
     return { min: `${target}T00:00:00Z`, max: `${target}T23:59:59Z` };
@@ -39,7 +39,7 @@ export function dateRange(reqUrl: string, timezone?: string): { min: string; max
 
 function todayUTC(): string {
   const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
 }
 
 function getOffsetMinutes(tz: string, date: string): number {
@@ -50,4 +50,16 @@ function getOffsetMinutes(tz: string, date: string): number {
   if (!m) return 0;
   const mins = parseInt(m[2], 10) * 60 + (parseInt(m[3] || "0", 10));
   return m[1] === "-" ? -mins : mins;
+}
+
+function formatOffset(min: number): string {
+  const sign = min >= 0 ? "+" : "-";
+  const abs = Math.abs(min);
+  return `${sign}${String(Math.floor(abs / 60)).padStart(2, "0")}:${String(abs % 60).padStart(2, "0")}`;
+}
+
+function isoAtHour(date: string, hour: number, offsetStr: string): string {
+  const [y, m, d] = date.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d, hour, 0, 0));
+  return `${String(dt.getUTCFullYear()).padStart(4, "0")}-${String(dt.getUTCMonth() + 1).padStart(2, "0")}-${String(dt.getUTCDate()).padStart(2, "0")}T${String(dt.getUTCHours()).padStart(2, "0")}:00:00${offsetStr}`;
 }

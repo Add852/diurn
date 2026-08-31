@@ -26,7 +26,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "No active profile" }, { status: 400 });
   }
 
-  const date = url.searchParams.get("date") || localDate(new Date(), profile.timezone);
+  const date = url.searchParams.get("date") || localDate(new Date(), profile.timezone, profile.day_offset_hours);
 
   if (sessionIdFilter) {
     return NextResponse.json({ messages: getFullMessages(sessionIdFilter) });
@@ -50,7 +50,7 @@ export async function GET(req: NextRequest) {
     if (pending) {
       await pending;
     } else if (needsRefresh(profile.id) || isDirty(profile.id)) {
-      await scanMediaFolder(profile.media_folder, profile.id, profile.timezone);
+      await scanMediaFolder(profile.media_folder, profile.id, profile.timezone, profile.day_offset_hours);
     }
   }
 
