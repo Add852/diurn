@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getDb, getActiveProfile } from "@/lib/db";
 import { parseConfig } from "@/lib/google-auth";
 import { safeReturnTo } from "@/lib/safe-return";
-const OAUTH_REDIRECT_URI = "http://localhost:3000/api/auth/google/callback";
+const OAUTH_REDIRECT_URI = "http://localhost:11123/api/auth/google/callback";
 
 export async function GET(req: NextRequest) {
   const url = new URL(req.url);

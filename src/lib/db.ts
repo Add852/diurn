@@ -77,6 +77,32 @@ export function getDb(): Database.Database {
     }
   } catch {}
 
+  try {
+    const hasOldFk = d.prepare(
+      "SELECT 1 FROM sqlite_master WHERE type='table' AND name='entries' AND sql NOT LIKE '%ON DELETE CASCADE%'"
+    ).get();
+    if (hasOldFk) {
+      try {
+        d.transaction(() => {
+          d.exec(`
+            CREATE TABLE entries_new (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              profile_id INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+              date TEXT NOT NULL,
+              rendered_markdown TEXT NOT NULL,
+              file_path TEXT,
+              created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+            INSERT INTO entries_new (id, profile_id, date, rendered_markdown, file_path, created_at)
+              SELECT id, profile_id, date, rendered_markdown, file_path, created_at FROM entries;
+            DROP TABLE entries;
+            ALTER TABLE entries_new RENAME TO entries;
+          `);
+        })();
+      } catch {}
+    }
+  } catch {}
+
   return d;
 
 }
@@ -146,36 +172,6 @@ export function getProfileQuestions(profileId: number): ProfileQuestion[] {
     .all(profileId) as ProfileQuestion[];
 }
 
-export function getStreakCount(profileId: number, timezone?: string): number {
-  const db = getDb();
-  const rows = db
-    .prepare(`SELECT DISTINCT date FROM entries WHERE profile_id = ? ORDER BY date DESC`)
-    .all(profileId) as { date: string }[];
-
-  if (rows.length === 0) return 0;
-
-  const today = localDate(new Date(), timezone);
-  const yesterday = localDate(Date.now() - 86_400_000, timezone);
-
-  const hasToday = rows.some((r) => r.date === today);
-  const hasYesterday = rows.some((r) => r.date === yesterday);
-
-  // No entry today or yesterday -> streak broken
-  if (!hasToday && !hasYesterday) return 0;
-
-  // Start counting from today if it has entry, else from yesterday
-  const startDate = hasToday ? today : yesterday;
-  let streak = 1;
-
-  for (let i = 0; i < rows.length - 1; i++) {
-    if (rows[i].date !== startDate) continue;
-    const diff = (new Date(rows[i].date).getTime() - new Date(rows[i + 1].date).getTime()) / 86_400_000;
-    if (diff === 1) streak++;
-    else break;
-  }
-  return streak;
-}
-
 export function getStreakStatus(profileId: number, timezone?: string): { streak: number; active: boolean } {
   const db = getDb();
   const rows = db
@@ -185,7 +181,17 @@ export function getStreakStatus(profileId: number, timezone?: string): { streak:
   if (rows.length === 0) return { streak: 0, active: false };
 
   const today = localDate(new Date(), timezone);
+  const yesterday = localDate(Date.now() - 86_400_000, timezone);
   const hasToday = rows.some((r) => r.date === today);
+  const hasYesterday = rows.some((r) => r.date === yesterday);
 
-  return { streak: getStreakCount(profileId, timezone), active: hasToday };
+  if (!hasToday && !hasYesterday) return { streak: 0, active: false };
+
+  let streak = 1;
+  for (let i = 0; i + 1 < rows.length; i++) {
+    const diff = (new Date(rows[i].date).getTime() - new Date(rows[i + 1].date).getTime()) / 86_400_000;
+    if (diff === 1) streak++;
+    else break;
+  }
+  return { streak, active: hasToday };
 }

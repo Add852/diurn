@@ -172,14 +172,7 @@ Respond with ONLY the answer, no extra text. Keep under 3 lines.`;
     templateContent = DEFAULT_TEMPLATE;
   }
 
-  const d = new Date(date + "T00:00:00");
-  const days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-
-  const rendered = renderTemplate(templateContent, answers, {
-    date,
-    day_of_week: days[d.getDay()] || "Unknown",
-    day_number: String(d.getDate()),
-  });
+  const rendered = renderTemplate(templateContent, answers, date);
 
   let filePath = "";
   if (profile.daily_note_folder) {
@@ -285,7 +278,7 @@ export async function DELETE(req: NextRequest) {
 }
 
 const DEFAULT_TEMPLATE = `---
-dayOfWeek: {day_of_week}
+dayOfWeek: $date("dddd")
 ---
 
 - What happened today?

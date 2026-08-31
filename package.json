@@ -3,9 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev -p ${PORT:-11123}",
     "build": "next build",
-    "start": "next start",
+    "start": "next start -p ${PORT:-11123}",
     "typecheck": "tsc --noEmit",
     "test": "node --experimental-strip-types --test \"tests/*.test.ts\""
   },

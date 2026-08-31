@@ -75,7 +75,7 @@ export function formatTemplateDate(dateStr: string, format: string): string {
   return out;
 }
 
-const RESERVED_IDENTIFIERS = ["date", "day_of_week", "day_number", "question", "answer", "asked", "prompt"];
+const RESERVED_IDENTIFIERS = ["question", "answer", "asked", "prompt"];
 
 export function identifierError(identifier: string, existing: string[]): string | null {
   if (!identifier.trim()) return "Variable name is required.";
@@ -88,7 +88,7 @@ export function identifierError(identifier: string, existing: string[]): string 
 export function renderTemplate(
   template: string,
   vars: Record<string, TemplateVar>,
-  meta: { date: string; day_of_week: string; day_number: string }
+  dateStr: string
 ): string {
   // Identifiers are user-editable (settings > questions), so escape them before
   // building the RegExp — an identifier like "Q1." or ".*" must be literal text.
@@ -97,12 +97,8 @@ export function renderTemplate(
   result = result.replace(
     /\$date\(\s*(?:"([^"]*)"|'([^']*)'|([^)]*))\s*\)/g,
     (_m, dq: string | undefined, sq: string | undefined, bare: string | undefined) =>
-      formatTemplateDate(meta.date, dq ?? sq ?? bare ?? "")
+      formatTemplateDate(dateStr, dq ?? sq ?? bare ?? "")
   );
-
-  result = result.replace(/\{date\}/g, meta.date);
-  result = result.replace(/\{day_of_week\}/g, meta.day_of_week);
-  result = result.replace(/\{day_number\}/g, meta.day_number);
 
   for (const [key, value] of Object.entries(vars)) {
     const esc = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

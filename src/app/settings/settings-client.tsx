@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { Profile } from "@/lib/db";
-import { renderTemplate, formatTemplateDate, identifierError, type TemplateVar } from "@/lib/template";
+import { renderTemplate, identifierError, type TemplateVar } from "@/lib/template";
 import { localDate } from "@/lib/timezone";
 
 const TEMPLATE_SYNTAX_DOC = `Daily note placeholders:
@@ -11,13 +11,10 @@ const TEMPLATE_SYNTAX_DOC = `Daily note placeholders:
 {Q1.answer}    - previous answer
 {Q1.asked}     - true/false
 {Q1.prompt}    - LLM answer prompt
-{date}         - entry date (yyyy-MM-dd)
-{day_of_week}  - e.g. "Monday"
-{day_number}   - e.g. "10"
-
-$date("...")   - format the entry date:
-$date("dddd")  - Monday
-$date("MMMM d, yyyy") - August 10, 2026`;
+$date("yyyy-MM-dd")          - entry date, e.g. 2026-08-10
+$date("dddd")                - e.g. "Monday"
+$date("d")                   - e.g. "10"
+$date("MMMM d, yyyy")        - e.g. "August 10, 2026"`;
 
 interface Question {
   id?: number;
@@ -65,11 +62,7 @@ export function SettingsClient({
     const dateStr = localDate(Date.now(), draft?.timezone || "UTC");
     return {
       tpl,
-      rendered: renderTemplate(tpl, vars, {
-        date: dateStr,
-        day_of_week: formatTemplateDate(dateStr, "dddd"),
-        day_number: formatTemplateDate(dateStr, "d"),
-      }),
+      rendered: renderTemplate(tpl, vars, dateStr),
     };
   }, [questions, draft, templateContent]);
 
@@ -356,8 +349,8 @@ export function SettingsClient({
 
       {tab === "ai" && (
         <div className="space-y-3">
-          <Field label="Endpoint" value={draft.llm_endpoint} onChange={(v) => updateDraft({ llm_endpoint: v })} placeholder="http://localhost:20128/v1" />
-          <Field label="Model" value={draft.llm_model} onChange={(v) => updateDraft({ llm_model: v })} placeholder="freethinkers" />
+          <Field label="Endpoint" value={draft.llm_endpoint} onChange={(v) => updateDraft({ llm_endpoint: v })} placeholder="http://localhost:11434/v1" />
+          <Field label="Model" value={draft.llm_model} onChange={(v) => updateDraft({ llm_model: v })} placeholder="llama3.2" />
           <Field label="API Key" value={draft.llm_api_key} onChange={(v) => updateDraft({ llm_api_key: v })} type="password" placeholder="(optional)" />
           <div>
             <label className="block text-xs text-zinc-500 mb-1">Personality</label>
@@ -433,11 +426,11 @@ export function SettingsClient({
                 <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noreferrer" className="text-emerald-400 underline">console.cloud.google.com/apis/credentials</a>
                 {' '}&rarr; first set up <strong>OAuth consent screen</strong> (External, add scopes for Tasks + Calendar).
                 Then Create credentials &rarr; <strong>OAuth client ID</strong> &rarr; Web application.
-                Add <code className="text-zinc-400 bg-zinc-800 px-1 rounded">http://localhost:3000/api/auth/google/callback</code> as Authorized redirect URI.
+                Add <code className="text-zinc-400 bg-zinc-800 px-1 rounded">http://localhost:11123/api/auth/google/callback</code> as Authorized redirect URI.
               </p>
               <p className="text-xs text-amber-400/80 bg-amber-900/20 rounded p-2">
-                The redirect URI uses localhost. When accessing this app from another device on your LAN, Google will redirect you back to localhost:3000 — you must complete the OAuth callback by running{' '}
-                <code className="text-amber-400 bg-amber-900/40 px-1 rounded">curl &quot;http://localhost:3000/api/auth/google/callback?code=...&amp;state=...&quot;</code>{' '}
+                The redirect URI uses localhost. When accessing this app from another device on your LAN, Google will redirect you back to localhost:11123 — you must complete the OAuth callback by running{' '}
+                <code className="text-amber-400 bg-amber-900/40 px-1 rounded">curl &quot;http://localhost:11123/api/auth/google/callback?code=...&amp;state=...&quot;</code>{' '}
                 on the server machine, or open the link in a browser on the server itself.
               </p>
               <Field label="Google Client ID" value={draft.google_client_id || ""} onChange={(v) => updateDraft({ google_client_id: v })} placeholder="1234567890-xxx.apps.googleusercontent.com" />

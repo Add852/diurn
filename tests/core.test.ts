@@ -64,11 +64,11 @@ test("parseFrontmatter: missing frontmatter", () => {
   assert.equal(body, "just a note");
 });
 
-test("renderTemplate: meta and answer substitution", () => {
+test("renderTemplate: $date and answer substitution", () => {
   const out = renderTemplate(
-    "X {date} {Q1.question} {Q1.answer}",
+    'X $date("yyyy-MM-dd") {Q1.question} {Q1.answer}',
     { Q1: { question: "Happened?", answer: "Stuff", asked: true, prompt: "p" } },
-    { date: "2026-08-09", day_of_week: "Sunday", day_number: "1" }
+    "2026-08-09"
   );
   assert.equal(out, "X 2026-08-09 Happened? Stuff");
 });
@@ -100,17 +100,18 @@ test("formatTemplateDate: .NET specifiers", () => {
 });
 
 test("renderTemplate: $date and full variable fields", () => {
-  const tpl = '$date("dddd") | {date} | {Q1.question}: {Q1.answer} asked={Q1.asked} prompt={Q1.prompt}';
+  const tpl = '$date("dddd") | $date("yyyy-MM-dd") | {Q1.question}: {Q1.answer} asked={Q1.asked} prompt={Q1.prompt}';
   const out = renderTemplate(
     tpl,
     { Q1: { question: "Happened?", answer: "Stuff", asked: true, prompt: "short" } },
-    { date: "2026-08-10", day_of_week: "Monday", day_number: "10" }
+    "2026-08-10"
   );
   assert.equal(out, "Monday | 2026-08-10 | Happened?: Stuff asked=true prompt=short");
 });
 
 test("identifierError: rejects reserved, duplicates, invalid names", () => {
-  assert.equal(identifierError("date", []), '"date" is reserved by the template syntax.');
+  assert.equal(identifierError("date", []), null);
+  assert.equal(identifierError("day_of_week", []), null);
   assert.equal(identifierError("answer", []), '"answer" is reserved by the template syntax.');
   assert.equal(identifierError("Q1", ["Q1"]), 'Variable "Q1" already exists.');
   assert.equal(identifierError("Q 1", []), "Use only letters, numbers, and underscores.");

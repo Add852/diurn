@@ -1,14 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/auth";
-import { getActiveProfile } from "@/lib/db";
+import { requireProfile } from "@/lib/auth";
 import { getMediaFiles, isDirty, needsRefresh, scanMediaFolder, pendingScan, maybeBackgroundScan } from "@/lib/media-cache";
 import { existsSync } from "fs";
 
 export async function GET(req: NextRequest) {
-  const session = await requireAuth();
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  const profile = getActiveProfile();
-  if (!profile) return NextResponse.json({ error: "No active profile" }, { status: 400 });
+  const guard = await requireProfile();
+  if (guard instanceof NextResponse) return guard;
+  const { profile } = guard;
   if (!profile.media_enabled || !profile.media_folder) return NextResponse.json({ files: [], disabled: true });
   if (!existsSync(profile.media_folder)) return NextResponse.json({ files: [], disabled: true });
 

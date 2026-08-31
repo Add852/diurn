@@ -27,8 +27,8 @@ export async function POST(req: NextRequest) {
   ).run(
     userId,
     "Default",
-    "http://localhost:20128/v1",
-    "freethinkers",
+    "http://localhost:11434/v1",
+    "llama3.2",
     "You are a thoughtful daily journaling companion. You help the user reflect on their day with warmth and directness. Ask questions to capture the day's texture — concise, natural, no therapy-fluff. No bullet points in conversation — save those for notes.",
     "ask_in_one_go",
     validTZ
@@ -45,11 +45,6 @@ export async function POST(req: NextRequest) {
     "INSERT INTO profile_questions (profile_id, identifier, question, answer_prompt, asked, sort_order) VALUES (?, ?, ?, ?, ?, ?)"
   );
   for (const q of questions) stmt.run(profileId, ...q);
-
-  const session = await getSession();
-  session.userId = userId;
-  session.username = "admin";
-  await session.save();
 
   return NextResponse.json({ userId, defaultProfileId: profileId });
 }

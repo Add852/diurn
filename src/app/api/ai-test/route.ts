@@ -1,15 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/auth";
-import { getActiveProfile } from "@/lib/db";
+import { requireProfile } from "@/lib/auth";
 import { chatCompletion, llmConfig } from "@/lib/ai";
 
 export async function POST(req: NextRequest) {
-  const session = await requireAuth();
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  const profile = getActiveProfile();
-  if (!profile) {
-    return NextResponse.json({ error: "No active profile" }, { status: 400 });
-  }
+  const guard = await requireProfile();
+  if (guard instanceof NextResponse) return guard;
+  const { profile } = guard;
 
   const config = llmConfig(profile);
 

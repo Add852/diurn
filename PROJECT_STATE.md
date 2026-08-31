@@ -6,7 +6,7 @@ local media folder with EXIF, AI chat-driven daily notes saved as markdown to di
 
 ## Stack & Conventions
 
-- **LLM endpoint:** `http://localhost:20128/v1`, model: `freethinkers`
+- **LLM endpoint:** `http://localhost:11434/v1` (Ollama), model: `llama3.2`
 - **DB:** `better-sqlite3` at `~/.diurn/data.db`, schema in `src/db/schema.sql`, auto-migrated in `getDb()` with column-level `ALTER TABLE` adds.
 - **Auth:** `iron-session` cookie `diurn_session`, single admin via setup flow.
 - **Styling:** Tailwind CSS, `@tailwindcss/typography` for markdown prose.
@@ -99,7 +99,10 @@ src/
    - Chat page: `date` now server-provided (no UTC `toISOString` default), single error state (duplicate render removed), `generateNote` reaches `complete` on overwrite-confirm. Completion shows "View entry" → `EntryDialog` (edit markdown / re-run in chat / delete). Edit hits new `/api/entries` PUT.
    - `--vvh`/`chat-fill` CSS-var scheme removed — plain `100dvh` flex column. Nav: `translateZ(0)` dropped (plain `fixed bottom-0`); `overflow-anchor: none` kept. Firefox-Android drift fix verified pinned at multiple scroll depths in Chromium + Firefox.
    - `loadPage` in-flight guard in media-view (overfetch race); `changePassword` checks `res.ok`.
-- **OAUTH_REDIRECT_URI hardcoded to `http://localhost:3000/api/auth/google/callback`:** Google requires public TLD. LAN access needs server-side OAuth completion (documented in settings UI as a warning).
+19. **Port 3000 → 11123:** `npm run dev`/`start` use `-p ${PORT:-11123}` (override via `PORT=xxxx npm run dev`); `OAUTH_REDIRECT_URI` and settings UI updated to `localhost:11123`. Google Console redirect URI must be re-registered for the new port.
+20. **Default LLM → Ollama:** endpoint `http://localhost:11434/v1`, model `llama3.2` — new installs, new profiles, and settings placeholders. Existing profiles keep stored values; change in Settings → AI. Requires `ollama pull llama3.2`.
+21. **README.md added:** install/run/setup/config/production/troubleshooting for self-hosting.
+- **OAUTH_REDIRECT_URI hardcoded to `http://localhost:11123/api/auth/google/callback`:** Google requires public TLD. LAN access needs server-side OAuth completion (documented in settings UI as a warning).
 - **File watcher doesn't survive process restart:** first request after restart may serve stale cache until next watcher fire. Workaround: Re-scan button.
 - **Tests:** `node:test` in `tests/*.test.ts` — 16 cases (range parser, safe-return, frontmatter, template, timezone). `npm test` + `npm run typecheck` wired; CI runs both. One-off logic verified with ad-hoc asserts.
 - **`/media` page deleted** (was redirect to `/viewer?mode=media`); route is now 404. Not linked from anywhere.

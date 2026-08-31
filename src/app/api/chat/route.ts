@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireAuth, requireProfile } from "@/lib/auth";
 import { getDb, getActiveProfile, getProfile, getProfileQuestions } from "@/lib/db";
-import { requireAuth } from "@/lib/auth";
 import { chatCompletion, llmConfig } from "@/lib/ai";
 import { buildChatContext } from "@/lib/chat-context";
 import { localDate } from "@/lib/timezone";
@@ -101,8 +101,9 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const session = await requireAuth();
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const guard = await requireProfile();
+  if (guard instanceof NextResponse) return guard;
+  const { profile } = guard;
   const { session_id, message } = await req.json();
   const db = getDb();
 
@@ -112,11 +113,6 @@ export async function POST(req: NextRequest) {
 
   if (!sessionRecord) {
     return NextResponse.json({ error: "Session not found" }, { status: 404 });
-  }
-
-  const profile = getActiveProfile();
-  if (!profile) {
-    return NextResponse.json({ error: "No active profile" }, { status: 400 });
   }
 
   appendMessage(session_id, "user", message);

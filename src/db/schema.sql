@@ -26,8 +26,8 @@ CREATE TABLE IF NOT EXISTS profiles (
   obsidian_folder TEXT NOT NULL DEFAULT '',
   obsidian_exclude_folders TEXT NOT NULL DEFAULT '',
   obsidian_include_content INTEGER NOT NULL DEFAULT 0,
-  llm_endpoint TEXT NOT NULL DEFAULT 'http://localhost:20128/v1',
-  llm_model TEXT NOT NULL DEFAULT 'freethinkers',
+  llm_endpoint TEXT NOT NULL DEFAULT 'http://localhost:11434/v1',
+  llm_model TEXT NOT NULL DEFAULT 'llama3.2',
   llm_api_key TEXT NOT NULL DEFAULT '',
   personality_prompt TEXT NOT NULL DEFAULT '',
   asking_method TEXT NOT NULL DEFAULT 'ask_in_one_go',
@@ -47,7 +47,7 @@ CREATE TABLE IF NOT EXISTS profile_questions (
 
 CREATE TABLE IF NOT EXISTS entries (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  profile_id INTEGER NOT NULL REFERENCES profiles(id),
+  profile_id INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
   date TEXT NOT NULL,
   rendered_markdown TEXT NOT NULL,
   file_path TEXT,

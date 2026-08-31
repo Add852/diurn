@@ -1,16 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/auth";
-import { getActiveProfile } from "@/lib/db";
+import { requireProfile } from "@/lib/auth";
 import { randomBytes } from "crypto";
 import { safeReturnTo } from "@/lib/safe-return";
 
-const OAUTH_REDIRECT_URI = "http://localhost:3000/api/auth/google/callback";
+const OAUTH_REDIRECT_URI = "http://localhost:11123/api/auth/google/callback";
 
 export async function GET(req: NextRequest) {
-  const session = await requireAuth();
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  const profile = getActiveProfile();
-  if (!profile) return NextResponse.json({ error: "No active profile" }, { status: 400 });
+  const guard = await requireProfile();
+  if (guard instanceof NextResponse) return guard;
+  const { profile } = guard;
 
   const url = new URL(req.url);
   const service = url.searchParams.get("service") || "tasks";

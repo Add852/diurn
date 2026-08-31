@@ -29,7 +29,7 @@ export default function SetupPage() {
       setLoading(false);
       return;
     }
-    router.push("/settings");
+    router.push("/login");
   }
 
   return (

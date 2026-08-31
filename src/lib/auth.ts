@@ -1,9 +1,11 @@
+import { NextResponse } from "next/server";
 import { getIronSession, SessionOptions } from "iron-session";
 import { cookies } from "next/headers";
 import { randomBytes, scryptSync, timingSafeEqual } from "crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
+import { getActiveProfile, type Profile } from "./db";
 
 // Stable per-install secret so sessions survive restarts without hardcoding a
 // forgeable value in source. SESSION_SECRET env wins; otherwise persist one.
@@ -48,6 +50,14 @@ export async function getSession() {
 export async function requireAuth() {
   const session = await getSession();
   return session.userId ? session : null;
+}
+
+export async function requireProfile(): Promise<NextResponse | { session: SessionData; profile: Profile }> {
+  const session = await requireAuth();
+  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const profile = getActiveProfile();
+  if (!profile) return NextResponse.json({ error: "No active profile" }, { status: 400 });
+  return { session, profile };
 }
 
 export function hashPassword(password: string): { hash: string; salt: string } {
