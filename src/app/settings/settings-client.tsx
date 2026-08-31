@@ -214,7 +214,15 @@ export function SettingsClient({
     setAiTesting(true);
     setAiTestResult("");
     try {
-      const res = await fetch("/api/ai-test", { method: "POST" });
+      const res = await fetch("/api/ai-test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          endpoint: draft.llm_endpoint,
+          model: draft.llm_model,
+          apiKey: draft.llm_api_key,
+        }),
+      });
       const d = await res.json();
       setAiTestResult(d.success ? `Connected in ${d.latency_ms}ms` : (d.error || "Failed"));
     } catch {

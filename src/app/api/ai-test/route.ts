@@ -7,7 +7,18 @@ export async function POST(req: NextRequest) {
   if (guard instanceof NextResponse) return guard;
   const { profile } = guard;
 
-  const config = llmConfig(profile);
+  // Allow overriding the saved config so the UI can test what the user just typed,
+  // without forcing a save first. Falls back to the stored profile fields.
+  const body = await req.json().catch(() => ({}));
+  const endpoint = typeof body.endpoint === "string" && body.endpoint.trim() ? body.endpoint.trim() : profile.llm_endpoint;
+  const model = typeof body.model === "string" && body.model.trim() ? body.model.trim() : profile.llm_model;
+  const apiKey = typeof body.apiKey === "string" ? body.apiKey : profile.llm_api_key;
+
+  if (!endpoint || !model) {
+    return NextResponse.json({ success: false, error: "Endpoint and model are required" }, { status: 400 });
+  }
+
+  const config = { endpoint, model, apiKey };
 
   try {
     const start = Date.now();
@@ -19,6 +30,6 @@ export async function POST(req: NextRequest) {
   } catch (err: any) {
     const statusMatch = err.message?.match(/LLM error (\d+)/);
     const status = statusMatch ? parseInt(statusMatch[1]) : 502;
-    return NextResponse.json({ success: false, error: err.message, endpoint: config.endpoint }, { status });
+    return NextResponse.json({ success: false, error: err.message, endpoint: config.endpoint, model: config.model }, { status });
   }
 }
