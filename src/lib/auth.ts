@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getIronSession, SessionOptions } from "iron-session";
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { randomBytes, scryptSync, timingSafeEqual } from "crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
@@ -32,19 +32,29 @@ export interface SessionData {
   username?: string;
 }
 
-const SESSION_OPTIONS: SessionOptions = {
-  password: sessionSecret(),
-  cookieName: "diurn_session",
-  cookieOptions: {
-    secure: process.env.NODE_ENV === "production",
-    httpOnly: true,
-    sameSite: "lax",
-  },
-};
+// Cookie security is decided per request: only mark Secure when the request
+// actually arrived over HTTPS (i.e. behind a TLS-terminating reverse proxy,
+// which sends x-forwarded-proto: https). Unconditionally Secure in production
+// breaks plain-HTTP LAN access — the browser silently drops the cookie and
+// login loops forever, which looks like "wrong password".
+// ponytail: direct `next start` over TLS isn't supported anyway; if you ever
+// do that without a proxy, the cookie just won't carry the Secure flag.
+async function sessionOptions(): Promise<SessionOptions> {
+  const proto = (await headers()).get("x-forwarded-proto") || "";
+  return {
+    password: sessionSecret(),
+    cookieName: "diurn_session",
+    cookieOptions: {
+      secure: process.env.NODE_ENV === "production" && proto.includes("https"),
+      httpOnly: true,
+      sameSite: "lax",
+    },
+  };
+}
 
 export async function getSession() {
   const cookieStore = await cookies();
-  return getIronSession<SessionData>(cookieStore, SESSION_OPTIONS);
+  return getIronSession<SessionData>(cookieStore, await sessionOptions());
 }
 
 export async function requireAuth() {

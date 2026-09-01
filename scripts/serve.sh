@@ -19,6 +19,9 @@
 set -e
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+if [ "$(id -u)" = "0" ]; then
+  echo "warning: running as root — data, DB and logs will live in /root/.diurn, not your user's home. Prefer running without sudo."
+fi
 DATA_DIR="${DIURN_DATA_DIR:-$HOME/.diurn}"
 LOG="$DATA_DIR/server.log"
 CONF="${DIURN_SERVE_CONF:-$HOME/.diurn/serve.conf}"
@@ -127,6 +130,12 @@ status() {
 }
 
 logs() {
+  # Unit mode: journalctl is authoritative (also covers units generated before
+  # StandardOutput=append existed). Nohup mode: the redirect file.
+  if unit_enabled; then
+    journalctl --user -u "$UNIT" -f
+    return
+  fi
   mkdir -p "$DATA_DIR"
   touch "$LOG"
   tail -f "$LOG"
