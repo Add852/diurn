@@ -5,6 +5,7 @@ import { safeReturnTo } from "../src/lib/safe-return.ts";
 import { parseFrontmatter } from "../src/lib/frontmatter.ts";
 import { renderTemplate, formatTemplateDate, identifierError } from "../src/lib/template.ts";
 import { localDate, dateRange } from "../src/lib/timezone.ts";
+import { extractJson } from "../src/lib/ai.ts";
 
 test("parseByteRange: explicit range", () => {
   assert.deepEqual(parseByteRange("bytes=0-99", 1000), { start: 0, end: 99 });
@@ -143,4 +144,13 @@ test("identifierError: rejects reserved, duplicates, invalid names", () => {
   assert.equal(identifierError("Q 1", []), "Use only letters, numbers, and underscores.");
   assert.equal(identifierError("", []), "Variable name is required.");
   assert.equal(identifierError("Q2", ["Q1"]), null);
+});
+
+test("extractJson: bare, prose-wrapped, nested, and garbage LLM replies", () => {
+  assert.deepEqual(extractJson('{"covered": true, "missing": []}'), { covered: true, missing: [] });
+  assert.deepEqual(extractJson('Sure! Here is the result:\n{"covered": false, "missing": ["Q2"]} as requested.'), { covered: false, missing: ["Q2"] });
+  assert.deepEqual(extractJson('{"a": {"b": 1}}'), { a: { b: 1 } });
+  assert.equal(extractJson("no json here at all"), null);
+  assert.equal(extractJson("{broken"), null);
+  assert.equal(extractJson(""), null);
 });

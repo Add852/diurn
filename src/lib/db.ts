@@ -1,5 +1,5 @@
 import Database from "better-sqlite3";
-import { readFileSync, mkdirSync, existsSync } from "fs";
+import { readFileSync, mkdirSync, existsSync, statSync, unlinkSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
 import { localDate } from "@/lib/timezone";
@@ -37,14 +37,38 @@ const DATA_DIR = join(homedir(), ".diurn");
 const DB_PATH = join(DATA_DIR, "data.db");
 
 let db: Database.Database | null = null;
+let dbInode: number | null = null;
+
+// Reopen the DB if the file was replaced under us (e.g. user wiped ~/.diurn/data.db
+// while the server was running). Without this, a cached `Database` handle would
+// point to a deleted inode and reads would return stale/empty data.
+function dbIdentity(): number | null {
+  try { return statSync(DB_PATH).ino; } catch { return null; }
+}
 
 export function getDb(): Database.Database {
-  if (db) return db;
+  const currentInode = dbIdentity();
+
+  if (db && dbInode === currentInode) return db;
+
+  const inodeChanged = db !== null && dbInode !== null && currentInode !== null;
+  if (db) { try { db.close(); } catch {} }
+  db = null;
+  dbInode = null;
 
   if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
 
+  // If the cached handle's file was replaced (different inode), the leftover
+  // WAL/SHM from the prior DB could cause us to read corrupt data. Drop them.
+  // On a fresh process start (db === null), dbInode is null and we keep the WAL.
+  if (inodeChanged) {
+    try { unlinkSync(DB_PATH + "-wal"); } catch {}
+    try { unlinkSync(DB_PATH + "-shm"); } catch {}
+  }
+
   const d = new Database(DB_PATH);
   db = d;
+  dbInode = currentInode;
   d.pragma("journal_mode = WAL");
   d.pragma("foreign_keys = ON");
 
@@ -152,10 +176,6 @@ export function hasUsers(): boolean {
 
 export function getActiveProfile(): Profile | undefined {
   return getDb().prepare("SELECT * FROM profiles WHERE is_active = 1").get() as Profile | undefined;
-}
-
-export function getProfile(id: number): Profile | undefined {
-  return getDb().prepare("SELECT * FROM profiles WHERE id = ?").get(id) as Profile | undefined;
 }
 
 export interface ProfileQuestion {

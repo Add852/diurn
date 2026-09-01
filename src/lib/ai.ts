@@ -7,6 +7,18 @@ export function llmConfig(profile: { llm_endpoint: string; llm_api_key: string; 
   return { endpoint: profile.llm_endpoint, apiKey: profile.llm_api_key, model: profile.llm_model };
 }
 
+// Pull the first {...} JSON object out of an LLM reply (models love prose
+// around JSON). Greedy to the last } so nested objects survive. Returns null
+// when there's nothing parseable.
+export function extractJson(reply: string): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(reply.match(/\{[\s\S]*\}/)?.[0] || "null");
+    return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
 interface ChatConfig {
   endpoint: string;
   apiKey: string;

@@ -1,7 +1,7 @@
 import { existsSync } from "fs";
 import { readFile, readdir, stat } from "fs/promises";
 import { join, extname, relative } from "path";
-import { chatCompletion } from "./ai";
+import { chatCompletion, extractJson } from "./ai";
 import type { Profile } from "./db";
 import { parseFrontmatter } from "./frontmatter";
 import { localDate, dateRange } from "./timezone";
@@ -102,7 +102,7 @@ export async function summarizeNotes(
       { role: "system", content: "You summarize Obsidian notes. Respond ONLY with valid JSON: an object mapping each note id (\"0\", \"1\", ...) to a 1-3 sentence summary. Dense and factual, no preamble." },
       { role: "user", content: payload },
     ], 30000);
-    const parsed = JSON.parse(res.match(/\{[^]*\}/)?.[0] || "{}");
+    const parsed = extractJson(res) || {};
     const out: Record<string, string> = {};
     for (const [k, v] of Object.entries(parsed)) {
       const note = notes[parseInt(k, 10)];

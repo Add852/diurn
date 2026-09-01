@@ -23,7 +23,7 @@ src/
 ├── lib/                 # db, auth, ai, timezone, frontmatter, template, google-auth, media-cache
 ├── app/
 │   ├── api/             # REST routes
-│   │   ├── auth/        # login, logout, setup, needs-setup, google/{login,callback}
+│   │   ├── auth/        # login, logout, setup, google/{login,callback}
 │   │   ├── chat/, entries/, media/, settings/, ai-test/
 │   │   └── integrations/{tasks,calendar,google-test}/status
 │   ├── chat/, viewer/, settings/, setup/, login/, page.tsx
@@ -52,7 +52,7 @@ src/
    - `Profile` includes `timezone` column, `google_client_id/secret`, `media_*`, `note_scan_*`, etc. Migrations added via `addCol()` pattern in `migrateProfileColumns`.
    - Added `loadMediaContext(profileId, folder, tz, date, limit)` helper in media-cache; `entries/route.ts` uses it instead of inline scan+fetch.
    - `getDb()` extracted `migrateProfileColumns()` helper.
-10. **`/api/auth/needs-setup` GET endpoint:** replaces login's hack of POSTing empty body to `/setup`. Login useEffect now `fetch("/api/auth/needs-setup").then(d => d.needs_setup && router.push("/setup"))`.
+10. **Setup/login server-side redirects:** both pages run `hasUsers()` in the server component and `redirect()` accordingly; `export const dynamic = "force-dynamic"` keeps them uncached. (The old `/api/auth/needs-setup` endpoint was removed — no consumers.)
 11. **Live media updates:** `fs.watch` singleton per profile (recursive, non-persistent). On any FS event under the folder, profile marked dirty. `_doScan` is now incremental: walks FS, only re-resolves dates for paths with mtime diff vs cache, deletes cached paths that no longer exist. `/api/media` checks `isDirty()` → next request returns `scanning: true` → existing viewer polling picks up new files automatically.
 12. **Chronological per-day ordering:** added `media_cache.captured_at INTEGER` (epoch ms, nullable). Scan stores from EXIF `DateTimeOriginal` (parsed `Date`) or FS `birthtime/mtime`. EXIF date-only strings get noon UTC. Existing DBs backfill via `migrateMediaCacheColumns`: `UPDATE media_cache SET captured_at = strftime('%s', date || 'T12:00:00') * 1000`. SQL: `ORDER BY date DESC, captured_at ASC NULLS LAST, path ASC` — newest day on top, oldest capture first within day, alphabetical path as final tiebreaker for same-second bursts.
 13. **Review pass (2026-08):**

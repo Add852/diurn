@@ -2,6 +2,14 @@ const withPWA = (await import("next-pwa")).default;
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // All pages here are dynamic (auth/DB-driven). Disable the client router
+  // cache so navigating back to a page always refetches — otherwise a saved
+  // settings change isn't visible when returning within the default 30s window.
+  experimental: {
+    staleTimes: {
+      dynamic: 0,
+    },
+  },
   webpack: (config, { isServer }) => {
     if (isServer) {
       config.externals = config.externals || [];

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb, getActiveProfile, getProfileQuestions, getStreakStatus, type ProfileQuestion } from "@/lib/db";
 import { requireAuth } from "@/lib/auth";
-import { chatCompletion, llmConfig } from "@/lib/ai";
+import { chatCompletion, llmConfig, extractJson } from "@/lib/ai";
 import { renderTemplate, type TemplateVar } from "@/lib/template";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "fs";
 import { readFile, readdir } from "fs/promises";
@@ -125,42 +125,35 @@ export async function POST(req: NextRequest) {
     .join("\n\n");
   const config = llmConfig(profile);
 
+  // One extraction call for ALL questions (was: one call per question).
   // The chat session's system message carries the conversational persona and
   // date context; reusing it for extraction makes the model answer in chat
-  // voice and claim it can't see the input. Extraction needs its own prompt.
-  const extractionSystemMsg = {
-    role: "system" as const,
-    content:
-      "You are a precise data extractor for a daily journal. Extract or infer a concise answer for the given item strictly from the provided user input. Do not respond conversationally, do not mention missing context, tools, or external data, and do not add commentary. Output ONLY the answer text — no JSON, no markdown, no formatting.",
-  };
+  // voice — so extraction runs with its own stripped-down prompt.
   const answers: Record<string, TemplateVar> = {};
 
   if (questions.length > 0) {
+    const items = questions
+      .map((q) => `${q.identifier}: question=${JSON.stringify(q.question)}; instructions=${JSON.stringify(q.answer_prompt || "Extract the relevant details from the user's input.")}`)
+      .join("\n");
+    // Pre-fill blanks so a failed call still renders the note with empty answers.
     for (const q of questions) {
-      const title = q.question ? `"${q.question}"` : `Key "${q.identifier}"`;
-      const prompt = `Based ONLY on the user's input below, answer this item.
+      answers[q.identifier] = { question: q.question, answer: "", asked: !!q.asked, prompt: q.answer_prompt || "" };
+    }
 
-User input:
-${allUserInput}
-
-Item: ${title}
-Instructions: ${q.answer_prompt || "Extract the relevant details from the user's input."}
-
-Respond with ONLY the answer, no extra text. Keep under 3 lines.`;
-      try {
-        const answer = await chatCompletion(config, [
-          extractionSystemMsg,
-          { role: "user", content: prompt },
-        ], 45000);
-        answers[q.identifier] = {
-          question: q.question,
-          answer: typeof answer === "string" ? answer.trim() : String(answer || "").trim(),
-          asked: !!q.asked,
-          prompt: q.answer_prompt || "",
-        };
-      } catch {
-        answers[q.identifier] = { question: q.question, answer: "", asked: !!q.asked, prompt: q.answer_prompt || "" };
+    try {
+      const res = await chatCompletion(config, [
+        { role: "system", content: "You are a data extractor for a daily journal. For each item, extract or infer a concise answer strictly from the user's input. Do not respond conversationally and do not mention missing context or tools. Answer with ONLY a JSON object mapping each identifier to its answer string, each kept under 3 lines." },
+        { role: "user", content: `User input:\n${allUserInput}\n\nItems:\n${items}` },
+      ], 45_000);
+      const parsed = extractJson(res);
+      for (const q of questions) {
+        const v = parsed?.[q.identifier];
+        if (typeof v === "string" && v.trim()) {
+          answers[q.identifier] = { question: q.question, answer: v.trim(), asked: !!q.asked, prompt: q.answer_prompt || "" };
+        }
       }
+    } catch {
+      // LLM unreachable: leave blanks; template still renders with empty answers.
     }
   }
 

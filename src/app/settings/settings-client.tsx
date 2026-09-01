@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { Profile } from "@/lib/db";
 import { renderTemplate, identifierError, type TemplateVar } from "@/lib/template";
@@ -114,31 +114,50 @@ export function SettingsClient({
     setSaving(true);
     setMessage("");
     try {
-      if (dirty) {
+      // Determine which sections the user actually touched. Validation should
+      // only run for sections that have pending changes, and we should only
+      // show "Saved" if a real PUT went out.
+      const questionsDirty = questions.some((q, i) => {
+        const orig = initialQuestions[i];
+        return !orig || q.identifier !== orig.identifier || q.question !== orig.question
+          || q.answer_prompt !== orig.answer_prompt || !!q.asked !== !!orig.asked;
+      });
+
+      if (questionsDirty) {
         const bad = questions
           .map((q, i) => identifierError(q.identifier, questions.slice(0, i).map((x) => x.identifier)))
           .find(Boolean);
-        if (bad) {
-          setMessage(bad);
-          return;
-        }
-        const res = await fetch("/api/settings", {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ profile: draft, questions }),
-        });
-        const d = await res.json().catch(() => ({}));
-        if (!res.ok || d.error) {
-          setMessage(d.error || `Save failed (${res.status})`);
-          return;
-        }
-        if (d.template_content !== undefined) setTemplateContent(d.template_content);
+        if (bad) { setMessage(bad); return; }
       }
+
+      const body: any = {};
+      if (dirty) body.profile = draft;
+      if (questionsDirty) body.questions = questions;
+
+      if (Object.keys(body).length === 0) {
+        setMessage("Nothing to save");
+        return;
+      }
+
+      const res = await fetch("/api/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok || d.error) {
+        setMessage(d.error || `Save failed (${res.status})`);
+        return;
+      }
+      if (d.template_content !== undefined) setTemplateContent(d.template_content);
       setMessage("Saved");
+      // Re-fetch server components so the page (and others) see fresh DB data
+      // immediately instead of on next navigation.
+      router.refresh();
       setDirty(false);
       setTimeout(() => setMessage(""), 1500);
-    } catch {
-      setMessage("Save failed");
+    } catch (err: any) {
+      setMessage(`Save failed: ${err?.message || "network error"}`);
     } finally {
       setSaving(false);
     }
@@ -314,8 +333,8 @@ export function SettingsClient({
 
       {tab === "general" && (
         <div className="space-y-3">
-          <Field label="Daily note folder" value={draft.daily_note_folder} onChange={(v) => updateDraft({ daily_note_folder: v })} placeholder="/path/to/obsidian/vault/1 Dailies" />
-          <Field label="Template note path" value={draft.template_note_path} onChange={(v) => updateDraft({ template_note_path: v })} placeholder="/path/to/template.md" />
+          <PathField label="Daily note folder" value={draft.daily_note_folder} onChange={(v) => updateDraft({ daily_note_folder: v })} placeholder="/path/to/obsidian/vault/1 Dailies" kind="dir" />
+          <PathField label="Template note path" value={draft.template_note_path} onChange={(v) => updateDraft({ template_note_path: v })} placeholder="/path/to/template.md" kind="md" />
           <details className="bg-zinc-900 border border-zinc-800 rounded-lg p-3">
             <summary className="text-sm cursor-pointer text-zinc-300 list-none">Template syntax &amp; preview</summary>
             <div className="mt-3 space-y-3 text-xs text-zinc-500 leading-relaxed">
@@ -476,7 +495,7 @@ export function SettingsClient({
             <input type="checkbox" checked={!!draft.media_enabled} onChange={(e) => updateDraft({ media_enabled: e.target.checked ? 1 : 0 })} />
             Media gallery
           </label>
-          {draft.media_enabled ? <Field label="Media folder" value={draft.media_folder} onChange={(v) => updateDraft({ media_folder: v })} placeholder="/path/to/photos" /> : null}
+          {draft.media_enabled ? <PathField label="Media folder" value={draft.media_folder} onChange={(v) => updateDraft({ media_folder: v })} placeholder="/path/to/photos" kind="dir" /> : null}
 
           <div className="pt-3 border-t border-zinc-800">
             <label className="flex items-center gap-2 text-sm">
@@ -485,7 +504,7 @@ export function SettingsClient({
             </label>
             {draft.obsidian_enabled ? (
               <div className="mt-3 space-y-3">
-                <Field label="Note folder" value={draft.obsidian_folder} onChange={(v) => updateDraft({ obsidian_folder: v })} placeholder="/path/to/vault" />
+                <PathField label="Note folder" value={draft.obsidian_folder} onChange={(v) => updateDraft({ obsidian_folder: v })} placeholder="/path/to/vault" kind="dir" />
                 <Field label="Excluded folders (comma-separated)"
                   value={draft.obsidian_exclude_folders}
                   onChange={(v) => updateDraft({ obsidian_exclude_folders: v })}
@@ -573,6 +592,103 @@ function Field({ label, value, onChange, placeholder, type = "text" }: { label: 
     <div>
       <label className="block text-xs text-zinc-500 mb-1">{label}</label>
       <input type={type} value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-none focus:border-emerald-500 placeholder:text-zinc-500" />
+    </div>
+  );
+}
+
+// Text input for filesystem paths with directory autocompletion.
+// kind="dir" completes folders only; kind="md" completes .md files only.
+// Validates on blur that the path exists (and is the right kind), showing an
+// inline error without blocking typing.
+function PathField({ label, value, onChange, placeholder, kind }: { label: string; value: string; onChange: (v: string) => void; placeholder?: string; kind: "dir" | "md" }) {
+  const [entries, setEntries] = useState<{ name: string; path: string; isDir: boolean }[]>([]);
+  const [open, setOpen] = useState(false);
+  const [active, setActive] = useState(-1);
+  const [error, setError] = useState<string | null>(null);
+  const [checking, setChecking] = useState(false);
+  const boxRef = useRef<HTMLDivElement>(null);
+  const blurTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Debounced autocomplete fetch while typing.
+  useEffect(() => {
+    if (!open) return;
+    const t = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/fs?dir=${encodeURIComponent(value)}&filter=${kind}`);
+        const d = await res.json();
+        if (d.entries) { setEntries(d.entries); setActive(d.entries.length ? 0 : -1); }
+      } catch {}
+    }, 120);
+    return () => clearTimeout(t);
+  }, [value, open, kind]);
+
+  // Close dropdown on outside click.
+  useEffect(() => {
+    const onDoc = (e: MouseEvent) => {
+      if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, []);
+
+  async function checkPath(p: string) {
+    if (!p.trim()) { setError(null); return; }
+    setChecking(true);
+    try {
+      const res = await fetch(`/api/fs?check=${encodeURIComponent(p)}&kind=${kind}`);
+      const d = await res.json();
+      setError(d.ok ? null : d.reason || "Invalid path");
+    } catch {
+      setError(null);
+    } finally {
+      setChecking(false);
+    }
+  }
+
+  function pick(e: { name: string; path: string; isDir: boolean }) {
+    onChange(e.path + (e.isDir && kind === "dir" ? "/" : ""));
+    setOpen(false);
+    setError(null);
+  }
+
+  function onKeyDown(ev: React.KeyboardEvent<HTMLInputElement>) {
+    if (!open || entries.length === 0) return;
+    if (ev.key === "ArrowDown") { ev.preventDefault(); setActive((a) => (a + 1) % entries.length); }
+    else if (ev.key === "ArrowUp") { ev.preventDefault(); setActive((a) => (a <= 0 ? entries.length - 1 : a - 1)); }
+    else if (ev.key === "Enter") { ev.preventDefault(); if (active >= 0 && entries[active]) pick(entries[active]); else setOpen(false); }
+    else if (ev.key === "Escape") { ev.preventDefault(); setOpen(false); }
+  }
+
+  return (
+    <div ref={boxRef} className="relative">
+      <label className="block text-xs text-zinc-500 mb-1">{label}</label>
+      <input
+        type="text"
+        value={value}
+        placeholder={placeholder}
+        onChange={(e) => { onChange(e.target.value); setOpen(true); setError(null); }}
+        onFocus={() => setOpen(true)}
+        onKeyDown={onKeyDown}
+        onBlur={() => { blurTimer.current = setTimeout(() => { setOpen(false); checkPath(value); }, 150); }}
+        className={`w-full bg-zinc-800 border rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-none focus:border-emerald-500 placeholder:text-zinc-500 ${error ? "border-red-500" : "border-zinc-700"}`}
+      />
+      {checking && <span className="absolute right-2 top-8 text-xs text-zinc-600">…</span>}
+      {error && <p className="text-xs text-red-400 mt-1">{error}</p>}
+      {open && entries.length > 0 && (
+        <ul className="absolute z-50 left-0 right-0 mt-1 bg-zinc-900 border border-zinc-700 rounded-lg shadow-lg max-h-60 overflow-auto">
+          {entries.map((e, i) => (
+            <li key={e.path}>
+              <button
+                type="button"
+                onMouseDown={(ev) => { ev.preventDefault(); pick(e); }}
+                className={`w-full text-left px-3 py-2 text-sm ${i === active ? "bg-emerald-600/20 text-emerald-300" : "text-zinc-300 hover:bg-zinc-800"}`}
+              >
+                {e.isDir ? "📁 " : "📄 "}{e.name}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

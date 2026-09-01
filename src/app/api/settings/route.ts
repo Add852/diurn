@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { stat } from "fs/promises";
 import { getDb, getActiveProfile, getProfileQuestions } from "@/lib/db";
 import { requireAuth, hashPassword, verifyPassword } from "@/lib/auth";
 import { identifierError } from "@/lib/template";
@@ -40,6 +41,33 @@ export async function PUT(req: NextRequest) {
     }
     if (p.day_offset_hours !== undefined && (!Number.isInteger(p.day_offset_hours) || p.day_offset_hours < 0 || p.day_offset_hours > 24)) {
       return NextResponse.json({ error: "day_offset_hours must be an integer 0-24" }, { status: 400 });
+    }
+    // Filesystem validation: folder fields must be existing directories,
+    // template must be an existing .md file. Empty = unset (allowed).
+    async function assertDir(field: string, v: string | undefined) {
+      const t = (v || "").trim();
+      if (!t) return;
+      let s;
+      try {
+        s = await stat(t);
+      } catch {
+        throw new Error(`Folder not found for ${field}: ${t}`);
+      }
+      if (!s.isDirectory()) throw new Error(`${field} is not a folder: ${t}`);
+    }
+    try {
+      await assertDir("Daily note folder", p.daily_note_folder);
+      if (p.media_enabled) await assertDir("Media folder", p.media_folder);
+      if (p.obsidian_enabled) await assertDir("Obsidian note folder", p.obsidian_folder);
+      const tpl = (p.template_note_path || "").trim();
+      if (tpl) {
+        const s = await stat(tpl);
+        if (!s.isFile() || !tpl.toLowerCase().endsWith(".md")) {
+          return NextResponse.json({ error: `Template note path must be a .md file: ${tpl}` }, { status: 400 });
+        }
+      }
+    } catch (err: any) {
+      return NextResponse.json({ error: err.message }, { status: 400 });
     }
     const current = db.prepare("SELECT * FROM profiles WHERE id = ?").get(p.id) as any;
     if (!current) {
