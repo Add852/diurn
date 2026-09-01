@@ -26,7 +26,7 @@ export function MediaView() {
   const [dates, setDates] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [scanning, setScanning] = useState(false);
-  const [disabled, setDisabled] = useState(false);
+  const [disabled, setDisabled] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(true);
   const [offset, setOffset] = useState(0);
   const [lightbox, setLightbox] = useState<{ items: MediaItem[]; index: number } | null>(null);
@@ -46,11 +46,11 @@ export function MediaView() {
       const r = await fetch(url);
       const d = await r.json();
       if (d.disabled) {
-        setDisabled(true);
+        setDisabled(d.reason || "not_configured");
         setLoading(false);
         return;
       }
-      setDisabled(false);
+      setDisabled(null);
       if (d.scanning) {
         setScanning(true);
         return;
@@ -136,8 +136,13 @@ export function MediaView() {
   if (disabled) {
     return (
       <p className="text-zinc-500 text-sm text-center py-8">
-        Media view is disabled. Enable the media gallery in{" "}
-        <a href="/settings" className="text-emerald-400 hover:underline">Settings</a>.
+        {disabled === "folder_missing" ? (
+          <>Media folder is missing or unreachable (unmounted drive?). Check the path in{" "}
+          <a href="/settings" className="text-emerald-400 hover:underline">Settings</a>.</>
+        ) : (
+          <>Media view is disabled. Enable the media gallery in{" "}
+          <a href="/settings" className="text-emerald-400 hover:underline">Settings</a>.</>
+        )}
       </p>
     );
   }

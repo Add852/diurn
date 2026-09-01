@@ -7,8 +7,16 @@ export async function GET(req: NextRequest) {
   const guard = await requireProfile();
   if (guard instanceof NextResponse) return guard;
   const { profile } = guard;
-  if (!profile.media_enabled || !profile.media_folder) return NextResponse.json({ files: [], disabled: true });
-  if (!existsSync(profile.media_folder)) return NextResponse.json({ files: [], disabled: true });
+
+  // Lightweight poll for the global scan indicator. Does NOT wait on or start
+  // a scan — just reports what the media view / settings save kicked off.
+  if (new URL(req.url).searchParams.get("status") === "1") {
+    const scanning = !!pendingScan(profile.id) || (!!(profile.media_enabled && profile.media_folder && existsSync(profile.media_folder)) && (isDirty(profile.id) || needsRefresh(profile.id)));
+    return NextResponse.json({ scanning, enabled: !!profile.media_enabled, folder: profile.media_folder || "", folder_missing: !!profile.media_folder && !existsSync(profile.media_folder) });
+  }
+
+  if (!profile.media_enabled || !profile.media_folder) return NextResponse.json({ files: [], disabled: true, reason: "not_configured" });
+  if (!existsSync(profile.media_folder)) return NextResponse.json({ files: [], disabled: true, reason: "folder_missing" });
 
   const url = new URL(req.url);
   const refresh = url.searchParams.get("refresh") === "1";

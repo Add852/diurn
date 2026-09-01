@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import type { Profile } from "@/lib/db";
 import { renderTemplate, identifierError, type TemplateVar } from "@/lib/template";
 import { localDate } from "@/lib/timezone";
+import { useToast } from "@/components/toast";
 
 const TEMPLATE_SYNTAX_DOC = `Daily note placeholders:
 {Q1.question}  - question text
@@ -43,9 +44,8 @@ export function SettingsClient({
   const [templateContent, setTemplateContent] = useState<string | null>(initialTemplateContent);
   const [profiles, setProfiles] = useState<Profile[]>(initialProfiles);
   const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState("");
+  const toast = useToast();
   const [tab, setTab] = useState<string>("general");
-  const [aiTestResult, setAiTestResult] = useState("");
   const [aiTesting, setAiTesting] = useState(false);
   const [googleTestResult, setGoogleTestResult] = useState("");
   const [googleTesting, setGoogleTesting] = useState(false);
@@ -69,7 +69,7 @@ export function SettingsClient({
   useEffect(() => {
     const ok = new URLSearchParams(window.location.search).get("google_ok");
     if (ok) {
-      setMessage(ok === "both" ? "Google connected" : `Google ${ok} connected`);
+      toast.show("success", ok === "both" ? "Google connected" : `Google ${ok} connected`);
       window.history.replaceState({}, "", "/settings");
     }
   }, []);
@@ -112,7 +112,6 @@ export function SettingsClient({
   async function handleSave() {
     if (!draft) return;
     setSaving(true);
-    setMessage("");
     try {
       // Determine which sections the user actually touched. Validation should
       // only run for sections that have pending changes, and we should only
@@ -127,7 +126,7 @@ export function SettingsClient({
         const bad = questions
           .map((q, i) => identifierError(q.identifier, questions.slice(0, i).map((x) => x.identifier)))
           .find(Boolean);
-        if (bad) { setMessage(bad); return; }
+        if (bad) { toast.show("error", bad); return; }
       }
 
       const body: any = {};
@@ -135,7 +134,7 @@ export function SettingsClient({
       if (questionsDirty) body.questions = questions;
 
       if (Object.keys(body).length === 0) {
-        setMessage("Nothing to save");
+        toast.show("info", "Nothing to save");
         return;
       }
 
@@ -146,18 +145,17 @@ export function SettingsClient({
       });
       const d = await res.json().catch(() => ({}));
       if (!res.ok || d.error) {
-        setMessage(d.error || `Save failed (${res.status})`);
+        toast.show("error", d.error || `Save failed (${res.status})`);
         return;
       }
       if (d.template_content !== undefined) setTemplateContent(d.template_content);
-      setMessage("Saved");
+      toast.show("success", "Saved");
       // Re-fetch server components so the page (and others) see fresh DB data
       // immediately instead of on next navigation.
       router.refresh();
       setDirty(false);
-      setTimeout(() => setMessage(""), 1500);
     } catch (err: any) {
-      setMessage(`Save failed: ${err?.message || "network error"}`);
+      toast.show("error", `Save failed: ${err?.message || "network error"}`);
     } finally {
       setSaving(false);
     }
@@ -173,14 +171,14 @@ export function SettingsClient({
         body: JSON.stringify({ create_profile: { name: newProfileName.trim() }, profile_questions: [] }),
       });
       const d = await res.json();
-      if (d.error) { setMessage(d.error); return; }
+      if (d.error) { toast.show("error", d.error); return; }
       setNewProfileName("");
       const r = await fetch("/api/settings");
       const data = await r.json();
       setProfiles(data.profiles || []);
-      setMessage("Profile created");
+      toast.show("success", "Profile created");
     } catch {
-      setMessage("Failed to create");
+      toast.show("error", "Failed to create");
     } finally {
       setSaving(false);
     }
@@ -196,7 +194,7 @@ export function SettingsClient({
     setTemplateContent(d.template_content ?? null);
     setProfiles(d.profiles || []);
     setDirty(false);
-    setMessage("Profile activated");
+    toast.show("success", "Profile activated");
   }
 
   async function deleteProfile(id: number) {
@@ -205,7 +203,7 @@ export function SettingsClient({
     const r = await fetch("/api/settings");
     const d = await r.json();
     setProfiles(d.profiles || []);
-    setMessage("Profile deleted");
+    toast.show("success", "Profile deleted");
   }
 
   async function exportProfile(id: number) {
@@ -225,13 +223,12 @@ export function SettingsClient({
     const r = await fetch("/api/settings");
     const d = await r.json();
     setProfiles(d.profiles || []);
-    setMessage("Profile imported");
+    toast.show("success", "Profile imported");
   }
 
   async function testAI() {
     if (!draft) return;
     setAiTesting(true);
-    setAiTestResult("");
     try {
       const res = await fetch("/api/ai-test", {
         method: "POST",
@@ -243,9 +240,10 @@ export function SettingsClient({
         }),
       });
       const d = await res.json();
-      setAiTestResult(d.success ? `Connected in ${d.latency_ms}ms` : (d.error || "Failed"));
+      if (d.success) toast.show("success", `Connected in ${d.latency_ms}ms`);
+      else toast.show("error", d.error || "Failed");
     } catch {
-      setAiTestResult("Connection error");
+      toast.show("error", "Connection error");
     } finally {
       setAiTesting(false);
     }
@@ -282,8 +280,8 @@ export function SettingsClient({
       body: JSON.stringify({ change_password: { currentPassword: currentPass, newPassword: newPass } }),
     });
     const d = await res.json().catch(() => ({}));
-    if (!res.ok || d.error) { setMessage(d.error || "Password change failed"); return; }
-    setMessage("Password changed");
+    if (!res.ok || d.error) { toast.show("error", d.error || "Password change failed"); return; }
+    toast.show("success", "Password changed");
     setCurrentPass("");
     setNewPass("");
   }
@@ -377,8 +375,13 @@ export function SettingsClient({
 
       {tab === "ai" && (
         <div className="space-y-3">
-          <Field label="Endpoint" value={draft.llm_endpoint} onChange={(v) => updateDraft({ llm_endpoint: v })} placeholder="http://localhost:11434/v1" />
-          <Field label="Model" value={draft.llm_model} onChange={(v) => updateDraft({ llm_model: v })} placeholder="llama3.2" />
+          {!draft.llm_endpoint || !draft.llm_model ? (
+            <p className="text-xs text-amber-400/90 bg-amber-950/30 border border-amber-800/50 rounded-lg px-3 py-2">
+              AI is not configured yet — chat and note generation need an endpoint and model below. Any OpenAI-compatible local server works (Ollama, LM Studio, vLLM…).
+            </p>
+          ) : null}
+          <Field label="Endpoint" value={draft.llm_endpoint} onChange={(v) => updateDraft({ llm_endpoint: v })} placeholder="e.g. http://localhost:11434/v1 (Ollama)" />
+          <Field label="Model" value={draft.llm_model} onChange={(v) => updateDraft({ llm_model: v })} placeholder="e.g. llama3.2:3b (Ollama)" />
           <Field label="API Key" value={draft.llm_api_key} onChange={(v) => updateDraft({ llm_api_key: v })} type="password" placeholder="(optional)" />
           <div>
             <label className="block text-xs text-zinc-500 mb-1">Personality</label>
@@ -392,11 +395,6 @@ export function SettingsClient({
             <button onClick={testAI} disabled={aiTesting} className="text-xs bg-zinc-800 hover:bg-zinc-700 rounded px-3 py-1.5 text-zinc-300 disabled:opacity-50">
               {aiTesting ? "Testing..." : "Test connection"}
             </button>
-            {aiTestResult && (
-              <span className={`text-xs ${aiTestResult.startsWith("Connected") ? "text-emerald-400" : "text-red-400"}`}>
-                {aiTestResult}
-              </span>
-            )}
           </div>
         </div>
       )}
@@ -576,12 +574,6 @@ export function SettingsClient({
         >
           {saving ? "Saving..." : "Save changes"}
         </button>
-      )}
-
-      {message && (
-        <p className="text-sm fixed bottom-16 left-1/2 -translate-x-1/2 px-4 py-1.5 rounded-full bg-zinc-800 text-emerald-400 z-50 text-xs">
-          {message}
-        </p>
       )}
     </div>
   );

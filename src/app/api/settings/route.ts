@@ -3,6 +3,7 @@ import { stat } from "fs/promises";
 import { getDb, getActiveProfile, getProfileQuestions } from "@/lib/db";
 import { requireAuth, hashPassword, verifyPassword } from "@/lib/auth";
 import { identifierError } from "@/lib/template";
+import { scanMediaFolder } from "@/lib/media-cache";
 import { existsSync, readFileSync } from "fs";
 
 export async function GET() {
@@ -96,8 +97,19 @@ db.prepare(`UPDATE profiles SET
       p.id,
     );
       console.log("[settings PUT] profile updated id:", p.id);
-      if (p.day_offset_hours !== undefined && p.day_offset_hours !== current.day_offset_hours) {
+      // Media cache invalidation + fresh scan when the bucketing inputs change:
+      // day offset (changes how timestamps map to dates), folder, or enable flag.
+      const mediaNowEnabled = !!p.media_enabled && !!p.media_folder;
+      const mediaWasEnabled = !!current.media_enabled && !!current.media_folder;
+      const mediaInvalidated =
+        (p.day_offset_hours !== undefined && p.day_offset_hours !== current.day_offset_hours) ||
+        (mediaNowEnabled && (!mediaWasEnabled || (p.media_folder || "") !== current.media_folder));
+      if (mediaInvalidated) {
         getDb().prepare("DELETE FROM media_cache WHERE profile_id = ?").run(p.id);
+        if (mediaNowEnabled) {
+          // Fire-and-forget: the viewer/chat polling picks up the scanning state.
+          scanMediaFolder(p.media_folder!, p.id, p.timezone || current.timezone, p.day_offset_hours ?? current.day_offset_hours).catch(() => {});
+        }
       }
     } catch (err: any) {
       console.error("[settings PUT] profile update failed:", err.message);
@@ -159,7 +171,7 @@ db.prepare(`UPDATE profiles SET
     const p = body.create_profile;
     const result = db.prepare(`INSERT INTO profiles (user_id, name, is_default, is_active, llm_endpoint, llm_model, personality_prompt, asking_method)
       VALUES (?, ?, 0, 0, ?, ?, ?, ?)`).run(
-      user.id, p.name, p.llm_endpoint || "http://localhost:11434/v1", p.llm_model || "llama3.2",
+      user.id, p.name, p.llm_endpoint || "", p.llm_model || "",
       p.personality_prompt || "", p.asking_method || "ask_in_one_go",
     );
     const newId = result.lastInsertRowid as number;

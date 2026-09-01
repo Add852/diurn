@@ -7,7 +7,14 @@
     "build": "next build",
     "start": "next start -p ${PORT:-11123}",
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test \"tests/*.test.ts\""
+    "test": "node --experimental-strip-types --test \"tests/*.test.ts\"",
+    "serve": "bash scripts/serve.sh",
+    "serve:stop": "bash scripts/serve.sh stop",
+    "serve:restart": "bash scripts/serve.sh restart",
+    "serve:status": "bash scripts/serve.sh status",
+    "serve:enable": "bash scripts/serve.sh enable",
+    "serve:disable": "bash scripts/serve.sh disable",
+    "serve:logs": "bash scripts/serve.sh logs"
   },
   "dependencies": {
     "@tailwindcss/typography": "^0.5.20",

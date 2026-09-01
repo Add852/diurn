@@ -30,6 +30,9 @@ export async function chatCompletion(
   messages: Message[],
   timeoutMs = 30_000
 ): Promise<string> {
+  if (!config.endpoint || !config.model) {
+    throw new Error("AI is not configured — set an endpoint and model in Settings → AI");
+  }
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 

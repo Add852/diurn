@@ -29,8 +29,8 @@ export async function POST(req: NextRequest) {
       ).run(
         userId,
         "Default",
-        "http://localhost:11434/v1",
-        "llama3.2",
+        "",
+        "",
         "You are a thoughtful daily journaling companion. You help the user reflect on their day with warmth and directness. Ask questions to capture the day's texture — concise, natural, no therapy-fluff. No bullet points in conversation — save those for notes.",
         "ask_in_one_go",
         validTZ
