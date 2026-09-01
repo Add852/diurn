@@ -70,7 +70,7 @@ Point **Settings → Media** at a local folder (e.g. your phone's camera sync). 
 
 ### Google Tasks & Calendar
 
-Provide a Google OAuth client ID/secret in **Settings**. The redirect URI is hardcoded to `http://localhost:11123/api/auth/google/callback` — register that exact URI in the [Google Console](https://console.cloud.google.com/apis/credentials). If you change the port, update the registration. Google only allows public TLDs, so from another device on your LAN you must complete the OAuth callback on the host (documented in the Settings UI).
+Provide a Google OAuth client ID/secret in **Settings**. The redirect URI is derived from how you reach the app (shown exactly in Settings → Integrations) — register that string in the [Google Console](https://console.cloud.google.com/apis/credentials) as a **Web application** client, byte-for-byte. Google only allows public TLDs (no LAN IPs), so from another device on your LAN you must complete the OAuth callback on the host (documented in the Settings UI).
 
 ### Obsidian
 

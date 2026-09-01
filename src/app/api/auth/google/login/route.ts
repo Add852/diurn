@@ -2,8 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireProfile } from "@/lib/auth";
 import { randomBytes } from "crypto";
 import { safeReturnTo } from "@/lib/safe-return";
-
-const OAUTH_REDIRECT_URI = "http://localhost:11123/api/auth/google/callback";
+import { oauthRedirectUri } from "@/lib/google-auth";
 
 export async function GET(req: NextRequest) {
   const guard = await requireProfile();
@@ -18,7 +17,8 @@ export async function GET(req: NextRequest) {
   if (service === "calendar" || service === "both") scopes.push("https://www.googleapis.com/auth/calendar.readonly");
 
   if (scopes.length === 0) return NextResponse.json({ error: "Unknown service" }, { status: 400 });
-  if (!profile.google_client_id || !profile.google_client_secret) {
+  const clientId = (profile.google_client_id || "").trim();
+  if (!clientId || !profile.google_client_secret) {
     return NextResponse.redirect(new URL("/settings", req.url));
   }
 
@@ -26,8 +26,8 @@ export async function GET(req: NextRequest) {
   const stateCookieValue = `${randomBytes(16).toString("hex")}.${service}.${Buffer.from(returnTo).toString("base64url")}`;
 
   const params = new URLSearchParams({
-    client_id: profile.google_client_id,
-    redirect_uri: OAUTH_REDIRECT_URI,
+    client_id: clientId,
+    redirect_uri: oauthRedirectUri(req),
     response_type: "code",
     scope: scopes.join(" "),
     access_type: "offline",

@@ -31,11 +31,13 @@ export function SettingsClient({
   initialQuestions,
   initialProfiles,
   initialTemplateContent,
+  googleRedirectUri,
 }: {
   initialProfile: Profile | null;
   initialQuestions: Question[];
   initialProfiles: Profile[];
   initialTemplateContent: string | null;
+  googleRedirectUri: string;
 }) {
   const router = useRouter();
   const [profile, setProfile] = useState<Profile | null>(initialProfile);
@@ -67,9 +69,14 @@ export function SettingsClient({
   }, [questions, draft, templateContent]);
 
   useEffect(() => {
-    const ok = new URLSearchParams(window.location.search).get("google_ok");
+    const params = new URLSearchParams(window.location.search);
+    const ok = params.get("google_ok");
+    const err = params.get("error");
     if (ok) {
       toast.show("success", ok === "both" ? "Google connected" : `Google ${ok} connected`);
+      window.history.replaceState({}, "", "/settings");
+    } else if (err) {
+      toast.show("error", `Google connection failed: ${err}`);
       window.history.replaceState({}, "", "/settings");
     }
   }, []);
@@ -451,14 +458,15 @@ export function SettingsClient({
                 Go to{' '}
                 <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noreferrer" className="text-emerald-400 underline">console.cloud.google.com/apis/credentials</a>
                 {' '}&rarr; first set up <strong>OAuth consent screen</strong> (External, add scopes for Tasks + Calendar).
-                Then Create credentials &rarr; <strong>OAuth client ID</strong> &rarr; Web application.
-                Add <code className="text-zinc-400 bg-zinc-800 px-1 rounded">http://localhost:11123/api/auth/google/callback</code> as Authorized redirect URI.
+                Then Create credentials &rarr; <strong>OAuth client ID</strong> &rarr; <strong>Web application</strong> (not Desktop).
+                Add this exact string as an Authorized redirect URI — it must match byte-for-byte:
+                <code className="text-zinc-400 bg-zinc-800 px-1 rounded break-all">{googleRedirectUri}</code>
               </p>
-              <p className="text-xs text-amber-400/80 bg-amber-900/20 rounded p-2">
-                The redirect URI uses localhost. When accessing this app from another device on your LAN, Google will redirect you back to localhost:11123 — you must complete the OAuth callback by running{' '}
-                <code className="text-amber-400 bg-amber-900/40 px-1 rounded">curl &quot;http://localhost:11123/api/auth/google/callback?code=...&amp;state=...&quot;</code>{' '}
-                on the server machine, or open the link in a browser on the server itself.
-              </p>
+              {googleRedirectUri.includes("localhost") ? (
+                <p className="text-xs text-amber-400/80 bg-amber-900/20 rounded p-2">
+                  You're accessing via localhost. Google only allows localhost redirect URIs — from another device on your LAN, complete the OAuth callback on this machine (open the returned localhost link here, or curl it from the server).
+                </p>
+              ) : null}
               <Field label="Google Client ID" value={draft.google_client_id || ""} onChange={(v) => updateDraft({ google_client_id: v })} placeholder="1234567890-xxx.apps.googleusercontent.com" />
               <Field label="Google Client Secret" value={draft.google_client_secret || ""} onChange={(v) => updateDraft({ google_client_secret: v })} type="password" placeholder="GOCSPX-xxx" />
 

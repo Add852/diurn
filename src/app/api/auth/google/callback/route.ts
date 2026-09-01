@@ -1,13 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb, getActiveProfile } from "@/lib/db";
-import { parseConfig } from "@/lib/google-auth";
+import { parseConfig, oauthRedirectUri } from "@/lib/google-auth";
 import { safeReturnTo } from "@/lib/safe-return";
-const OAUTH_REDIRECT_URI = "http://localhost:11123/api/auth/google/callback";
 
 export async function GET(req: NextRequest) {
   const url = new URL(req.url);
   const code = url.searchParams.get("code");
   const state = url.searchParams.get("state");
+  // Google redirects here with ?error=... when anything went wrong on its
+  // side (user denied, invalid scope, etc.) — surface it instead of the
+  // generic "no_code".
+  const oauthError = url.searchParams.get("error");
 
   const stateCookie = req.cookies.get("g_oauth_state")?.value;
   let returnTo = "/settings";
@@ -33,21 +36,23 @@ export async function GET(req: NextRequest) {
     return res;
   };
 
+  if (oauthError) return errorRedirect(oauthError);
   if (!code) return errorRedirect("no_code");
+  if (!stateCookie || !state || stateCookie !== state) return errorRedirect("state_mismatch");
 
   const profile = getActiveProfile();
   if (!profile) return errorRedirect("no_profile");
   if (!profile.google_client_id || !profile.google_client_secret) return errorRedirect("no_creds");
 
   try {
-    const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+      const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
         code,
         client_id: profile.google_client_id,
         client_secret: profile.google_client_secret,
-        redirect_uri: OAUTH_REDIRECT_URI,
+        redirect_uri: oauthRedirectUri(req),
         grant_type: "authorization_code",
       }),
     });

@@ -1,5 +1,6 @@
 import { getDb, getActiveProfile, getProfileQuestions } from "@/lib/db";
 import { existsSync, readFileSync } from "fs";
+import { headers } from "next/headers";
 import { SettingsClient } from "./settings-client";
 
 // Server data (active profile, questions, template file) — must render per request.
@@ -22,12 +23,21 @@ export default async function SettingsPage() {
     } catch {}
   }
 
+  // The exact OAuth redirect URI the user must register in the Google console
+  // for THIS deployment (honors x-forwarded-* behind a reverse proxy).
+  const h = await headers();
+  const xfHost = h.get("x-forwarded-host");
+  const googleRedirectUri = xfHost
+    ? `${h.get("x-forwarded-proto") || "http"}://${xfHost}/api/auth/google/callback`
+    : `http://${h.get("host") || "localhost:11123"}/api/auth/google/callback`;
+
   return (
     <SettingsClient
       initialProfile={profile as any || null}
       initialQuestions={questions}
       initialProfiles={profiles as any}
       initialTemplateContent={templateContent}
+      googleRedirectUri={googleRedirectUri}
     />
   );
 }

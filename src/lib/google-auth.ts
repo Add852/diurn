@@ -9,6 +9,19 @@ export function parseConfig(raw: string): Record<string, any> {
   try { return JSON.parse(raw); } catch { return {}; }
 }
 
+// The OAuth redirect URI must byte-match what's registered in the Google
+// console, so derive it from the request origin (honoring a reverse proxy's
+// x-forwarded-* headers) instead of hardcoding localhost:port. The Settings
+// UI shows users this exact string to register.
+export function oauthRedirectUri(req: { url: string; headers: { get(name: string): string | null } }): string {
+  const xfHost = req.headers.get("x-forwarded-host");
+  if (xfHost) {
+    const proto = req.headers.get("x-forwarded-proto") || "http";
+    return `${proto}://${xfHost}/api/auth/google/callback`;
+  }
+  return `${new URL(req.url).origin}/api/auth/google/callback`;
+}
+
 export function getTokens(config: Record<string, any>): GoogleTokens | null {
   const t = config.tokens;
   if (t?.access_token) return t as GoogleTokens;
