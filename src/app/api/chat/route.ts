@@ -34,16 +34,12 @@ export async function GET(req: NextRequest) {
   const session_id = randomUUID();
   const config = llmConfig(profile);
   if (profile.media_enabled && profile.media_folder && existsSync(profile.media_folder)) {
-    // Fresh media guaranteed before answering. Static-prerendered pages mean
-    // the layout's boot scan never ran on pure /api flows, so self-trigger
-    // it (idempotent, once per process) and wait out any scan that is
-    // running or needed. Normal case — scan done, nothing changed — no-op.
+    // Fire the boot scan if it hasn't run, but NEVER await it — a long scan
+    // (thousands of EXIF reads) used to hang the chat greeting and everything
+    // behind it on the same request chain. Context reads the cached rows.
     maybeBackgroundScan();
-    const pending = pendingScan(profile.id);
-    if (pending) {
-      await pending;
-    } else if (needsRefresh(profile.id) || isDirty(profile.id)) {
-      await scanMediaFolder(profile.media_folder, profile.id, profile.timezone, profile.day_offset_hours);
+    if (!pendingScan(profile.id) && (needsRefresh(profile.id) || isDirty(profile.id))) {
+      scanMediaFolder(profile.media_folder, profile.id, profile.timezone, profile.day_offset_hours).catch(() => {});
     }
   }
 
@@ -110,6 +106,7 @@ export async function POST(req: NextRequest) {
   // Every branch below ends the same way: pick an instruction for the next
   // assistant turn, run one completion over the transcript, append, return.
   // Only the instruction (and whether we're done) differs between branches.
+  const userMessagesInSession = (h: { role: string }[]) => h.filter((m) => m.role === "user").length;
   try {
     const history = getMessages(session_id);
     let instruction: string;
@@ -144,8 +141,15 @@ export async function POST(req: NextRequest) {
       const missingIds = Array.isArray(rec?.missing)
         ? rec!.missing.filter((id): id is string => typeof id === "string" && askedQuestions.some((q) => q.identifier === id))
         : [];
-
-      if (covered) {
+      // Deterministic safety net: unparseable classifier output used to fall
+      // into the "anything else?" branch forever. When the model can't be
+      // understood AND the user has sent at least one message per question,
+      // treat the session as complete — the note generation re-extracts
+      // everything from the transcript anyway.
+      if (!rec && userMessagesInSession(history) >= askedQuestions.length) {
+        instruction = WRAPUP_PROMPT;
+        done = true;
+      } else if (covered) {
         instruction = WRAPUP_PROMPT;
         done = true;
       } else if (missingIds.length === 0) {

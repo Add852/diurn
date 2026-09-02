@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { EntryDialog } from "@/components/entry-dialog";
 import { IntegrationsPanel } from "@/components/integrations-panel";
 import { SkeletonLines } from "@/components/skeleton";
+import { useToast } from "@/components/toast";
 
 interface Message {
   id: number;
@@ -31,6 +32,50 @@ function ChatContent() {
   const [enabledIntegrations, setEnabledIntegrations] = useState<string[]>([]);
   const [rawContext, setRawContext] = useState<any>(null);
   const [systemPrompt, setSystemPrompt] = useState("");
+  const toast = useToast();
+
+  // Draft + active-session guards: typed-but-unsent text and an in-progress
+  // conversation are easy to lose by navigating away (nav bar / back button /
+  // tab close). Warn before both; keep the draft in localStorage so a
+  // deliberate reload restores it.
+  const draftKey = `diurn-chat-draft-${urlDate}`;
+  useEffect(() => {
+    const saved = localStorage.getItem(draftKey);
+    if (saved && !input) setInput(saved);
+  }, [draftKey]);
+  useEffect(() => {
+    if (input) localStorage.setItem(draftKey, input);
+    else localStorage.removeItem(draftKey);
+  }, [input, draftKey]);
+  useEffect(() => {
+    const warn = (e: BeforeUnloadEvent) => {
+      const inProgress = status === "awaiting_input" || status === "thinking" || status === "generating";
+      if (!input.trim() && !inProgress) return;
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [input, status]);
+  // In-app navigation (nav bar / in-page links): confirm before leaving a
+  // session in progress — the conversation can't be resumed from another page.
+  useEffect(() => {
+    const inProgress = () => status === "awaiting_input" || status === "thinking" || status === "generating";
+    const onClick = (e: MouseEvent) => {
+      if (!inProgress() && !input.trim()) return;
+      const a = (e.target as HTMLElement).closest?.("a") as HTMLAnchorElement | null;
+      const href = a?.getAttribute("href");
+      if (!a || !href || a.target === "_blank") return;
+      if (a.closest("nav") || href.startsWith("/")) {
+        if (!confirm("Leave this chat session? Unsent text is kept, but the conversation will need a new session.")) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+      }
+    };
+    document.addEventListener("click", onClick, true);
+    return () => document.removeEventListener("click", onClick, true);
+  }, [input, status]);
 
   async function generateNote(forceOverwrite = false) {
     setStatus("generating");
@@ -51,6 +96,7 @@ function ChatContent() {
       if (d.rendered) {
         setOverwriteConfirm(false);
         setStatus("complete");
+        if (d.extraction_warning) toast.show("error", d.extraction_warning);
       } else {
         setError(d.error || "Failed to generate note");
         setStatus("error");
@@ -383,7 +429,7 @@ function ChatContent() {
         <div className="bg-zinc-950 px-4 pt-2 pb-4 border-t border-zinc-800 safe-bottom">
           <div className="flex gap-2">
           <button
-            onClick={() => router.push("/")}
+            onClick={() => { localStorage.removeItem(draftKey); router.push("/"); }}
             className="flex-1 bg-emerald-600 hover:bg-emerald-500 rounded-xl py-2 text-sm font-medium transition-colors"
           >
             Done

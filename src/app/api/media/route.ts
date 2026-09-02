@@ -26,12 +26,23 @@ export async function GET(req: NextRequest) {
   const filterMonth = url.searchParams.get("month") || undefined;
 
   maybeBackgroundScan();
-  const pending = pendingScan(profile.id);
-  if (pending) await pending;
-
-  if (refresh || needsRefresh(profile.id) || isDirty(profile.id)) {
+  // A scan in flight (or needed) must not block serving the page: hand back
+  // whatever is cached right now and let the client poll — the viewer shows
+  // cached photos plus a scanning indicator and appends as the scan lands.
+  // Only an explicit ?refresh=1 (user hit Rescan) resets the view.
+  if (refresh) {
     scanMediaFolder(profile.media_folder, profile.id, profile.timezone, profile.day_offset_hours).catch(() => {});
     return NextResponse.json({ files: [], scanning: true });
+  }
+  if (needsRefresh(profile.id) || isDirty(profile.id)) {
+    // Cache empty/stale: kick a background scan, and if we have nothing cached
+    // yet, tell the client we're scanning instead of showing an empty gallery.
+    const cached = getMediaFiles({ profileId: profile.id, limit: 1 });
+    if (cached.length === 0) {
+      scanMediaFolder(profile.media_folder, profile.id, profile.timezone, profile.day_offset_hours).catch(() => {});
+      return NextResponse.json({ files: [], scanning: true });
+    }
+    scanMediaFolder(profile.media_folder, profile.id, profile.timezone, profile.day_offset_hours).catch(() => {});
   }
 
   const opts: Parameters<typeof getMediaFiles>[0] = {

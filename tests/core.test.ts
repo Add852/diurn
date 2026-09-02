@@ -174,3 +174,36 @@ test("profile export/import: settings columns round-trip", async () => {
     "llm_endpoint", "llm_model", "llm_api_key", "personality_prompt", "asking_method", "timezone"];
   assert.deepEqual(Object.keys(exported).sort(), expected.sort());
 });
+
+// one_by_one pairing contract: user message i answers asked-question i
+// (mirrors the pre-fill in entries POST + the chat flow's stop condition).
+// Unasked questions have NO pairing — they get AI-generated answers instead.
+test("one_by_one: index pairing of user messages to asked questions", () => {
+  const questions = [
+    { identifier: "Q1", asked: 1 }, { identifier: "Q2", asked: 0 }, { identifier: "Q3", asked: 1 },
+  ];
+  const asked = questions.filter((q) => q.asked);
+  const userMessages = ["answer one", "answer three"];
+  const answers: Record<string, string> = {};
+  for (let i = 0; i < asked.length; i++) {
+    answers[asked[i].identifier] = userMessages[i]?.trim() || "";
+  }
+  assert.equal(answers.Q1, "answer one");
+  assert.equal(answers.Q3, "answer three"); // unasked Q2 skipped, index preserved
+  assert.equal(Object.keys(answers).length, 2);
+  assert.equal("Q2" in answers, false); // unasked -> AI path, not index
+});
+
+// Entries answer generation is prose-per-question, not JSON: any LLM reply
+// text is a valid answer (trimmed, "-" sentinel means empty). Nothing to
+// parse, so formatting can't fail.
+test("answer generation: prose reply is the answer, sentinel excluded", () => {
+  const adopt = (reply: string) => {
+    const clean = reply.trim();
+    return clean && clean !== "-" ? clean : "";
+  };
+  assert.equal(adopt("  Hiked with friends in the morning.  "), "Hiked with friends in the morning.");
+  assert.equal(adopt("-"), "");
+  assert.equal(adopt("   "), "");
+  assert.equal(adopt(`"quoted answer"`), '"quoted answer"'); // quotes kept — plain text is fine
+});

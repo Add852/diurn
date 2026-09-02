@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb, getActiveProfile, getProfileQuestions, getStreakStatus, type ProfileQuestion } from "@/lib/db";
 import { requireAuth } from "@/lib/auth";
-import { chatCompletion, llmConfig, extractJson } from "@/lib/ai";
+import { chatCompletion, llmConfig } from "@/lib/ai";
 import { renderTemplate, type TemplateVar } from "@/lib/template";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "fs";
 import { readFile, readdir } from "fs/promises";
@@ -112,48 +112,70 @@ export async function POST(req: NextRequest) {
     db.prepare("DELETE FROM entries WHERE id = ?").run((existing as any).id);
   }
   const messages = getMessages(session_id);
-  const msgs = messages.map((m) => ({ role: m.role as "system" | "user" | "assistant", content: m.content }));
 
   if (messages.length === 0) {
     return NextResponse.json({ error: "No messages" }, { status: 400 });
   }
 
   const questions = getProfileQuestions(profile.id);
-  const allUserInput = messages
-    .filter((m) => m.role === "user")
-    .map((m) => m.content)
-    .join("\n\n");
+  const userMessages = messages.filter((m) => m.role === "user").map((m) => m.content);
   const config = llmConfig(profile);
 
-  // One extraction call for ALL questions (was: one call per question).
-  // The chat session's system message carries the conversational persona and
-  // date context; reusing it for extraction makes the model answer in chat
-  // voice — so extraction runs with its own stripped-down prompt.
+  // Answer generation — one call per question where the reply text itself IS
+  // the answer. No JSON, no parsing: formatting can't fail. AI failure can't
+  // break the batch either (each call pre-fills, a failed call just keeps it).
   const answers: Record<string, TemplateVar> = {};
+  let extractionWarning: string | undefined;
 
-  if (questions.length > 0) {
-    const items = questions
-      .map((q) => `${q.identifier}: question=${JSON.stringify(q.question)}; instructions=${JSON.stringify(q.answer_prompt || "Extract the relevant details from the user's input.")}`)
-      .join("\n");
-    // Pre-fill blanks so a failed call still renders the note with empty answers.
-    for (const q of questions) {
-      answers[q.identifier] = { question: q.question, answer: "", asked: !!q.asked, prompt: q.answer_prompt || "" };
+  // one_by_one: question i is answered by user message i (the flow's own stop
+  // condition). Raw answer pre-fills the slot — good even without AI.
+  if (profile.asking_method === "one_by_one") {
+    const asked = questions.filter((q) => q.asked);
+    for (let i = 0; i < asked.length; i++) {
+      const q = asked[i];
+      answers[q.identifier] = { question: q.question, answer: userMessages[i]?.trim() || "", asked: true, prompt: q.answer_prompt || "" };
     }
+  }
 
+  const transcript = messages
+    .map((m) => `${m.role === "user" ? "user" : "assistant"}: ${m.content}`)
+    .join("\n");
+
+  const settle = async (q: ProfileQuestion) => {
+    const fallback = answers[q.identifier]?.answer || "";
+    const guidance = q.answer_prompt
+      ? `Answering instructions: ${q.answer_prompt}`
+      : "Extract or infer the answer from the conversation, focusing on what the user actually said.";
     try {
-      const res = await chatCompletion(config, [
-        { role: "system", content: "You are a data extractor for a daily journal. For each item, extract or infer a concise answer strictly from the user's input. Do not respond conversationally and do not mention missing context or tools. Answer with ONLY a JSON object mapping each identifier to its answer string, each kept under 3 lines." },
-        { role: "user", content: `User input:\n${allUserInput}\n\nItems:\n${items}` },
+      const reply = await chatCompletion(config, [
+        { role: "system", content: `You answer ONE question about the user's day for their journal note. ${guidance} Answer in 1-3 sentences, plain prose, no preamble, no quotes, no markdown. If the conversation contains nothing relevant, reply with just "-".` },
+        { role: "user", content: `Question: ${q.question}\n\nConversation:\n${transcript}` },
       ], 45_000);
-      const parsed = extractJson(res);
-      for (const q of questions) {
-        const v = parsed?.[q.identifier];
-        if (typeof v === "string" && v.trim()) {
-          answers[q.identifier] = { question: q.question, answer: v.trim(), asked: !!q.asked, prompt: q.answer_prompt || "" };
-        }
+      const clean = reply.trim();
+      if (clean && clean !== "-") {
+        answers[q.identifier] = { question: q.question, answer: clean, asked: !!q.asked, prompt: q.answer_prompt || "" };
       }
     } catch {
-      // LLM unreachable: leave blanks; template still renders with empty answers.
+      // AI unreachable / call failed: keep the raw pre-fill (one_by_one user
+      // text) — better than empty. The note still renders either way.
+    }
+  };
+
+  if (questions.length > 0) {
+    // Pre-fill every remaining slot (asked-in-one-go raws + unasked + missing)
+    // so failures render empty answers instead of literal {identifier.answer}.
+    for (const q of questions) {
+      if (!answers[q.identifier]) {
+        answers[q.identifier] = { question: q.question, answer: "", asked: !!q.asked, prompt: q.answer_prompt || "" };
+      }
+    }
+    await Promise.all(questions.map((q) => settle(q)));
+
+    const missing = questions.filter((q) => !answers[q.identifier]?.answer);
+    if (missing.length === questions.length) {
+      extractionWarning = "AI answer generation failed — answers are empty. Check Settings → AI (endpoint/model).";
+    } else if (missing.length > 0) {
+      extractionWarning = `No answer generated for: ${missing.map((q) => q.identifier).join(", ")}`;
     }
   }
 
@@ -189,7 +211,7 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  return NextResponse.json({ entry_id: entryId, file_path: filePath, rendered, answers });
+  return NextResponse.json({ entry_id: entryId, file_path: filePath, rendered, answers, extraction_warning: extractionWarning });
 }
 
 export async function PUT(req: NextRequest) {
