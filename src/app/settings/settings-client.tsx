@@ -6,6 +6,7 @@ import type { Profile } from "@/lib/db";
 import { renderTemplate, identifierError, type TemplateVar } from "@/lib/template";
 import { localDate } from "@/lib/timezone";
 import { useToast } from "@/components/toast";
+import { applyTheme, ACCENTS, ACCENT_SWATCH, type ThemeMode, type Accent } from "@/lib/theme";
 
 const TEMPLATE_SYNTAX_DOC = `Daily note placeholders:
 {Q1.question}  - question text
@@ -52,6 +53,15 @@ export function SettingsClient({
   const [googleTestResult, setGoogleTestResult] = useState("");
   const [googleTesting, setGoogleTesting] = useState(false);
   const [mediaRescanning, setMediaRescanning] = useState(false);
+  const [themeMode, setThemeMode] = useState<ThemeMode>("system");
+  const [accent, setAccent] = useState<Accent>("emerald");
+
+  useEffect(() => {
+    const m = (localStorage.getItem("diurn-theme") as ThemeMode | null) || "system";
+    const a = localStorage.getItem("diurn-accent") as Accent | null;
+    setThemeMode(m);
+    if (a && (ACCENTS as readonly string[]).includes(a)) setAccent(a);
+  }, []);
   const [newProfileName, setNewProfileName] = useState("");
   const [dirty, setDirty] = useState(false);
   const [currentPass, setCurrentPass] = useState("");
@@ -378,6 +388,41 @@ export function SettingsClient({
 
       {tab === "general" && (
         <div className="space-y-3">
+          <Expander title="Appearance" open hint="theme &amp; accent — per device">
+            <div>
+              <label className="block text-xs text-zinc-500 mb-1">Theme</label>
+              <div className="flex gap-2">
+                {(["system", "dark", "light"] as ThemeMode[]).map((m) => (
+                  <button
+                    key={m}
+                    onClick={() => { setThemeMode(m); localStorage.setItem("diurn-theme", m); applyTheme(m, accent); }}
+                    className={`flex-1 rounded-lg border px-3 py-2 text-xs capitalize transition-colors ${
+                      themeMode === m
+                        ? "border-emerald-500 bg-zinc-800 text-zinc-100"
+                        : "border-zinc-700 text-zinc-400 hover:text-zinc-200"
+                    }`}
+                  >
+                    {m === "system" ? "System default" : m}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs text-zinc-500 mb-1">Accent</label>
+              <div className="flex gap-2">
+                {ACCENTS.map((a) => (
+                  <button
+                    key={a}
+                    onClick={() => { setAccent(a); localStorage.setItem("diurn-accent", a); applyTheme(themeMode, a); }}
+                    title={a}
+                    aria-label={`Accent: ${a}`}
+                    className={`w-9 h-9 rounded-lg border-2 transition-transform hover:scale-110 ${accent === a ? "border-zinc-200 scale-110" : "border-transparent"}`}
+                    style={{ background: ACCENT_SWATCH[a] }}
+                  />
+                ))}
+              </div>
+            </div>
+          </Expander>
           <PathField label="Daily note folder" value={draft.daily_note_folder} onChange={(v) => updateDraft({ daily_note_folder: v })} placeholder="/path/to/obsidian/vault/1 Dailies" kind="dir" />
           <PathField label="Template note path" value={draft.template_note_path} onChange={(v) => updateDraft({ template_note_path: v })} placeholder="/path/to/template.md" kind="md" />
           <Expander title="Template syntax &amp; preview">

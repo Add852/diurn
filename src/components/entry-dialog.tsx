@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { EntryPreview } from "@/components/entry-preview";
-import { MediaThumb } from "@/components/media-thumb";
+import { MediaThumb, MediaImage } from "@/components/media-thumb";
 import { MediaLightbox, type MediaItem } from "@/components/media-lightbox";
 
 interface Props {
@@ -90,7 +90,7 @@ export function EntryDialog({ date, onClose, onChanged }: Props) {
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={onClose}>
       <div className="absolute inset-0 bg-black/70" />
       <div
-        className="relative bg-zinc-900 border border-zinc-700 rounded-xl w-full max-w-lg max-h-[85vh] flex flex-col shadow-2xl"
+        className="relative bg-zinc-900 border border-zinc-700 rounded-xl w-full max-w-2xl max-h-[88vh] flex flex-col shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between gap-3 px-5 pt-4 pb-3 border-b border-zinc-800 flex-shrink-0">
@@ -196,7 +196,7 @@ export function EntryDialog({ date, onClose, onChanged }: Props) {
                         className="flex-shrink-0 w-16 h-16 bg-zinc-800 rounded-lg border border-zinc-700 overflow-hidden hover:border-zinc-500 transition-colors"
                       >
                         {m.type === "image" ? (
-                          <img src={m.src} alt={m.name} className="w-full h-full object-cover" />
+                          <MediaImage src={m.src} alt={m.name} className="w-full h-full object-cover" />
                         ) : (
                           <MediaThumb src={m.src} />
                         )}
@@ -205,7 +205,7 @@ export function EntryDialog({ date, onClose, onChanged }: Props) {
                   </div>
                 </div>
               )}
-              <EntryPreview markdown={entry.rendered_markdown} />
+              <EntryPreview markdown={entry.rendered_markdown} bare />
             </>
           )}
         </div>

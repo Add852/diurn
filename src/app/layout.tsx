@@ -6,6 +6,8 @@ import { maybeBackgroundScan } from "@/lib/media-cache";
 import { SWRegister } from "@/components/sw-register";
 import { ToastProvider } from "@/components/toast";
 import { ScanIndicator } from "@/components/scan-indicator";
+import { THEME_BOOTSTRAP } from "@/lib/theme";
+import { ThemeWatcher } from "@/components/theme-watcher";
 
 export const metadata: Metadata = {
   title: "Diurn",
@@ -38,13 +40,18 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
+      <head>
+        {/* Theme before first paint — no wrong-theme flash. */}
+        <script dangerouslySetInnerHTML={{ __html: THEME_BOOTSTRAP }} />
+      </head>
       <body className="h-dvh overflow-hidden">
         <ToastProvider>
           <ScrollReset />
           <NavBar />
           <SWRegister />
           <ScanIndicator />
+          <ThemeWatcher />
           <main className="h-full overflow-y-auto overscroll-none md:ml-48 px-4 pt-4 pb-[calc(3.5rem+env(safe-area-inset-bottom,0px))] md:pb-4 max-w-3xl mx-auto md:max-w-none md:mx-0 lg:mr-8">{children}</main>
         </ToastProvider>
       </body>

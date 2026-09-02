@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useRef, useCallback } from "react";
+import { MediaImage } from "./media-thumb";
 
 export interface MediaItem {
   name: string;
@@ -99,7 +100,7 @@ export function MediaLightbox({
         onClick={(e) => e.stopPropagation()}
       >
         {item.type === "image" ? (
-          <img
+          <MediaImage
             src={item.src}
             alt={item.name}
             className="w-full h-auto max-h-[85vh] object-contain rounded-xl mx-auto pointer-events-none"

@@ -24,8 +24,8 @@ export default function HomeClient() {
       .then((r) => r.json())
       .then((list) => {
         if (cancelled) return;
-        const today = localDate(new Date(), profileTz, profileOffset);
-        setHasEntry(Array.isArray(list) && list.some((e: { date: string }) => e.date === today));
+        const selected = date;
+        setHasEntry(Array.isArray(list) && list.some((e: { date: string }) => e.date === selected));
       })
       .catch(() => {
         if (!cancelled) setHasEntry(false);

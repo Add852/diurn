@@ -5,7 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { parseFrontmatter } from "@/lib/frontmatter";
 import { fmt } from "@/components/entry-preview";
 import { EntryDialog } from "@/components/entry-dialog";
-import { MediaThumb } from "@/components/media-thumb";
+import { MediaThumb, MediaImage } from "@/components/media-thumb";
 import { SkeletonLines } from "@/components/skeleton";
 
 // Journal icon used by media-less entries.
@@ -44,37 +44,10 @@ function monthLabel(dateStr: string) {
 }
 
 
-function useColumnCount(): number {
-  const [cols, setCols] = useState(2);
-  useEffect(() => {
-    const cb = () => setCols(window.innerWidth >= 1024 ? 4 : window.innerWidth >= 768 ? 3 : 2);
-    cb();
-    window.addEventListener("resize", cb);
-    return () => window.removeEventListener("resize", cb);
-  }, []);
-  return cols;
-}
+// Masonry is pure CSS multi-column now (columns-2 md:columns-3 lg:columns-4):
+// the browser balances from real rendered heights and reflows automatically
+// when lazy images load or the viewport resizes. No JS estimation.
 
-// Pinterest-style shortest-column split: entries keep their chronological
-// order, but each one lands in the currently-shortest column so columns stay
-// balanced. Heights are estimated from card shape (4/3 thumb + info bar, or
-// frontmatter card); `ponytail:` pixel-exact balancing via ResizeObserver if
-// imbalance ever becomes visible.
-function masonrySplit(cards: { e: FMEntry; thumb?: Thumb }[], cols: number, colWidth: number) {
-  const buckets: { e: FMEntry; thumb?: Thumb }[][] = Array.from({ length: cols }, () => []);
-  const heights = new Array<number>(cols).fill(0);
-  for (const card of cards) {
-    const i = heights.indexOf(Math.min(...heights));
-    buckets[i].push(card);
-    if (card.thumb) {
-      heights[i] += colWidth * 0.75 + 90;
-      continue;
-    }
-    const chipLines = Math.ceil(Math.min(Object.keys(card.e.frontmatter).length, 3) / 2);
-    heights[i] += 58 + chipLines * 22 + (chipLines ? 12 : 0);
-  }
-  return buckets;
-}
 
 
 
@@ -126,10 +99,8 @@ function EntryCard({ entry, thumb, onOpen }: { entry: FMEntry; thumb?: Thumb; on
         className="group relative w-full rounded-xl overflow-hidden bg-zinc-800/40 cursor-pointer text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
       >
         {thumb.type === "image" ? (
-          <img
+          <MediaImage
             src={thumb.src}
-            alt=""
-            loading="lazy"
             className="w-full aspect-[4/3] object-cover group-hover:scale-[1.02] transition-transform duration-300"
           />
         ) : (
@@ -154,7 +125,6 @@ export function JournalView() {
   const [loading, setLoading] = useState(true);
   const [dialogDate, setDialogDate] = useState<string | null>(null);
   const [thumbnails, setThumbnails] = useState<Record<string, Thumb>>({});
-  const cols = useColumnCount();
 
   const entries = useMemo(() =>
     rawEntries.map((e) => {
@@ -243,31 +213,20 @@ export function JournalView() {
 
       {!loading && entries.length > 0 && (
         <div className="space-y-10">
-          {grouped.map(([mk, monthEntries]) => {
-            const winW = typeof window !== "undefined" ? window.innerWidth : 1200;
-            const colWidth = Math.max(140, (winW - 32 - 12 * (cols - 1)) / cols);
-            const buckets = masonrySplit(
-              monthEntries.map((e) => ({ e, thumb: thumbnails[e.date] })),
-              cols,
-              colWidth
-            );
-            return (
-              <div key={mk}>
-                <h3 className="text-xs font-semibold text-zinc-500 uppercase tracking-wider mb-3 sticky top-0 -mx-4 px-4 bg-zinc-950 py-1 z-10">
-                  {monthEntries[0]?.monthLabel || mk}
-                </h3>
-                <div className="flex items-start gap-3">
-                  {buckets.map((col, ci) => (
-                    <div key={ci} className="flex-1 min-w-0 space-y-3">
-                      {col.map((c) => (
-                        <EntryCard key={c.e.id} entry={c.e} thumb={c.thumb} onOpen={() => openEntry(c.e)} />
-                      ))}
-                    </div>
-                  ))}
-                </div>
+          {grouped.map(([mk, monthEntries]) => (
+            <div key={mk}>
+              <h3 className="text-xs font-semibold text-zinc-500 uppercase tracking-wider mb-3 sticky top-0 -mx-4 px-4 bg-zinc-950 py-1 z-10">
+                {monthEntries[0]?.monthLabel || mk}
+              </h3>
+              <div className="columns-2 md:columns-3 lg:columns-4 gap-3">
+                {monthEntries.map((e) => (
+                  <div key={e.id} className="mb-3 break-inside-avoid">
+                    <EntryCard entry={e} thumb={thumbnails[e.date]} onOpen={() => openEntry(e)} />
+                  </div>
+                ))}
               </div>
-            );
-          })}
+            </div>
+          ))}
         </div>
       )}
 

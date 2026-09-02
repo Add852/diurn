@@ -15,9 +15,11 @@ interface EntryPreviewProps {
   markdown: string;
   collapsible?: boolean;
   defaultCollapsed?: boolean;
+  /** Dialog context: skip the card frame — the dialog is the frame. */
+  bare?: boolean;
 }
 
-export function EntryPreview({ markdown, collapsible, defaultCollapsed }: EntryPreviewProps) {
+export function EntryPreview({ markdown, collapsible, defaultCollapsed, bare }: EntryPreviewProps) {
   const { data, body } = parseFrontmatter(markdown);
   const hasFM = Object.keys(data).length > 0;
   const [collapsed, setCollapsed] = useState(!!defaultCollapsed);
@@ -34,15 +36,17 @@ export function EntryPreview({ markdown, collapsible, defaultCollapsed }: EntryP
           ))}
         </div>
       )}
-      <div className="prose prose-invert prose-sm max-w-none">
+      <div className="prose prose-sm max-w-none prose-headings:text-zinc-100 prose-p:text-zinc-200 prose-strong:text-zinc-100 prose-a:text-emerald-400 prose-code:text-zinc-200 prose-blockquote:text-zinc-400 prose-li:text-zinc-200">
         <ReactMarkdown>{body}</ReactMarkdown>
       </div>
     </>
   );
 
+  const frame = bare ? "" : "bg-zinc-900 border border-zinc-800 rounded-lg p-4 mb-4";
+
   if (collapsible) {
     return (
-      <div className="bg-zinc-900 border border-emerald-800 rounded-lg p-4 mb-4">
+      <div className={frame}>
         <div
           className="flex items-center justify-between mb-3 cursor-pointer"
           onClick={() => setCollapsed(!collapsed)}
@@ -58,7 +62,7 @@ export function EntryPreview({ markdown, collapsible, defaultCollapsed }: EntryP
   }
 
   return (
-    <div className="bg-zinc-900 border border-emerald-800 rounded-lg p-4 mb-4">
+    <div className={frame}>
       {inner}
     </div>
   );
