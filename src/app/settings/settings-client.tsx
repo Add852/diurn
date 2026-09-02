@@ -51,6 +51,7 @@ export function SettingsClient({
   const [aiTesting, setAiTesting] = useState(false);
   const [googleTestResult, setGoogleTestResult] = useState("");
   const [googleTesting, setGoogleTesting] = useState(false);
+  const [mediaRescanning, setMediaRescanning] = useState(false);
   const [newProfileName, setNewProfileName] = useState("");
   const [dirty, setDirty] = useState(false);
   const [currentPass, setCurrentPass] = useState("");
@@ -59,7 +60,7 @@ export function SettingsClient({
     const tpl = templateContent ?? "No template file set — the app falls back to its built-in default template.";
     const vars: Record<string, TemplateVar> = {};
     for (const q of questions) {
-      vars[q.identifier] = { question: q.question || "?", answer: "Nothing much.", asked: q.asked, prompt: q.answer_prompt || "..." };
+      vars[q.identifier] = { question: q.question || "?", answer: `answer to ${q.question || "?"}`, asked: q.asked, prompt: q.answer_prompt || "..." };
     }
     const dateStr = localDate(Date.now(), draft?.timezone || "UTC");
     return {
@@ -224,13 +225,20 @@ export function SettingsClient({
   }
 
   async function importProfile(file: File) {
-    const text = await file.text();
-    const json = JSON.parse(text);
-    await fetch("/api/settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ create_profile: json.profile, profile_questions: json.questions }) });
-    const r = await fetch("/api/settings");
-    const d = await r.json();
-    setProfiles(d.profiles || []);
-    toast.show("success", "Profile imported");
+    try {
+      const text = await file.text();
+      const json = JSON.parse(text);
+      if (!json.profile) throw new Error("Not a profile export (missing profile key)");
+      const res = await fetch("/api/settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ create_profile: json.profile, profile_questions: json.questions }) });
+      const d = await res.json();
+      if (d.error) throw new Error(d.error);
+      const r = await fetch("/api/settings");
+      const data = await r.json();
+      setProfiles(data.profiles || []);
+      toast.show("success", `Profile "${json.profile.name || "Imported"}" imported (with all settings) — activate it in the Profiles tab.`);
+    } catch (err: any) {
+      toast.show("error", `Import failed: ${err?.message || "invalid file"}`);
+    }
   }
 
   async function testAI() {
@@ -256,19 +264,51 @@ export function SettingsClient({
     }
   }
 
+  async function rescanMedia() {
+    setMediaRescanning(true);
+    try {
+      // Status endpoint reports the scan the viewer save-path kicks off.
+      // Unsaved folder edits aren't scanned — user should save first (the
+      // enabled flag matches the draft, the folder matches the saved one).
+      const r = await fetch("/api/media?refresh=1&limit=1");
+      const d = await r.json();
+      if (d.disabled) {
+        toast.show("error", "Media gallery is not enabled — enable it and save first.");
+        return;
+      }
+      toast.show("info", "Rescan started — see the indicator while it runs.");
+    } catch {
+      toast.show("error", "Could not start rescan. Is the media folder set and reachable?");
+    } finally {
+      setMediaRescanning(false);
+    }
+  }
+
   async function testGoogle() {
+    if (!draft) return;
     setGoogleTesting(true);
     setGoogleTestResult("");
     try {
-      const res = await fetch("/api/integrations/google-test");
+      // Test with what's in the text fields (draft), not what's saved — so
+      // users can verify credentials before saving. Falls back server-side
+      // to saved values when fields are empty.
+      const res = await fetch("/api/integrations/google-test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ client_id: draft.google_client_id, client_secret: draft.google_client_secret }),
+      });
       const d = await res.json();
       if (d.error) {
         setGoogleTestResult(d.error);
+        toast.show("error", d.error);
       } else {
         setGoogleTestResult(d.summary);
+        const ok = /^(Both|Fully|Credentials)/.test(d.summary || "");
+        toast.show(ok ? "success" : "error", d.summary);
       }
     } catch {
       setGoogleTestResult("Connection error");
+      toast.show("error", "Connection error");
     } finally {
       setGoogleTesting(false);
     }
@@ -340,9 +380,8 @@ export function SettingsClient({
         <div className="space-y-3">
           <PathField label="Daily note folder" value={draft.daily_note_folder} onChange={(v) => updateDraft({ daily_note_folder: v })} placeholder="/path/to/obsidian/vault/1 Dailies" kind="dir" />
           <PathField label="Template note path" value={draft.template_note_path} onChange={(v) => updateDraft({ template_note_path: v })} placeholder="/path/to/template.md" kind="md" />
-          <details className="bg-zinc-900 border border-zinc-800 rounded-lg p-3">
-            <summary className="text-sm cursor-pointer text-zinc-300 list-none">Template syntax &amp; preview</summary>
-            <div className="mt-3 space-y-3 text-xs text-zinc-500 leading-relaxed">
+          <Expander title="Template syntax &amp; preview">
+            <div className="space-y-3 text-xs text-zinc-500 leading-relaxed">
               <p>Daily note template is plain Markdown with these placeholders:</p>
               <pre className="bg-zinc-950 border border-zinc-800 rounded p-3 overflow-x-auto text-zinc-300">{TEMPLATE_SYNTAX_DOC}</pre>
               <p>
@@ -361,7 +400,7 @@ export function SettingsClient({
                 <p className="text-amber-400/80 bg-amber-900/20 rounded p-2">No template file set or readable — the app falls back to its built-in default template.</p>
               )}
             </div>
-          </details>
+          </Expander>
           <div>
             <label className="block text-xs text-zinc-500 mb-1">Timezone</label>
             <select
@@ -451,9 +490,65 @@ export function SettingsClient({
 
       {tab === "integrations" && (
         <div className="space-y-3">
-          <details className="bg-zinc-900 border border-zinc-800 rounded-lg p-3">
-            <summary className="text-sm cursor-pointer text-zinc-300 list-none">Google</summary>
-            <div className="mt-3 space-y-3">
+          <p className="text-xs text-zinc-500 bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 leading-relaxed">
+            Integrations only pull data that falls within the current <strong className="text-zinc-400">day session</strong> (adjusted by your day offset) — nothing more, nothing less. They feed context to the journal chat; they never sync anything back.
+          </p>
+
+          <Expander title="Media Gallery" open hint="local photos &amp; videos">
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={!!draft.media_enabled} onChange={(e) => updateDraft({ media_enabled: e.target.checked ? 1 : 0 })} />
+              Enabled
+            </label>
+            {draft.media_enabled ? (
+              <>
+                <PathField label="Media folder" value={draft.media_folder} onChange={(v) => updateDraft({ media_folder: v })} placeholder="/path/to/photos" kind="dir" />
+                <p className="text-xs text-zinc-600">
+                  Scans happen automatically on start, when the folder changes, and when you save with a new folder. Manual control:
+                </p>
+                <div className="flex items-center gap-2">
+                  <button onClick={rescanMedia} disabled={mediaRescanning} className="text-xs bg-zinc-800 hover:bg-zinc-700 rounded px-3 py-1.5 text-zinc-300 disabled:opacity-50">
+                    {mediaRescanning ? "Scanning…" : "Rescan now"}
+                  </button>
+                </div>
+              </>
+            ) : null}
+          </Expander>
+
+          <Expander title="Obsidian Notes" open hint="vault notes as chat context">
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={!!draft.obsidian_enabled} onChange={(e) => updateDraft({ obsidian_enabled: e.target.checked ? 1 : 0 })} />
+              Enabled
+            </label>
+            {draft.obsidian_enabled ? (
+              <>
+                <PathField label="Note folder" value={draft.obsidian_folder} onChange={(v) => updateDraft({ obsidian_folder: v })} placeholder="/path/to/vault" kind="dir" />
+                <Field label="Excluded folders (comma-separated)"
+                  value={draft.obsidian_exclude_folders}
+                  onChange={(v) => updateDraft({ obsidian_exclude_folders: v })}
+                  placeholder="templates, attachments, archive"
+                />
+                <div>
+                  <label className="block text-xs text-zinc-500 mb-1">Note content in context</label>
+                  <select
+                    value={String(draft.obsidian_include_content || 0)}
+                    onChange={(e) => updateDraft({ obsidian_include_content: Number(e.target.value) })}
+                    className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm"
+                  >
+                    <option value="0">File names only</option>
+                    <option value="1">Summarized (AI-generated 1–3 sentences per note)</option>
+                    <option value="2">Raw note content</option>
+                  </select>
+                </div>
+                <p className="text-xs text-zinc-600">
+                  Notes are matched to the session date via <code className="text-zinc-400">created</code> frontmatter,
+                  falling back to file creation time. Includes same-day notes only.
+                </p>
+              </>
+            ) : null}
+          </Expander>
+
+          <Expander title="Google Tasks &amp; Calendar" open hint="read-only, per-day events and tasks">
+            <div className="space-y-3">
               <p className="text-xs text-zinc-500 leading-relaxed">
                 Go to{' '}
                 <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noreferrer" className="text-emerald-400 underline">console.cloud.google.com/apis/credentials</a>
@@ -488,45 +583,17 @@ export function SettingsClient({
                 <button onClick={testGoogle} disabled={googleTesting} className="text-xs bg-zinc-800 hover:bg-zinc-700 rounded px-3 py-1.5 text-zinc-300 disabled:opacity-50">
                   {googleTesting ? "Testing..." : "Test"}
                 </button>
+                {(dirty || !draft.google_client_id) && (
+                  <span className="text-[11px] text-zinc-600">Connect uses saved values — save first if you changed them.</span>
+                )}
               </div>
               {googleTestResult && (
-                <p className={`text-xs px-2 py-1.5 rounded ${googleTestResult.startsWith("Fully") ? "bg-emerald-900/30 text-emerald-400" : "bg-zinc-800 text-zinc-400"}`}>
+                <p className={`text-xs px-2 py-1.5 rounded ${googleTestResult.startsWith("Fully") || googleTestResult.startsWith("Both") || googleTestResult.startsWith("Credentials") ? "bg-emerald-900/30 text-emerald-400" : "bg-zinc-800 text-zinc-400"}`}>
                   {googleTestResult}
                 </p>
               )}
             </div>
-          </details>
-
-          <label className="flex items-center gap-2 text-sm">
-            <input type="checkbox" checked={!!draft.media_enabled} onChange={(e) => updateDraft({ media_enabled: e.target.checked ? 1 : 0 })} />
-            Media gallery
-          </label>
-          {draft.media_enabled ? <PathField label="Media folder" value={draft.media_folder} onChange={(v) => updateDraft({ media_folder: v })} placeholder="/path/to/photos" kind="dir" /> : null}
-
-          <div className="pt-3 border-t border-zinc-800">
-            <label className="flex items-center gap-2 text-sm">
-              <input type="checkbox" checked={!!draft.obsidian_enabled} onChange={(e) => updateDraft({ obsidian_enabled: e.target.checked ? 1 : 0 })} />
-              Obsidian notes
-            </label>
-            {draft.obsidian_enabled ? (
-              <div className="mt-3 space-y-3">
-                <PathField label="Note folder" value={draft.obsidian_folder} onChange={(v) => updateDraft({ obsidian_folder: v })} placeholder="/path/to/vault" kind="dir" />
-                <Field label="Excluded folders (comma-separated)"
-                  value={draft.obsidian_exclude_folders}
-                  onChange={(v) => updateDraft({ obsidian_exclude_folders: v })}
-                  placeholder="templates, attachments, archive"
-                />
-                <label className="flex items-center gap-2 text-sm">
-                  <input type="checkbox" checked={!!draft.obsidian_include_content} onChange={(e) => updateDraft({ obsidian_include_content: e.target.checked ? 1 : 0 })} />
-                  Include note content (generate a short summary of each note)
-                </label>
-                <p className="text-xs text-zinc-600">
-                  Notes are matched to the session date via <code className="text-zinc-400">created</code> frontmatter,
-                  falling back to file creation time. Includes same-day notes only.
-                </p>
-              </div>
-            ) : null}
-          </div>
+          </Expander>
         </div>
       )}
 
@@ -584,6 +651,21 @@ export function SettingsClient({
         </button>
       )}
     </div>
+  );
+}
+
+function Expander({ title, open, hint, children }: { title: string; open?: boolean; hint?: string; children: React.ReactNode }) {
+  return (
+    <details className="group bg-zinc-900 border border-zinc-800 rounded-lg" open={open}>
+      <summary className="flex items-center gap-2 cursor-pointer select-none px-3 py-2.5 text-sm text-zinc-300 hover:text-zinc-100 hover:bg-zinc-800/40 rounded-lg transition-colors list-none">
+        <svg className="w-3.5 h-3.5 text-zinc-500 transition-transform group-open:rotate-90 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+        </svg>
+        {title}
+        {hint && <span className="text-xs text-zinc-600 font-normal">&middot; {hint}</span>}
+      </summary>
+      <div className="px-3 pb-3 pt-2 border-t border-zinc-800/70 mt-1 space-y-3">{children}</div>
+    </details>
   );
 }
 

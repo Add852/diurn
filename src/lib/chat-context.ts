@@ -146,6 +146,16 @@ export async function buildNotesContext(
       }
     })
   );
+
+  // 2 = raw note content, 1 = AI summary per note.
+  if (profile.obsidian_include_content === 2) {
+    for (const item of items) {
+      const body = bodies[items.indexOf(item)];
+      if (body.trim()) item.summary = body.trim().slice(0, 2000);
+    }
+    return items;
+  }
+
   const summaries = await summarizeNotes(
     bodies.map((body, i) => ({ name: items[i].name, body })),
     llm

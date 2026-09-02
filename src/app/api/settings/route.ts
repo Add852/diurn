@@ -169,11 +169,30 @@ db.prepare(`UPDATE profiles SET
       return NextResponse.json({ error: "No user found. Run setup first." }, { status: 400 });
     }
     const p = body.create_profile;
-    const result = db.prepare(`INSERT INTO profiles (user_id, name, is_default, is_active, llm_endpoint, llm_model, personality_prompt, asking_method)
-      VALUES (?, ?, 0, 0, ?, ?, ?, ?)`).run(
-      user.id, p.name, p.llm_endpoint || "", p.llm_model || "",
-      p.personality_prompt || "", p.asking_method || "ask_in_one_go",
-    );
+    // Whitelisted settings columns — import (create_profile from an export
+    // file) and manual create both go through here. Import keeps everything
+    // it carried; manual create falls back to defaults for missing fields.
+    const settingCols = [
+      "daily_note_folder", "template_note_path",
+      "google_tasks_enabled", "google_tasks_config", "google_calendar_enabled", "google_calendar_config",
+      "google_client_id", "google_client_secret", "day_offset_hours",
+      "media_enabled", "media_folder",
+      "obsidian_enabled", "obsidian_folder", "obsidian_exclude_folders", "obsidian_include_content",
+      "llm_endpoint", "llm_model", "llm_api_key", "personality_prompt", "asking_method", "timezone",
+    ] as const;
+    const vals: any[] = [user.id, p.name || "Imported", 0, 0];
+    for (const col of settingCols) {
+      const v = p[col];
+      if (col === "llm_api_key" || col === "google_client_secret") {
+        vals.push(v || "");
+      } else if (typeof v === "boolean") {
+        vals.push(v ? 1 : 0);
+      } else {
+        vals.push(v ?? (col === "google_tasks_config" || col === "google_calendar_config" ? "{}" : ""));
+      }
+    }
+    const result = db.prepare(`INSERT INTO profiles (user_id, name, is_default, is_active, ${settingCols.join(", ")})
+      VALUES (?, ?, ?, ?, ${settingCols.map(() => "?").join(", ")})`).run(...vals);
     const newId = result.lastInsertRowid as number;
     const qs = body.profile_questions;
     if (qs && Array.isArray(qs)) {
@@ -212,7 +231,10 @@ db.prepare(`UPDATE profiles SET
     const profile = db.prepare("SELECT * FROM profiles WHERE id = ?").get(body.export_profile_id) as any;
     if (!profile) return NextResponse.json({ error: "Not found" }, { status: 404 });
     const questions = db.prepare("SELECT * FROM profile_questions WHERE profile_id = ? ORDER BY sort_order").all(body.export_profile_id);
-    return NextResponse.json({ profile, questions });
+    // Full profile row (minus server-local identity columns) so import
+    // restores general + integration config, not just name/AI fields.
+    const { id, user_id, is_active, ...rest } = profile;
+    return NextResponse.json({ profile: rest, questions });
   }
 
   if (body.change_password) {

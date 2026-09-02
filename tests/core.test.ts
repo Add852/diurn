@@ -154,3 +154,23 @@ test("extractJson: bare, prose-wrapped, nested, and garbage LLM replies", () => 
   assert.equal(extractJson("{broken"), null);
   assert.equal(extractJson(""), null);
 });
+// Profile import/export: exported profile (minus identity cols) must contain
+// every settings column the import path whitelists, so round-trips are lossless.
+test("profile export/import: settings columns round-trip", async () => {
+  const Database = (await import("better-sqlite3")).default;
+  const { promises: fs } = await import("fs");
+  const db = new Database(":memory:");
+  db.exec(await fs.readFile(new URL("../src/db/schema.sql", import.meta.url), "utf-8"));
+  db.prepare("INSERT INTO users (username, password_hash, salt) VALUES ('u','h','s')").run();
+  db.prepare("INSERT INTO profiles (user_id, name) VALUES (1, 'X')").run();
+  const profile = db.prepare("SELECT * FROM profiles LIMIT 1").get() as Record<string, unknown>;
+  const { id, user_id, is_default, is_active, created_at, ...exported } = profile;
+  // name + the 20 settings columns the import whitelist expects
+  const expected = ["name", "daily_note_folder", "template_note_path",
+    "google_tasks_enabled", "google_tasks_config", "google_calendar_enabled", "google_calendar_config",
+    "google_client_id", "google_client_secret", "day_offset_hours",
+    "media_enabled", "media_folder",
+    "obsidian_enabled", "obsidian_folder", "obsidian_exclude_folders", "obsidian_include_content",
+    "llm_endpoint", "llm_model", "llm_api_key", "personality_prompt", "asking_method", "timezone"];
+  assert.deepEqual(Object.keys(exported).sort(), expected.sort());
+});

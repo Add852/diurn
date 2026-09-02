@@ -58,7 +58,7 @@ Environment variables (`PORT=... npm run serve`) win over the file. After changi
 1. Choose a password (min. 4 chars) and your timezone. Username is `admin`.
 2. Setup creates a **Default** profile with three starter questions ("What happened today?", "What are your thoughts and feels?", "One small adjustment for next time?").
 3. The SQLite database is created automatically at `~/.diurn/data.db` — schema auto-migrates, no manual steps.
-4. Open **Settings → AI** and point it at your LLM server. Nothing is configured by default; with Ollama the hint values are endpoint `http://localhost:11434/v1` and model `llama3.2:3b` (pull it first with `ollama pull llama3.2:3b`).
+4. Open **Settings → AI** and point it at your LLM server. Nothing is configured by default.
 
 Everything else — media folder, Google integrations, Obsidian — is also configured in Settings.
 
