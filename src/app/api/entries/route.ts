@@ -234,27 +234,40 @@ export async function PUT(req: NextRequest) {
   const db = getDb();
   type EntryRow = { id: number; file_path: string | null };
   const existing = db.prepare("SELECT id, file_path FROM entries WHERE profile_id = ? AND date = ?").get(profile.id, date) as EntryRow | undefined;
-  if (!existing) {
+
+  // GET lists files in the notes folder that have no DB row (pre-existing .md,
+  // DB reset with files kept, other profile sharing the folder). Adopt those
+  // instead of 404ing while the file clearly exists.
+  const notePath = profile.daily_note_folder ? join(profile.daily_note_folder, `${date}.md`) : null;
+  const fsOnly = !existing && !!notePath && existsSync(notePath);
+  if (!existing && !fsOnly) {
     return NextResponse.json({ error: "Entry not found" }, { status: 404 });
   }
 
   // Keep the Obsidian note in sync with the edit (same atomic write as POST).
   let filePath: string | null = null;
-  if (profile.daily_note_folder) {
-    filePath = join(profile.daily_note_folder, `${date}.md`);
-    const dir = profile.daily_note_folder;
+  if (notePath) {
+    filePath = notePath;
+    const dir = profile.daily_note_folder!;
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
     const tmp = filePath + ".tmp";
     writeFileSync(tmp, markdown, "utf-8");
     renameSync(tmp, filePath);
   }
 
-  db.prepare("UPDATE entries SET rendered_markdown = ?, file_path = ? WHERE id = ?").run(
-    markdown,
-    filePath,
-    existing.id
-  );
-  return NextResponse.json({ ok: true, id: existing.id, file_path: filePath });
+  if (existing) {
+    db.prepare("UPDATE entries SET rendered_markdown = ?, file_path = ? WHERE id = ?").run(
+      markdown,
+      filePath,
+      existing.id
+    );
+    return NextResponse.json({ ok: true, id: existing.id, file_path: filePath });
+  }
+
+  const result = db
+    .prepare("INSERT INTO entries (profile_id, date, rendered_markdown, file_path) VALUES (?, ?, ?, ?)")
+    .run(profile.id, date, markdown, filePath);
+  return NextResponse.json({ ok: true, id: Number(result.lastInsertRowid), file_path: filePath });
 }
 
 export async function DELETE(req: NextRequest) {
@@ -275,15 +288,18 @@ export async function DELETE(req: NextRequest) {
   const db = getDb();
   type EntryRow = { id: number; file_path: string | null };
   const existing = db.prepare("SELECT id, file_path FROM entries WHERE profile_id = ? AND date = ?").get(profile.id, date) as EntryRow | undefined;
-  if (!existing) {
+
+  const notePath = profile.daily_note_folder ? join(profile.daily_note_folder, `${date}.md`) : null;
+  const fsOnly = !existing && !!notePath && existsSync(notePath);
+  if (!existing && !fsOnly) {
     return NextResponse.json({ error: "Entry not found" }, { status: 404 });
   }
 
-  db.prepare("DELETE FROM entries WHERE id = ?").run(existing.id);
+  if (existing) db.prepare("DELETE FROM entries WHERE id = ?").run(existing.id);
 
   // Only remove the note file when it lives under the configured notes folder —
   // never delete a path the app didn't create.
-  const fp = existing.file_path;
+  const fp = existing?.file_path ?? notePath;
   if (fp && profile.daily_note_folder) {
     const base = profile.daily_note_folder.replace(/\/+$/, "");
     if (fp.startsWith(base + "/")) rmSync(fp, { force: true });

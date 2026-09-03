@@ -68,10 +68,13 @@ ensure_build() {
 }
 
 build_now() {
+  # Interactive: stream build output — a fully redirected multi-minute build
+  # reads as "stuck" and invites ^C, which used to abort enable half-done.
   echo "building..."
-  if ! (cd "$ROOT" && npm run build >"$LOG.build" 2>&1); then
-    echo "build failed, see $LOG.build"
-    exit 1
+  if [ -t 1 ]; then
+    (cd "$ROOT" && "${NPM_BIN:-npm}" run build) || { echo "build failed"; exit 1; }
+  else
+    (cd "$ROOT" && "${NPM_BIN:-npm}" run build >"$LOG.build" 2>&1) || { echo "build failed, see $LOG.build"; exit 1; }
   fi
 }
 
@@ -89,7 +92,7 @@ start() {
   fi
   mkdir -p "$DATA_DIR"
   ensure_build
-  nohup node "$ROOT/node_modules/next/dist/bin/next" $(server_args) >"$LOG" 2>&1 < /dev/null &
+  nohup "${NODE_BIN:-node}" "$ROOT/node_modules/next/dist/bin/next" $(server_args) >"$LOG" 2>&1 < /dev/null &
   echo "starting on port $PORT (log: $LOG)"
   wait_up
 }
@@ -148,7 +151,10 @@ run() {
   # defeats Restart=on-failure.
   mkdir -p "$DATA_DIR"
   ensure_build
-  exec node "$ROOT/node_modules/next/dist/bin/next" $(server_args)
+  # NODE_BIN/NPM_BIN: the user manager's boot-time PATH lacks ~/.local/bin
+  # (where node often lives) — bare `node` died with "exec: node: not found"
+  # and Restart=always turned that into an endless crash loop.
+  exec "${NODE_BIN:-node}" "$ROOT/node_modules/next/dist/bin/next" $(server_args)
 }
 
 enable() {
@@ -156,11 +162,20 @@ enable() {
     echo "no systemd user session available — use plain 'start' for background mode"
     exit 1
   fi
+  # Fail fast, before stopping the running server.
+  for bin in node npm; do
+    if ! command -v "$bin" >/dev/null 2>&1; then
+      echo "error: '$bin' not found on PATH — fix your Node.js install first"
+      exit 1
+    fi
+  done
   # Free the port if currently running in nohup mode (unit not installed yet,
   # so stop() takes the port-listener path).
   stop >/dev/null 2>&1 || true
   mkdir -p "$DATA_DIR" "$HOME/.config/systemd/user"
-  ensure_build
+  # Write + load + enable the unit BEFORE building: an interrupted (^C) or
+  # failed build used to leave the stale old unit in place, so a later plain
+  # `serve` started the previous install's script.
   cat > "$HOME/.config/systemd/user/$UNIT" <<EOF
 [Unit]
 Description=Diurn server (port $PORT)
@@ -169,6 +184,8 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=$ROOT
+Environment="NODE_BIN=$(command -v node)"
+Environment="NPM_BIN=$(command -v npm)"
 ExecStart="$ROOT/scripts/serve.sh" run
 Restart=always
 RestartSec=5
@@ -183,6 +200,7 @@ EOF
   systemctl --user is-active --quiet "$UNIT" && was_active=true
   systemctl --user daemon-reload
   systemctl --user enable "$UNIT" >/dev/null
+  ensure_build
   if $was_active; then
     systemctl --user restart "$UNIT"
   else
