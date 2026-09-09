@@ -3,7 +3,6 @@ import "./globals.css";
 import { NavBar } from "@/components/bottom-nav";
 import { ScrollReset } from "@/components/scroll-reset";
 import { maybeBackgroundScan } from "@/lib/media-cache";
-import { SWRegister } from "@/components/sw-register";
 import { ToastProvider } from "@/components/toast";
 import { ScanIndicator } from "@/components/scan-indicator";
 import { THEME_BOOTSTRAP } from "@/lib/theme";
@@ -49,7 +48,6 @@ export default function RootLayout({
         <ToastProvider>
           <ScrollReset />
           <NavBar />
-          <SWRegister />
           <ScanIndicator />
           <ThemeWatcher />
           <main className="h-full overflow-y-auto overscroll-none md:ml-48 px-4 pt-4 pb-[calc(3.5rem+env(safe-area-inset-bottom,0px))] md:pb-4 max-w-3xl mx-auto md:max-w-none md:mx-0 lg:mr-8">{children}</main>

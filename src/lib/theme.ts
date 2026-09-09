@@ -8,7 +8,7 @@ export type ThemeMode = "system" | "dark" | "light";
 export const ACCENTS = ["emerald", "blue", "violet", "rose", "amber"] as const;
 export type Accent = (typeof ACCENTS)[number];
 
-export function isValidAccent(v: string | null): v is Accent {
+function isValidAccent(v: string | null): v is Accent {
   return !!v && (ACCENTS as readonly string[]).includes(v);
 }
 
@@ -51,7 +51,7 @@ export function applyTheme(mode: ThemeMode, accent: Accent) {
   if (meta) meta.setAttribute("content", effective === "dark" ? "#09090b" : "#f7f7f8");
 }
 
-export function applyThemeFromStorage() {
+function applyThemeFromStorage() {
   const mode = (localStorage.getItem("diurn-theme") as ThemeMode | null) || "system";
   const accentRaw = localStorage.getItem("diurn-accent");
   const accent = isValidAccent(accentRaw) ? accentRaw : "emerald";

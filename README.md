@@ -97,7 +97,7 @@ Back up `~/.diurn/` and the journal/media folders.
 
 ```bash
 npm run typecheck
-npm test    # 20 node:test cases, zero test dependencies
+npm test    # 23 node:test cases, zero test dependencies
 ```
 
 ## Troubleshooting

@@ -18,6 +18,16 @@ function isValidDate(date: string): boolean {
     d.getDate() === Number(date.slice(8, 10))
   );
 }
+
+// Atomic write: tmp + rename — readers never see a half-written note.
+function writeNote(dir: string, date: string, content: string): string {
+  const filePath = join(dir, `${date}.md`);
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  const tmp = filePath + ".tmp";
+  writeFileSync(tmp, content, "utf-8");
+  renameSync(tmp, filePath);
+  return filePath;
+}
 export async function GET(req: NextRequest) {
   const session = await requireAuth();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -191,12 +201,7 @@ export async function POST(req: NextRequest) {
 
   let filePath = "";
   if (profile.daily_note_folder) {
-    filePath = join(profile.daily_note_folder, `${date}.md`);
-    const dir = profile.daily_note_folder;
-    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-    const tmp = filePath + ".tmp";
-    writeFileSync(tmp, rendered, "utf-8");
-    renameSync(tmp, filePath);
+    filePath = writeNote(profile.daily_note_folder, date, rendered);
   }
 
   const result = db
@@ -247,12 +252,7 @@ export async function PUT(req: NextRequest) {
   // Keep the Obsidian note in sync with the edit (same atomic write as POST).
   let filePath: string | null = null;
   if (notePath) {
-    filePath = notePath;
-    const dir = profile.daily_note_folder!;
-    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-    const tmp = filePath + ".tmp";
-    writeFileSync(tmp, markdown, "utf-8");
-    renameSync(tmp, filePath);
+    filePath = writeNote(profile.daily_note_folder!, date, markdown);
   }
 
   if (existing) {

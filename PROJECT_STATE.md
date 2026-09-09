@@ -6,7 +6,7 @@ local media folder with EXIF, AI chat-driven daily notes saved as markdown to di
 
 ## Stack & Conventions
 
-- **LLM endpoint:** `http://localhost:11434/v1` (Ollama), model: `llama3.2`
+- **LLM endpoint:** unset by default — any OpenAI-compatible endpoint (Ollama, LM Studio, vLLM, …), configured in Settings → AI
 - **DB:** `better-sqlite3` at `~/.diurn/data.db`, schema in `src/db/schema.sql`, auto-migrated in `getDb()` with column-level `ALTER TABLE` adds.
 - **Auth:** `iron-session` cookie `diurn_session`, single admin via setup flow.
 - **Styling:** Tailwind CSS, `@tailwindcss/typography` for markdown prose.
@@ -20,17 +20,20 @@ local media folder with EXIF, AI chat-driven daily notes saved as markdown to di
 
 ```
 src/
-├── lib/                 # db, auth, ai, timezone, frontmatter, template, google-auth, media-cache
+├── lib/                 # db, auth, ai, timezone, frontmatter, template, google-auth, media-cache,
+│                        #   chat-context, conversation, range, safe-return, theme
 ├── app/
 │   ├── api/             # REST routes
 │   │   ├── auth/        # login, logout, setup, google/{login,callback}
 │   │   ├── chat/, entries/, media/, settings/, ai-test/
+│   │   ├── fs/          # path validation + autocomplete for settings fields
 │   │   └── integrations/{tasks,calendar,google-test}/status
-│   ├── chat/, viewer/, settings/, setup/, login/, page.tsx
-│   ├── layout.tsx       # body padding calc(3.5rem + safe-area-inset-bottom)
-│   └── globals.css      # 100dvh base, overscroll/overflow-anchor off, 16px inputs
-├── components/          # bottom-nav, entry-preview, media-lightbox, media-thumb, integrations-panel, skeleton
-└── middleware.ts        # redirect to /login if no diurn_session
+│   ├── chat/, viewer/, settings/, setup/, login/, page.tsx + home-client.tsx
+│   ├── layout.tsx       # ToastProvider, NavBar, ScanIndicator, ThemeWatcher, theme bootstrap script
+│   └── globals.css      # surface/accent CSS-var ramps, 16px inputs, overflow guards
+├── components/          # bottom-nav, entry-preview, entry-dialog, media-lightbox, media-thumb,
+│                        #   integrations-panel, scan-indicator, scroll-reset, skeleton, theme-watcher, toast
+└── middleware.ts        # redirect to /login if no diurn_session (pages only; API self-checks)
 ```
 
 ## Recent Decisions (chronological)
@@ -102,39 +105,46 @@ src/
 19. **Port 3000 → 11123:** `npm run dev`/`start` use `-p ${PORT:-11123}` (override via `PORT=xxxx npm run dev`); `OAUTH_REDIRECT_URI` and settings UI updated to `localhost:11123`. Google Console redirect URI must be re-registered for the new port.
 20. **Default LLM → Ollama:** endpoint `http://localhost:11434/v1`, model `llama3.2` — new installs, new profiles, and settings placeholders. Existing profiles keep stored values; change in Settings → AI. Requires `ollama pull llama3.2`.
 21. **README.md added:** install/run/setup/config/production/troubleshooting for self-hosting.
-- **OAUTH_REDIRECT_URI hardcoded to `http://localhost:11123/api/auth/google/callback`:** Google requires public TLD. LAN access needs server-side OAuth completion (documented in settings UI as a warning).
+22. **Deployability + notifications (2026-09):** `serve.sh` hardened for systemd (NODE_BIN/NPM_BIN overrides — boot PATH lacks `~/.local/bin`; unit written before build so ^C can't strand a stale unit; interactive build streaming; `command -v` preflight). Schema LLM defaults reverted to `''` — nothing configured by default; `chatCompletion` throws "AI is not configured". Toast component (`useToast`, sticky errors) replaces ad-hoc notifications; `ScanIndicator` in layout shows background media scans.
+23. **Google auth fix:** redirect URI derived per-request via `oauthRedirectUri(req)` (honors `x-forwarded-host`/`proto`) instead of hardcoded `localhost:11123` — works behind TLS proxies, shown in Settings UI. LAN OAuth completion note updated accordingly.
+24. **Settings improvements:** profile **export/import** — create/import goes through one whitelisted `settingCols` list in `PUT /api/settings` (import keeps what it carried; manual create falls back to defaults). `google-test` route hardened. Settings client reorganized (theme picker, accent swatches).
+25. **Theming:** `lib/theme.ts` — theme mode + accent in localStorage (per-device). `THEME_BOOTSTRAP` inline `<head>` script applies before first paint (self-contained duplicate of `applyTheme` — inline scripts can't import). `globals.css` surface ramps (zinc steps as `--surface-*` RGB triplets, dark/light flip), accent ramps (`--accent-50…950`); `tailwind.config.ts` compiles them with `<alpha-value>` so all alpha variants keep working. `ThemeWatcher` syncs 'system' mode with OS changes. Accents: emerald, blue, violet, rose, amber.
+26. **Chat/entry flow rework ("brudah" commit):** greeting falls back to plain question list when LLM unreachable. `one_by_one` asking method: progress = user-message count; answer for question i = user message i (raw pre-fill). Classifier safety net: unparseable output + one user msg per question → complete. Entry generation dropped the batched-JSON call → **one prose call per question** (reply text IS the answer; each failure keeps pre-fill/empty slot, never breaks the batch) + `extractionWarning` surfaced to UI. `checkCoverage` removed (classifier inline in chat route).
+27. **Cleanup (2026-09):** `public/sw.js` + `workbox-*.js` un-committed and gitignored (next-pwa regenerates them per build — they were churn in every commit). Redundant `SWRegister` component deleted (`register: true` already injects workbox-window registration). Over-exported helpers internalized (`summarizeNotes`, `buildNotesContext`, `getTokens`, `refreshTokens`, `startWatcher`, `isValidAccent`, `applyThemeFromStorage`, `NoteCtx`, `GoogleTokens`, `ByteRange`, `MediaEntry`, `ChatRole`).
+28. **Duplication pass:** settings-client got `settingsPut`/`refreshSettings` helpers (7 identical `PUT /api/settings` fetch blocks + 4 re-fetch-and-redistribute blocks → 2 functions; `settingsPut` throws on non-OK non-JSON, so callers can't silently swallow 500s). entries route: shared `writeNote(dir, date, content)` for the two atomic tmp+rename blocks (POST render, PUT edit).
+- **OAuth redirect URI derived from request origin** (`oauthRedirectUri`, honoring `x-forwarded-*`): works behind reverse proxies. Google still requires public TLDs — LAN-IP access needs OAuth completed on the host (documented in settings UI).
 - **File watcher doesn't survive process restart:** first request after restart may serve stale cache until next watcher fire. Workaround: Re-scan button.
-- **Tests:** `node:test` in `tests/*.test.ts` — 16 cases (range parser, safe-return, frontmatter, template, timezone). `npm test` + `npm run typecheck` wired; CI runs both. One-off logic verified with ad-hoc asserts.
+- **Tests:** `node:test` in `tests/core.test.ts` — 23 cases (range parser, safe-return, frontmatter, template, timezone, extractJson, answer generation, profile export/import). `npm test` + `npm run typecheck` wired; CI runs both.
 - **`/media` page deleted** (was redirect to `/viewer?mode=media`); route is now 404. Not linked from anywhere.
-- **Settings timezone list:** hardcoded list of ~25 IANA zones in settings-client.tsx. Could use `Intl.supportedValuesOf("timeZone")` but browser support varies.
 
 ## Key Files & Their Roles
 
 | File | Role |
 |---|---|
-| `src/lib/db.ts` | `Profile` type, `getDb()` (auto-migrate), `getActiveProfile`, `getProfileQuestions`, `getStreakCount`, `hasUsers`. |
-| `src/lib/auth.ts` | `iron-session` config, `hashPassword`/`verifyPassword` (scrypt + timingSafeEqual). |
-| `src/lib/ai.ts` | `chatCompletion(config, msgs, timeoutMs)`, `checkCoverage`. |
+| `src/lib/db.ts` | `Profile` type, `getDb()` (auto-migrate, inode-watch for replaced files), `getActiveProfile`, `getProfileQuestions`, `getStreakStatus`, `hasUsers`. |
+| `src/lib/auth.ts` | `iron-session` config (Secure flag only when request is HTTPS via `x-forwarded-proto`), `hashPassword`/`verifyPassword` (scrypt + timingSafeEqual), `requireAuth`, `requireProfile`, per-IP login rate limit. |
+| `src/lib/ai.ts` | `llmConfig(profile)`, `extractJson`, `chatCompletion(config, msgs, timeoutMs)` — throws when unconfigured, 1024-token cap. |
 | `src/lib/timezone.ts` | `localDate(epochMs|Date, tz)`, `dateRange(reqUrl, tz)`. |
 | `src/lib/frontmatter.ts` | `parseFrontmatter` splits `---` metadata from markdown body. |
 | `src/lib/template.ts` | `renderTemplate` replaces `{key.question}` / `{key.answer}` / `{date}` / `{day_of_week}` / `{day_number}`. |
-| `src/lib/google-auth.ts` | `parseConfig`, `getTokens`, `refreshTokens`, `ensureAccessToken(profile, integrationKey)`. |
+| `src/lib/google-auth.ts` | `oauthRedirectUri(req)` (origin-derived, proxy-aware), `parseConfig`, `ensureAccessToken(profile, integrationKey)`. |
 | `src/lib/media-cache.ts` | `scanMediaFolder`, `getMediaFiles`, `loadMediaContext`, `needsRefresh`, `isDirty`. Singleton `fs.watch` per profile. Incremental scan. |
 | `src/app/api/chat/route.ts` | GET: create session + first question. POST: store user msg, ask next. Returns `enabled_integrations`. |
-| `src/app/api/entries/route.ts` | GET: list entries + read from `daily_note_folder` for unsynced. POST: generate note via template + one batched LLM call, write file, save `entry_answers`. PUT: edit existing entry, keeps Obsidian file in sync (atomic tmp+rename). |
-| `src/app/api/settings/route.ts` | GET: profile + questions + user. PUT: profile update, questions CRUD, create/delete/activate/export profile, change password. |
+| `src/app/api/entries/route.ts` | GET: list entries + read from `daily_note_folder` for unsynced. POST: per-question prose LLM calls (pre-fill + `extractionWarning` on failures), render template, atomic tmp+rename write, save `entry_answers`. PUT: edit existing entry, keeps Obsidian file in sync. |
+| `src/app/api/settings/route.ts` | GET: profile + questions + user + template content. PUT: profile update, questions CRUD, create/delete/activate/export/import profile (whitelisted `settingCols`), change password. |
 | `src/app/api/media/route.ts` | GET list with date/dates/month/limit/offset filters. Triggers background scan if dirty or `needsRefresh`. |
 | `src/app/api/media/file/route.ts` | Stream file with Range/ETag/304 support. Path validated inside `media_folder`. |
 | `src/app/api/integrations/tasks/status/route.ts` | Lists tasks; completed today by EXIF-style `localDate(t.completed, tz) === dateStr`, falls back to due-date tasks. |
 | `src/app/api/integrations/calendar/status/route.ts` | Calendar events for the local day via `dateRange`. |
 | `src/app/api/integrations/google-test/route.ts` | Tests Google client creds, token freshness, live API calls. |
-| `src/app/api/auth/google/{login,callback}/route.ts` | OAuth state cookie = `{csrf}.{service}.{base64url(returnPath)}`. Callback decodes, stores tokens per integration. |
+| `src/app/api/auth/google/{login,callback}/route.ts` | OAuth state cookie = `{csrf}.{service}.{base64url(returnPath)}`. Callback decodes, stores tokens per integration. Redirect URI via `oauthRedirectUri(req)`. |
+| `src/app/api/fs/route.ts` | Path validation (`?check=`) + filesystem autocomplete (`?dir=`) for folder/template settings fields. |
 | `src/app/chat/page.tsx` | Flex-col `h-full` chat; form is flex-shrink-0 (non-sticky), scroll region `min-h-0`. `IntegrationsPanel`, collapsible "Raw context & input", "View entry" → `EntryDialog` when complete. |
 | `src/app/viewer/page.tsx` | Unified Journal/Media. `JournalView` (masonry by month) + `MediaView` (grid by day). No picker. |
 | `src/app/settings/{page,settings-client}.tsx` | Server reads initial data; client manages draft + dirty state + Save. |
 | `src/components/bottom-nav.tsx` | Tabs: Home, Journal, Settings. `fixed bottom-0 h-14`, no compositor hacks. |
 | `src/components/entry-preview.tsx` | `FM_LABELS`, `fmt`, `EntryPreview` (markdown + FM grid, optional collapsible header). |
-| `src/middleware.ts` | Matcher excludes `_next`, `favicon`, `api/auth`, `login`, `setup`. Redirects unauth to `/login`. |
+| `src/middleware.ts` | Matcher excludes `_next`, `favicon`, all `api` (routes self-check auth), `sw.js`, `workbox-*`, `manifest`, icons, `login`, `setup`. Redirects unauth to `/login`. |
 
 ## Style Reminders for Continuation
 

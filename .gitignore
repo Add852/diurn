@@ -5,3 +5,8 @@ out/
 .env
 .env.local
 .DS_Store
+
+# next-pwa build output (regenerated on every build)
+public/sw.js
+public/workbox-*.js
+public/fallback-*.js

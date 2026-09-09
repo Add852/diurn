@@ -1,6 +1,6 @@
 import { getDb } from "./db";
 
-export type ChatRole = "system" | "user" | "assistant";
+type ChatRole = "system" | "user" | "assistant";
 
 export function appendMessage(sessionId: string, role: ChatRole, content: string) {
   getDb()

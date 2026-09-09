@@ -1,4 +1,4 @@
-export interface GoogleTokens {
+interface GoogleTokens {
   access_token: string;
   refresh_token?: string;
   expires_at: number;
@@ -22,13 +22,13 @@ export function oauthRedirectUri(req: { url: string; headers: { get(name: string
   return `${new URL(req.url).origin}/api/auth/google/callback`;
 }
 
-export function getTokens(config: Record<string, any>): GoogleTokens | null {
+function getTokens(config: Record<string, any>): GoogleTokens | null {
   const t = config.tokens;
   if (t?.access_token) return t as GoogleTokens;
   return null;
 }
 
-export async function refreshTokens(
+async function refreshTokens(
   clientId: string,
   clientSecret: string,
   refreshToken: string

@@ -127,6 +127,25 @@ export function SettingsClient({
     setDirty(true);
   }
 
+  const JSON_HEADERS = { "Content-Type": "application/json" };
+
+  // All profile-management PUTs return the same {profile(s), questions,
+  // template_content} shape — one helper sends, one redistributes.
+  async function settingsPut(body: any) {
+    const res = await fetch("/api/settings", { method: "PUT", headers: JSON_HEADERS, body: JSON.stringify(body) });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok && !d.error) throw new Error(`Request failed (${res.status})`);
+    return d;
+  }
+
+  async function refreshSettings() {
+    const d = await fetch("/api/settings").then((r) => r.json());
+    setProfiles(d.profiles || []);
+    if (d.profile) { setProfile(d.profile); setDraft({ ...d.profile }); }
+    if (d.questions) setQuestions(d.questions);
+    setTemplateContent(d.template_content ?? null);
+  }
+
   async function handleSave() {
     if (!draft) return;
     setSaving(true);
@@ -158,7 +177,7 @@ export function SettingsClient({
 
       const res = await fetch("/api/settings", {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
+        headers: JSON_HEADERS,
         body: JSON.stringify(body),
       });
       const d = await res.json().catch(() => ({}));
@@ -183,17 +202,10 @@ export function SettingsClient({
     if (!newProfileName.trim()) return;
     setSaving(true);
     try {
-      const res = await fetch("/api/settings", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ create_profile: { name: newProfileName.trim() }, profile_questions: [] }),
-      });
-      const d = await res.json();
+      const d = await settingsPut({ create_profile: { name: newProfileName.trim() }, profile_questions: [] });
       if (d.error) { toast.show("error", d.error); return; }
       setNewProfileName("");
-      const r = await fetch("/api/settings");
-      const data = await r.json();
-      setProfiles(data.profiles || []);
+      await refreshSettings();
       toast.show("success", "Profile created");
     } catch {
       toast.show("error", "Failed to create");
@@ -203,30 +215,29 @@ export function SettingsClient({
   }
 
   async function activateProfile(id: number) {
-    await fetch("/api/settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ set_active_profile_id: id }) });
-    const r = await fetch("/api/settings");
-    const d = await r.json();
-    setProfile(d.profile);
-    if (d.profile) setDraft({ ...d.profile });
-    setQuestions(d.questions || []);
-    setTemplateContent(d.template_content ?? null);
-    setProfiles(d.profiles || []);
-    setDirty(false);
-    toast.show("success", "Profile activated");
+    try {
+      await settingsPut({ set_active_profile_id: id });
+      await refreshSettings();
+      setDirty(false);
+      toast.show("success", "Profile activated");
+    } catch (err: any) {
+      toast.show("error", err?.message || "Failed to activate profile");
+    }
   }
 
   async function deleteProfile(id: number) {
     if (!confirm("Delete this profile? This removes its questions and entries.")) return;
-    await fetch("/api/settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ delete_profile_id: id }) });
-    const r = await fetch("/api/settings");
-    const d = await r.json();
-    setProfiles(d.profiles || []);
-    toast.show("success", "Profile deleted");
+    try {
+      await settingsPut({ delete_profile_id: id });
+      await refreshSettings();
+      toast.show("success", "Profile deleted");
+    } catch (err: any) {
+      toast.show("error", err?.message || "Failed to delete profile");
+    }
   }
 
   async function exportProfile(id: number) {
-    const res = await fetch("/api/settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ export_profile_id: id }) });
-    const d = await res.json();
+    const d = await settingsPut({ export_profile_id: id });
     const blob = new Blob([JSON.stringify(d, null, 2)], { type: "application/json" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
@@ -239,12 +250,9 @@ export function SettingsClient({
       const text = await file.text();
       const json = JSON.parse(text);
       if (!json.profile) throw new Error("Not a profile export (missing profile key)");
-      const res = await fetch("/api/settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ create_profile: json.profile, profile_questions: json.questions }) });
-      const d = await res.json();
+      const d = await settingsPut({ create_profile: json.profile, profile_questions: json.questions });
       if (d.error) throw new Error(d.error);
-      const r = await fetch("/api/settings");
-      const data = await r.json();
-      setProfiles(data.profiles || []);
+      await refreshSettings();
       toast.show("success", `Profile "${json.profile.name || "Imported"}" imported (with all settings) — activate it in the Profiles tab.`);
     } catch (err: any) {
       toast.show("error", `Import failed: ${err?.message || "invalid file"}`);
@@ -331,13 +339,8 @@ export function SettingsClient({
 
   async function changePassword() {
     if (!currentPass || !newPass) return;
-    const res = await fetch("/api/settings", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ change_password: { currentPassword: currentPass, newPassword: newPass } }),
-    });
-    const d = await res.json().catch(() => ({}));
-    if (!res.ok || d.error) { toast.show("error", d.error || "Password change failed"); return; }
+      const d = await settingsPut({ change_password: { currentPassword: currentPass, newPassword: newPass } });
+      if (d.error) { toast.show("error", d.error || "Password change failed"); return; }
     toast.show("success", "Password changed");
     setCurrentPass("");
     setNewPass("");

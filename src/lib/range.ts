@@ -1,4 +1,4 @@
-export interface ByteRange {
+interface ByteRange {
   start: number;
   end: number;
 }
@@ -9,8 +9,7 @@ export interface ByteRange {
  * responds 416 with a `Content-Range` header naming the file size.
  * Suffix ranges (`bytes=-N`) are supported; `end` is clamped to fileSize - 1.
  */
-export function parseByteRange(header: string, fileSize: number): ByteRange | null {
-  if (fileSize < 0 || Number.isNaN(fileSize)) return null;
+export function parseByteRange(header: string, fileSize: number): ByteRange | null {  if (fileSize < 0 || Number.isNaN(fileSize)) return null;
   const m = header.trim().match(/^bytes=(\d*)-(\d*)$/);
   if (!m) return null;
   const s = m[1];

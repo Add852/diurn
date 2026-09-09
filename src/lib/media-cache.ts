@@ -52,7 +52,7 @@ export function pendingScan(profileId: number): Promise<number> | undefined {
   return _scanLocks.get(profileId);
 }
 
-export interface MediaEntry {
+interface MediaEntry {
   path: string;
   name: string;
   date: string | undefined;
@@ -63,7 +63,7 @@ const _scanLocks = new Map<number, Promise<number>>();
 const _watchers = new Map<number, FSWatcher>();
 const _dirty = new Set<number>();
 
-export function startWatcher(folder: string, profileId: number) {
+function startWatcher(folder: string, profileId: number) {
   if (_watchers.has(profileId) || !existsSync(folder)) return;
   try {
     const w = watch(folder, { recursive: true, persistent: false }, () => _dirty.add(profileId));

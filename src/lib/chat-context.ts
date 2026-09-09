@@ -21,7 +21,7 @@ export interface ChatContextBundle {
 const NOTES_LIMIT = 20;
 const NOTE_BODY_CHARS = 1400;
 
-export interface NoteCtx {
+interface NoteCtx {
   name: string;
   path: string;
   summary?: string;
@@ -89,7 +89,7 @@ async function walkNotesFolder(folder: string, exclude: string[], tz: string | u
   return found;
 }
 
-export async function summarizeNotes(
+async function summarizeNotes(
   notes: { name: string; body: string }[],
   llm: LlmConfig
 ): Promise<Record<string, string>> {
@@ -114,7 +114,7 @@ export async function summarizeNotes(
   }
 }
 
-export async function buildNotesContext(
+async function buildNotesContext(
   profile: Profile,
   date: string,
   llm: LlmConfig
