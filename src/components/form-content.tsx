@@ -34,6 +34,7 @@ export function FormContent() {
   const [enabledIntegrations, setEnabledIntegrations] = useState<string[]>([]);
   const [rawContext, setRawContext] = useState<any>(null);
   const [contextSources, setContextSources] = useState<Record<string, unknown> | null>(null);
+  const [personality, setPersonality] = useState("");
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [blob, setBlob] = useState("");
   const [status, setStatus] = useState<"loading" | "ready" | "saving" | "complete" | "error">("loading");
@@ -71,6 +72,7 @@ export function FormContent() {
         setAskMode(d.ask_mode);
         setFormOutput(d.form_output);
         setAiAvailable(d.ai_available);
+        setPersonality(d.personality || "");
         setEnabledIntegrations(d.enabled_integrations || []);
         setContextSources(d.context_sources || null);
         const ctx = d.context || {};
@@ -212,6 +214,7 @@ export function FormContent() {
               questions={questions}
               answers={answers}
               blob={effectiveAskMode === "all" ? blob : undefined}
+              personality={personality}
             />
           </div>
         )}

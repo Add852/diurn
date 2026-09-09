@@ -23,14 +23,9 @@ export async function GET(req: NextRequest) {
 
   const aiOn = !!profile.ai_enabled && !!profile.llm_endpoint && !!profile.llm_model;
 
-  // separate: one input per question. all: one blob covering everything (the
-  // questions display above it so the user knows what to answer — same as
-  // chat's ask-all-at-once). Unasked (asked=0) questions are AI-inferred
-  // when AI is on; with AI off they become inputs (asked=true in the note).
-  const askAll = profile.ask_mode === "all";
-  const questions = askAll
-    ? allQuestions
-    : allQuestions.filter((q) => q.asked || !aiOn);
+  // asked=false questions are never shown or asked — AI infers their answers
+  // from the user's input (needs AI; with AI off they stay empty).
+  const questions = allQuestions.filter((q) => q.asked);
 
   if (profile.media_enabled && profile.media_folder && existsSync(profile.media_folder)) {
     maybeBackgroundScan();
@@ -52,6 +47,7 @@ export async function GET(req: NextRequest) {
     questions: questions.map((q) => ({ identifier: q.identifier, question: q.question, answer_prompt: q.answer_prompt || "" })),
     ui_mode: profile.ui_mode,
     ask_mode: profile.ask_mode,
+    personality: profile.personality_prompt,
     form_output: profile.form_output,
     ai_available: aiOn,
     context: ctx.raw,

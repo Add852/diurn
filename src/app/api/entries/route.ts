@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getDb, getActiveProfile, getProfileQuestions, getStreakStatus, type ProfileQuestion } from "@/lib/db";
 import { requireAuth } from "@/lib/auth";
 import { chatCompletion, llmConfig } from "@/lib/ai";
+import { settleSystem, settleUser } from "@/lib/prompt";
 import { renderTemplate, type TemplateVar } from "@/lib/template";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "fs";
 import { readFile, readdir } from "fs/promises";
@@ -210,11 +211,12 @@ export async function POST(req: NextRequest) {
     ? `\n\n--- Context for ${date} ---\n${JSON.stringify(context_sources, null, 2)}\n---`
     : "";
 
+  const system = settleSystem(profile.personality_prompt);
   const settle = async (q: ProfileQuestion) => {
     try {
       const reply = await chatCompletion(config, [
-        { role: "system", content: `You answer ONE question about the user's day for their journal note. Answer in 1-3 sentences, plain prose, no preamble, no quotes, no markdown. If the input contains nothing relevant to the question, reply with just "-".` },
-        { role: "user", content: `Question: ${q.question}\n${q.answer_prompt ? `Answering instructions: ${q.answer_prompt}\n` : ""}\n${integrationContext}\n\n--- User's input ---\n${userInputText}` },
+        { role: "system", content: system },
+        { role: "user", content: settleUser(q, integrationContext, userInputText) },
       ], 45_000);
       const clean = reply.trim();
       if (clean && clean !== "-") {
@@ -289,8 +291,8 @@ export async function POST(req: NextRequest) {
         ai_prompts: wantsAi && questions.length > 0
           ? questions.map((q) => ({
               identifier: q.identifier,
-              system: `You answer ONE question about the user's day for their journal note. Answer in 1-3 sentences, plain prose, no preamble, no quotes, no markdown. If the input contains nothing relevant to the question, reply with just "-".`,
-              user: `Question: ${q.question}\n${q.answer_prompt ? `Answering instructions: ${q.answer_prompt}\n` : ""}\n${integrationContext}\n\n--- User's input ---\n${userInputText}`,
+              system,
+              user: settleUser(q, integrationContext, userInputText),
               generated_answer: answers[q.identifier]?.answer ?? "",
             }))
           : null,

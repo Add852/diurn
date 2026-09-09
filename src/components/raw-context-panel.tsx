@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { settleSystem, settleUser } from "@/lib/prompt";
 
 // Full-transparency panel: everything that feeds the entry — the user's own
 // input, the distilled integration sources the AI sees, and the exact prompts
@@ -16,6 +17,7 @@ export function RawContextPanel({
   questions,
   answers,
   blob,
+  personality,
 }: {
   rawContext: any;
   contextSources?: Record<string, unknown> | null;
@@ -26,6 +28,7 @@ export function RawContextPanel({
   questions?: { identifier: string; question: string; answer_prompt?: string }[];
   answers?: Record<string, string>;
   blob?: string;
+  personality?: string;
 }) {
   const [show, setShow] = useState(true);
   useEffect(() => {
@@ -42,9 +45,9 @@ export function RawContextPanel({
   // shows exactly what the AI receives per question.
   const prompts = useMemo(() => (questions || []).map((q) => ({
     identifier: q.identifier,
-    system: `You answer ONE question about the user's day for their journal note. Answer in 1-3 sentences, plain prose, no preamble, no quotes, no markdown. If the input contains nothing relevant to the question, reply with just "-".`,
-    user: `Question: ${q.question}\n${q.answer_prompt ? `Answering instructions: ${q.answer_prompt}\n` : ""}\n${integrationContext}\n\n--- User's input ---\n${transcript ?? ""}`,
-  })), [questions, integrationContext, transcript]);
+    system: settleSystem(personality),
+    user: settleUser(q, integrationContext, transcript ?? ""),
+  })), [questions, integrationContext, transcript, personality]);
 
   return (
     <details className="mb-4 bg-zinc-950 border border-zinc-800 rounded-lg p-3">
@@ -101,9 +104,11 @@ export function RawContextPanel({
             <pre className="whitespace-pre-wrap bg-zinc-900 rounded p-2 overflow-x-auto">{JSON.stringify(rawContext.calendar, null, 2)}</pre>
           </div>
         )}
-        {rawContext.media?.files?.length > 0 && (
+        {/* Media shown only when it's actually fed to the AI (media_in_context on);
+            the UI thumbnail gallery is a display feature, not AI context. */}
+        {Array.isArray((sources?.media as unknown[]) || undefined) && (sources!.media as unknown[]).length > 0 && (
           <div>
-            <p className="text-zinc-600 mb-1 font-medium">Media ({rawContext.media.files.length})</p>
+            <p className="text-zinc-600 mb-1 font-medium">Media ({(sources!.media as unknown[]).length})</p>
             <pre className="whitespace-pre-wrap bg-zinc-900 rounded p-2 overflow-x-auto">{JSON.stringify(rawContext.media, null, 2)}</pre>
           </div>
         )}

@@ -45,7 +45,11 @@ export default function HomeClient() {
         }
       })
       .catch(() => {});
+  }, []);
 
+  // Streak refreshes on refreshKey too: entry deleted/changed from the dialog
+  // must update the count immediately, not after a full remount.
+  useEffect(() => {
     fetch("/api/entries?streak=1")
       .then((r) => r.json())
       .then((d) => {
@@ -55,7 +59,7 @@ export default function HomeClient() {
         }
       })
       .catch(() => {});
-  }, []);
+  }, [refreshKey]);
 
   return (
     <div className="flex flex-col items-center justify-center min-h-[80dvh] gap-8">

@@ -594,8 +594,8 @@ export function SettingsClient({
 
             <p className="text-[11px] text-zinc-600 leading-relaxed">
               AI off: chat is unavailable, all-at-once form falls back to separate inputs, AI output falls back to raw.
-              The <code className="text-zinc-400">asked</code> flag only works with AI on (AI infers unasked answers);
-              with AI off every question becomes an input.
+              Questions with <code className="text-zinc-400">asked</code> unchecked are never shown or asked — AI infers
+              their answers from your input (needs AI on; otherwise they stay empty).
             </p>
           </div>
           {questions.map((q, i) => {

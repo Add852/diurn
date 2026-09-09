@@ -58,7 +58,7 @@ export async function GET(req: NextRequest) {
 
   try {
     // One instruction for the greeting, one call — same shape as POST.
-    const instruction = profile.ask_mode === "separate"
+    const instruction = profile.ask_mode === "all"
       ? `Today's date is ${date}. You have today's context in your system message. Acknowledge it lightly when relevant, then ask ALL of these questions in one message, clearly numbered. Tell the user they can answer all at once:\n\n${askedQuestions.map((q, i) => `${i + 1}. ${q.question}`).join("\n")}`
       : `Today is ${date}. You have today's context in your system message. Acknowledge it lightly when relevant, then ask ONLY this one question naturally: "${askedQuestions[0].question}"`;
     const greeting = await chatCompletion(config, [

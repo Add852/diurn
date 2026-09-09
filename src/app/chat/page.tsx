@@ -15,7 +15,7 @@ interface Message {
   content: string;
 }
 
-function ChatContent() {
+function ChatContent({ personality = "" }: { personality?: string }) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const urlDate = searchParams.get("date") || "";
@@ -353,6 +353,7 @@ function ChatContent() {
           transcript={messages.filter((m) => m.role === "user").map((m) => m.content).join("\n\n---\n\n") || undefined}
           uiMode="chat"
           questions={questions}
+          personality={personality}
         />
       )}
 
@@ -417,7 +418,9 @@ function ChatContent() {
 // profile's input_method: form_* (default) or chat_* (AI-only, offered only
 // when AI is enabled in settings).
 function InterfaceSwitch({ profile, date }: { profile: any; date: string }) {
-  return profile.ui_mode === "chat" ? <ChatContent /> : <FormContent key={date} />;
+  return profile.ui_mode === "chat"
+    ? <ChatContent personality={profile.personality_prompt} />
+    : <FormContent key={date} />;
 }
 
 function PageShell() {
