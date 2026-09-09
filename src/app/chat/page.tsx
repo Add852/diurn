@@ -4,8 +4,10 @@ import { Suspense, useEffect, useState, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { EntryDialog } from "@/components/entry-dialog";
 import { IntegrationsPanel } from "@/components/integrations-panel";
+import { RawContextPanel } from "@/components/raw-context-panel";
 import { SkeletonLines } from "@/components/skeleton";
 import { useToast } from "@/components/toast";
+import { FormContent } from "@/components/form-content";
 
 interface Message {
   id: number;
@@ -83,7 +85,7 @@ function ChatContent() {
       const res = await fetch("/api/entries", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ session_id: sessionId, date, overwrite: forceOverwrite }),
+        body: JSON.stringify({ session_id: sessionId, date, overwrite: forceOverwrite, context: rawContext }),
       });
       const d = await res.json();
 
@@ -340,51 +342,11 @@ function ChatContent() {
       )}
 
       {(status === "complete" || rawContext) && (
-        <details className="mb-4 bg-zinc-950 border border-zinc-800 rounded-lg p-3">
-          <summary className="text-xs text-zinc-500 cursor-pointer list-none">
-            Raw context &amp; input (debug)
-          </summary>
-          <div className="mt-3 space-y-3 text-xs text-zinc-500">
-            {systemPrompt && (
-              <div>
-                <p className="text-zinc-600 mb-1 font-medium">System prompt sent to the bot</p>
-                <pre className="whitespace-pre-wrap bg-zinc-900 rounded p-2 overflow-x-auto">{systemPrompt}</pre>
-              </div>
-            )}
-            {messages.filter((m) => m.role === "user").length > 0 && (
-              <div>
-                <p className="text-zinc-600 mb-1 font-medium">User input transcript</p>
-                <pre className="whitespace-pre-wrap bg-zinc-900 rounded p-2 overflow-x-auto">
-{messages.filter((m) => m.role === "user").map((m) => m.content).join("\n\n---\n\n")}
-                </pre>
-              </div>
-            )}
-            {rawContext?.notes?.length > 0 && (
-              <div>
-                <p className="text-zinc-600 mb-1 font-medium">Notes ({rawContext.notes.length})</p>
-                <pre className="whitespace-pre-wrap bg-zinc-900 rounded p-2 overflow-x-auto">
-{JSON.stringify(rawContext.notes, null, 2)}
-                </pre>
-              </div>
-            )}
-            {rawContext?.tasks?.length > 0 && (
-              <div>
-                <p className="text-zinc-600 mb-1 font-medium">Tasks ({rawContext.tasks.length})</p>
-                <pre className="whitespace-pre-wrap bg-zinc-900 rounded p-2 overflow-x-auto">
-{JSON.stringify(rawContext.tasks, null, 2)}
-                </pre>
-              </div>
-            )}
-            {rawContext?.calendar?.length > 0 && (
-              <div>
-                <p className="text-zinc-600 mb-1 font-medium">Calendar ({rawContext.calendar.length})</p>
-                <pre className="whitespace-pre-wrap bg-zinc-900 rounded p-2 overflow-x-auto">
-{JSON.stringify(rawContext.calendar, null, 2)}
-                </pre>
-              </div>
-            )}
-          </div>
-        </details>
+        <RawContextPanel
+          rawContext={rawContext}
+          systemPrompt={systemPrompt || undefined}
+          transcript={messages.filter((m) => m.role === "user").map((m) => m.content).join("\n\n---\n\n") || undefined}
+        />
       )}
 
       </div>
@@ -444,10 +406,41 @@ function ChatContent() {
   );
 }
 
+// /chat is the daily-input page. Which interface renders depends on the
+// profile's input_method: form_* (default) or chat_* (AI-only, offered only
+// when AI is enabled in settings).
+function InterfaceSwitch({ profile, date }: { profile: any; date: string }) {
+  const isChat = (profile.input_method || "").startsWith("chat");
+  return isChat ? <ChatContent /> : <FormContent key={date} />;
+}
+
+function PageShell() {
+  const searchParams = useSearchParams();
+  const [state, setState] = useState<{ profile: any; date: string } | null>(null);
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    fetch("/api/settings")
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.error || !d.profile) {
+          setErr(d.error || "No active profile");
+        } else {
+          setState({ profile: d.profile, date: searchParams.get("date") || d.profile.timezone || "" });
+        }
+      })
+      .catch(() => setErr("Failed to load settings"));
+  }, [searchParams]);
+
+  if (err) return <p className="text-red-400 text-sm py-8">{err}</p>;
+  if (!state) return <SkeletonLines />;
+  return <InterfaceSwitch profile={state.profile} date={state.date} />;
+}
+
 export default function ChatPage() {
   return (
     <Suspense fallback={<SkeletonLines />}>
-      <ChatContent />
+      <PageShell />
     </Suspense>
   );
 }

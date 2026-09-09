@@ -30,8 +30,13 @@ CREATE TABLE IF NOT EXISTS profiles (
   llm_endpoint TEXT NOT NULL DEFAULT '',
   llm_model TEXT NOT NULL DEFAULT '',
   llm_api_key TEXT NOT NULL DEFAULT '',
+  ai_enabled INTEGER NOT NULL DEFAULT 1,
+  input_method TEXT NOT NULL DEFAULT 'form_single',
+  form_output TEXT NOT NULL DEFAULT 'raw',
+  media_in_context INTEGER NOT NULL DEFAULT 0,
+  raw_context_enabled INTEGER NOT NULL DEFAULT 0,
+  raw_context_folder TEXT NOT NULL DEFAULT '',
   personality_prompt TEXT NOT NULL DEFAULT '',
-  asking_method TEXT NOT NULL DEFAULT 'ask_in_one_go',
   timezone TEXT NOT NULL DEFAULT 'UTC',
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );

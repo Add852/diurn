@@ -19,7 +19,6 @@ export interface ChatContextBundle {
 }
 
 const NOTES_LIMIT = 20;
-const NOTE_BODY_CHARS = 1400;
 
 interface NoteCtx {
   name: string;
@@ -96,7 +95,7 @@ async function summarizeNotes(
   if (notes.length === 0) return {};
   try {
     const payload = notes
-      .map((n, i) => `<note id="${i}">\n${n.body.slice(0, NOTE_BODY_CHARS)}\n</note>`)
+      .map((n, i) => `<note id="${i}">\n${n.body}\n</note>`)
       .join("\n\n");
     const res = await chatCompletion(llm, [
       { role: "system", content: "You summarize Obsidian notes. Respond ONLY with valid JSON: an object mapping each note id (\"0\", \"1\", ...) to a 1-3 sentence summary. Dense and factual, no preamble." },
@@ -151,7 +150,7 @@ async function buildNotesContext(
   if (profile.obsidian_include_content === 2) {
     for (const item of items) {
       const body = bodies[items.indexOf(item)];
-      if (body.trim()) item.summary = body.trim().slice(0, 2000);
+      if (body.trim()) item.summary = body.trim();
     }
     return items;
   }
@@ -256,14 +255,19 @@ export async function buildChatContext(profile: Profile, date: string, llm: LlmC
     : [];
   const media = { files: mediaFiles.map((m) => ({ ...m, src: `/api/media/file?path=${encodeURIComponent(m.path)}` })) };
 
-  // Media is UI-only (thumbnails): filenames carry no semantic signal for the
-  // model, so it stays out of the prompt but still ships in `raw` below.
-  const hasContent = notes.length + tasks.tasks.length + calendar.events.length > 0;
-  const sources = {
+  // Media is UI-only (thumbnails) unless the user opts file paths into the
+  // prompt — filenames carry no semantic signal by default, but the model can
+  // then reference what was captured that day.
+  const mediaSources = profile.media_in_context
+    ? media.files.map((m) => ({ name: m.name, path: m.path, date: m.date }))
+    : null;
+  const hasContent = notes.length + tasks.tasks.length + calendar.events.length + (mediaSources?.length ?? 0) > 0;
+  const sources: Record<string, unknown> = {
     notes: notes.map((n) => ({ name: n.name, summary: n.summary || null })),
     tasks: tasks.tasks.map((t) => ({ title: t.title, status: t.status, list: t.listName, description: t.description?.slice(0, 300) || null })),
     calendar: calendar.events.map((e) => ({ summary: e.summary, start: e.start?.slice(0, 16) || null, location: e.location || null, description: e.description?.slice(0, 300) || null })),
   };
+  if (mediaSources) sources.media = mediaSources;
 
   const contextText = hasContent
     ? `\n\n--- Context for ${date} ---\nData sources below are JSON. Use them only when relevant to the user's answers; if a few items feel worth mentioning, acknowledge them lightly in your greeting.\n${JSON.stringify(sources, null, 2)}\n---`

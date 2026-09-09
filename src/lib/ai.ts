@@ -7,6 +7,13 @@ export function llmConfig(profile: { llm_endpoint: string; llm_api_key: string; 
   return { endpoint: profile.llm_endpoint, apiKey: profile.llm_api_key, model: profile.llm_model };
 }
 
+// AI is usable only when the master toggle is on AND an endpoint+model exist.
+// Everything that consumes AI should go through this so "disabled" behaves
+// identically to "not configured" (chat hidden, forms fall back to raw…).
+export function aiAvailable(profile: { ai_enabled?: number; llm_endpoint: string; llm_model: string }): boolean {
+  return !!profile.ai_enabled && !!profile.llm_endpoint && !!profile.llm_model;
+}
+
 // Pull the first {...} JSON object out of an LLM reply (models love prose
 // around JSON). Greedy to the last } so nested objects survive. Returns null
 // when there's nothing parseable.

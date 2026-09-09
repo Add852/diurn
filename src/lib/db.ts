@@ -28,8 +28,13 @@ export interface Profile {
   llm_endpoint: string;
   llm_model: string;
   llm_api_key: string;
+  ai_enabled: number;
+  input_method: string;
+  form_output: string;
+  media_in_context: number;
+  raw_context_enabled: number;
+  raw_context_folder: string;
   personality_prompt: string;
-  asking_method: string;
   timezone: string;
 }
 
@@ -143,6 +148,19 @@ function migrateProfileColumns(db: Database.Database) {
   add("google_client_secret", "TEXT NOT NULL DEFAULT ''");
   add("timezone", "TEXT NOT NULL DEFAULT 'UTC'");
   add("day_offset_hours", "INTEGER NOT NULL DEFAULT 0");
+  add("ai_enabled", "INTEGER NOT NULL DEFAULT 1");
+  add("input_method", "TEXT NOT NULL DEFAULT 'form_single'");
+  add("form_output", "TEXT NOT NULL DEFAULT 'raw'");
+  add("media_in_context", "INTEGER NOT NULL DEFAULT 0");
+  add("raw_context_enabled", "INTEGER NOT NULL DEFAULT 0");
+  add("raw_context_folder", "TEXT NOT NULL DEFAULT ''");
+  // asking_method was replaced by input_method (chat_* | form_*). Existing
+  // users keep their chat flow; new profiles get the form default.
+  try {
+    db.exec(`UPDATE profiles SET input_method = CASE asking_method WHEN 'one_by_one' THEN 'chat_one_by_one' ELSE 'chat_one_go' END
+      WHERE input_method = 'form_single' AND asking_method IS NOT NULL`);
+  } catch {}
+  try { db.exec("ALTER TABLE profiles DROP COLUMN asking_method"); } catch {}
 }
 
 function migrateObsidianColumns(db: Database.Database) {

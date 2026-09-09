@@ -18,6 +18,15 @@ $date("dddd")                - e.g. "Monday"
 $date("d")                   - e.g. "10"
 $date("MMMM d, yyyy")        - e.g. "August 10, 2026"`;
 
+// Input-method labels for the profiles list. AI is "on" only with the master
+// toggle AND endpoint+model set (mirrors the server's aiAvailable()).
+const INPUT_METHOD_LABEL: Record<string, string> = {
+  form_single: "Form · one big text",
+  form_each: "Form · per question",
+  chat_one_go: "Chat · all at once",
+  chat_one_by_one: "Chat · one by one",
+};
+
 interface Question {
   id?: number;
   identifier: string;
@@ -55,6 +64,10 @@ export function SettingsClient({
   const [mediaRescanning, setMediaRescanning] = useState(false);
   const [themeMode, setThemeMode] = useState<ThemeMode>("system");
   const [accent, setAccent] = useState<Accent>("emerald");
+  // AI is "on" for UI purposes only when the toggle is enabled AND endpoint +
+  // model are set — mirrors the server's aiAvailable() so chat options only
+  // appear when they can actually work.
+  const aiOn = !!draft?.ai_enabled && !!draft?.llm_endpoint && !!draft?.llm_model;
 
   useEffect(() => {
     const m = (localStorage.getItem("diurn-theme") as ThemeMode | null) || "system";
@@ -464,14 +477,50 @@ export function SettingsClient({
             </select>
           </div>
           <DayOffsetField value={draft.day_offset_hours ?? 0} onChange={(v) => updateDraft({ day_offset_hours: v })} />
+
+          <Expander title="Raw context snapshot" hint="save the day's context as JSON next to entries">
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={!!draft.raw_context_enabled} onChange={(e) => updateDraft({ raw_context_enabled: e.target.checked ? 1 : 0 })} />
+              Save raw context for each entry
+            </label>
+            {draft.raw_context_enabled ? (
+              <>
+                <PathField label="Raw context folder" value={draft.raw_context_folder} onChange={(v) => updateDraft({ raw_context_folder: v })} placeholder="/path/to/context-dumps" kind="dir" />
+                <p className="text-xs text-zinc-600">Writes <code className="text-zinc-400">{"{date}-context.json"}</code> when an entry is generated, from any interface.</p>
+              </>
+            ) : null}
+          </Expander>
+
+          <Expander title="Context panel" hint="the raw context &amp; input debug panel">
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                defaultChecked={typeof window === "undefined" || localStorage.getItem("diurn-show-context") !== "0"}
+                onChange={(e) => localStorage.setItem("diurn-show-context", e.target.checked ? "1" : "0")}
+              />
+              Show raw context panel on the input page
+            </label>
+            <p className="text-xs text-zinc-600">Per-device visibility toggle. The panel lists every context source (notes, tasks, calendar, media) sent to the AI with your entry input.</p>
+          </Expander>
         </div>
       )}
 
       {tab === "ai" && (
         <div className="space-y-3">
-          {!draft.llm_endpoint || !draft.llm_model ? (
+          <label className="flex items-center gap-2 text-sm border-b border-zinc-800 pb-3">
+            <input
+              type="checkbox"
+              checked={!!draft.ai_enabled}
+              onChange={(e) => updateDraft({ ai_enabled: e.target.checked ? 1 : 0 })}
+            />
+            <span>
+              AI enabled
+              <span className="block text-[11px] text-zinc-600">Master switch — turn AI off without erasing your endpoint/model/key below.</span>
+            </span>
+          </label>
+          {!aiOn ? (
             <p className="text-xs text-amber-400/90 bg-amber-950/30 border border-amber-800/50 rounded-lg px-3 py-2">
-              AI is not configured yet — chat and note generation need an endpoint and model below. Any OpenAI-compatible local server works (Ollama, LM Studio, vLLM…).
+              AI is off or unconfigured — chat interfaces are unavailable, one-big-text form falls back to separate inputs, and AI output falls back to raw. Configure an endpoint and model below (any OpenAI-compatible local server: Ollama, LM Studio, vLLM…).
             </p>
           ) : null}
           <Field label="Endpoint" value={draft.llm_endpoint} onChange={(v) => updateDraft({ llm_endpoint: v })} placeholder="e.g. http://localhost:11434/v1 (Ollama)" />
@@ -495,14 +544,36 @@ export function SettingsClient({
 
       {tab === "questions" && (
         <div className="space-y-3">
-          <label className="flex items-center gap-2 text-xs text-zinc-400 pb-2 border-b border-zinc-800">
-            <input
-              type="checkbox"
-              checked={draft.asking_method === "ask_in_one_go"}
-              onChange={() => updateDraft({ asking_method: draft.asking_method === "ask_in_one_go" ? "one_by_one" : "ask_in_one_go" })}
-            />
-            Ask all questions at once
-          </label>
+          <div className="pb-2 border-b border-zinc-800 space-y-2">
+            <label className="block text-xs text-zinc-500">Input interface</label>
+            <select
+              value={draft.input_method || "form_single"}
+              onChange={(e) => updateDraft({ input_method: e.target.value })}
+              className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-200"
+            >
+              <option value="form_single">Form — one big text (AI required)</option>
+              <option value="form_each">Form — separate input per question</option>
+              <option value="chat_one_go" disabled={!aiOn}>Chat — ask all at once (AI required)</option>
+              <option value="chat_one_by_one" disabled={!aiOn}>Chat — one by one (AI required)</option>
+            </select>
+            <div>
+              <label className="block text-xs text-zinc-500 mt-1">Form output</label>
+              <select
+                value={draft.form_output || "raw"}
+                onChange={(e) => updateDraft({ form_output: e.target.value })}
+                className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-200"
+              >
+                <option value="raw">Raw — your typed text, verbatim</option>
+                <option value="ai">AI — refined per answer prompt</option>
+              </select>
+            </div>
+            <p className="text-[11px] text-zinc-600 leading-relaxed">
+              Form is the default. Chat interfaces are only available when AI is enabled and configured.
+              With AI off, the one-big-text form falls back to separate inputs, and AI output falls back to raw.
+              The <code className="text-zinc-400">asked</code> flag per question only works with AI on (AI infers unasked answers);
+              with AI off every question becomes an input.
+            </p>
+          </div>
           {questions.map((q, i) => {
             const nameErr = identifierError(q.identifier, questions.slice(0, i).map((x) => x.identifier));
             return (
@@ -546,6 +617,11 @@ export function SettingsClient({
             <label className="flex items-center gap-2 text-sm">
               <input type="checkbox" checked={!!draft.media_enabled} onChange={(e) => updateDraft({ media_enabled: e.target.checked ? 1 : 0 })} />
               Enabled
+            </label>
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={!!draft.media_in_context} onChange={(e) => updateDraft({ media_in_context: e.target.checked ? 1 : 0 })} disabled={!draft.media_enabled} />
+              Include media file paths in AI context
+              <span className="block text-[11px] text-zinc-600">(off by default — adds what was captured that day to the AI prompt)</span>
             </label>
             {draft.media_enabled ? (
               <>
@@ -662,7 +738,7 @@ export function SettingsClient({
               <div key={p.id} className="flex items-center gap-2 bg-zinc-900 border border-zinc-800 rounded-lg p-3">
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium truncate">{p.name}{p.is_default ? <span className="text-xs text-zinc-500 ml-2">default</span> : null}</p>
-                  <p className="text-xs text-zinc-600">{p.llm_model} &middot; {p.asking_method === "ask_in_one_go" ? "All at once" : "One by one"}</p>
+                  <p className="text-xs text-zinc-600">{p.llm_model || "no AI"} &middot; {INPUT_METHOD_LABEL[p.input_method] || p.input_method}</p>
                 </div>
                 {!p.is_active && <button onClick={() => activateProfile(p.id)} className="text-xs bg-zinc-800 hover:bg-zinc-700 rounded px-2 py-1 text-zinc-300 whitespace-nowrap">Activate</button>}
                 <button onClick={() => exportProfile(p.id)} className="text-xs bg-zinc-800 hover:bg-zinc-700 rounded px-2 py-1 text-zinc-300 whitespace-nowrap">Export</button>

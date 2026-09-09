@@ -60,6 +60,7 @@ export async function PUT(req: NextRequest) {
       await assertDir("Daily note folder", p.daily_note_folder);
       if (p.media_enabled) await assertDir("Media folder", p.media_folder);
       if (p.obsidian_enabled) await assertDir("Obsidian note folder", p.obsidian_folder);
+      if (p.raw_context_enabled) await assertDir("Raw context folder", p.raw_context_folder);
       const tpl = (p.template_note_path || "").trim();
       if (tpl) {
         const s = await stat(tpl);
@@ -83,7 +84,9 @@ db.prepare(`UPDATE profiles SET
       media_enabled=?, media_folder=?,
       obsidian_enabled=?, obsidian_folder=?, obsidian_exclude_folders=?, obsidian_include_content=?,
       llm_endpoint=?, llm_model=?,
-      llm_api_key=?, personality_prompt=?, asking_method=?, timezone=?
+      llm_api_key=?, ai_enabled=?, input_method=?, form_output=?,
+      media_in_context=?, raw_context_enabled=?, raw_context_folder=?,
+      personality_prompt=?, timezone=?
       WHERE id=?`).run(
       p.name, p.daily_note_folder || "", p.template_note_path || "",
       p.google_tasks_enabled ? 1 : 0, p.google_tasks_config || "{}", p.google_calendar_enabled ? 1 : 0,
@@ -92,8 +95,9 @@ db.prepare(`UPDATE profiles SET
       p.media_enabled ? 1 : 0, p.media_folder || "",
       p.obsidian_enabled ? 1 : 0, p.obsidian_folder || "", p.obsidian_exclude_folders || "", p.obsidian_include_content ? 1 : 0,
       p.llm_endpoint, p.llm_model,
-      p.llm_api_key || "", p.personality_prompt || "", p.asking_method || "ask_in_one_go",
-      p.timezone || "UTC",
+      p.llm_api_key || "", p.ai_enabled === false ? 0 : 1, p.input_method || "form_single", p.form_output || "raw",
+      p.media_in_context ? 1 : 0, p.raw_context_enabled ? 1 : 0, p.raw_context_folder || "",
+      p.personality_prompt || "", p.timezone || "UTC",
       p.id,
     );
       console.log("[settings PUT] profile updated id:", p.id);
@@ -176,9 +180,11 @@ db.prepare(`UPDATE profiles SET
       "daily_note_folder", "template_note_path",
       "google_tasks_enabled", "google_tasks_config", "google_calendar_enabled", "google_calendar_config",
       "google_client_id", "google_client_secret", "day_offset_hours",
-      "media_enabled", "media_folder",
+      "media_enabled", "media_folder", "media_in_context",
       "obsidian_enabled", "obsidian_folder", "obsidian_exclude_folders", "obsidian_include_content",
-      "llm_endpoint", "llm_model", "llm_api_key", "personality_prompt", "asking_method", "timezone",
+      "llm_endpoint", "llm_model", "llm_api_key", "ai_enabled", "input_method", "form_output",
+      "raw_context_enabled", "raw_context_folder",
+      "personality_prompt", "timezone",
     ] as const;
     const vals: any[] = [user.id, p.name || "Imported", 0, 0];
     for (const col of settingCols) {
