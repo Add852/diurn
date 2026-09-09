@@ -33,7 +33,9 @@ function ChatContent() {
   const [integrations, setIntegrations] = useState<Record<string, any>>({});
   const [enabledIntegrations, setEnabledIntegrations] = useState<string[]>([]);
   const [rawContext, setRawContext] = useState<any>(null);
+  const [contextSources, setContextSources] = useState<Record<string, unknown> | null>(null);
   const [systemPrompt, setSystemPrompt] = useState("");
+  const [questions, setQuestions] = useState<{ identifier: string; question: string; answer_prompt?: string }[]>([]);
   const toast = useToast();
 
   // Draft + active-session guards: typed-but-unsent text and an in-progress
@@ -85,7 +87,7 @@ function ChatContent() {
       const res = await fetch("/api/entries", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ session_id: sessionId, date, overwrite: forceOverwrite, context: rawContext }),
+        body: JSON.stringify({ session_id: sessionId, date, overwrite: forceOverwrite, context: rawContext, context_sources: contextSources }),
       });
       const d = await res.json();
 
@@ -153,6 +155,8 @@ function ChatContent() {
         setEnabledIntegrations(enabled);
         const ctx = d.context || {};
         setRawContext(ctx);
+        setContextSources(d.context_sources || null);
+        setQuestions(d.questions || []);
         setSystemPrompt(d.messages.find((m: any) => m.role === "system")?.content || "");
         const integ: Record<string, unknown> = {};
         if (enabled.includes("notes") && ctx.notes) integ.notes = ctx.notes;
@@ -344,8 +348,11 @@ function ChatContent() {
       {(status === "complete" || rawContext) && (
         <RawContextPanel
           rawContext={rawContext}
+          contextSources={contextSources}
           systemPrompt={systemPrompt || undefined}
           transcript={messages.filter((m) => m.role === "user").map((m) => m.content).join("\n\n---\n\n") || undefined}
+          uiMode="chat"
+          questions={questions}
         />
       )}
 
@@ -410,8 +417,7 @@ function ChatContent() {
 // profile's input_method: form_* (default) or chat_* (AI-only, offered only
 // when AI is enabled in settings).
 function InterfaceSwitch({ profile, date }: { profile: any; date: string }) {
-  const isChat = (profile.input_method || "").startsWith("chat");
-  return isChat ? <ChatContent /> : <FormContent key={date} />;
+  return profile.ui_mode === "chat" ? <ChatContent /> : <FormContent key={date} />;
 }
 
 function PageShell() {

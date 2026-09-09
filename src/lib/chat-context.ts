@@ -246,6 +246,38 @@ export async function fetchDayEvents(
 }
 
 
+// The distilled sources object the LLM actually sees — one function builds
+// it for the chat system prompt, the answer-generation calls, the raw-context
+// panel, and {date}-context.json, so all four always agree byte-for-byte.
+export function distillContext(
+  raw: {
+    notes?: { name: string; summary?: string }[];
+    tasks?: { tasks?: { title: string; status: string; listName: string; description?: string }[] };
+    calendar?: { events?: { summary: string; start: string; location?: string; description?: string }[] };
+    media?: { files?: { name: string; path: string; date?: string }[] };
+  },
+  mediaInContext: boolean
+): { sources: Record<string, unknown>; hasContent: boolean } {
+  const mediaSources = mediaInContext
+    ? (raw.media?.files || []).map((m) => ({ name: m.name, path: m.path, date: m.date }))
+    : null;
+  const hasContent =
+    (raw.notes?.length || 0) + (raw.tasks?.tasks?.length || 0) + (raw.calendar?.events?.length || 0) + (mediaSources?.length ?? 0) > 0;
+  const sources: Record<string, unknown> = {
+    notes: (raw.notes || []).map((n) => ({ name: n.name, summary: n.summary || null })),
+    tasks: (raw.tasks?.tasks || []).map((t) => ({ title: t.title, status: t.status, list: t.listName, description: t.description?.slice(0, 300) || null })),
+    calendar: (raw.calendar?.events || []).map((e) => ({ summary: e.summary, start: e.start?.slice(0, 16) || null, location: e.location || null, description: e.description?.slice(0, 300) || null })),
+  };
+  if (mediaSources) sources.media = mediaSources;
+  return { sources, hasContent };
+}
+
+function contextTextFromSources(date: string, sources: Record<string, unknown>, hasContent: boolean): string {
+  return hasContent
+    ? `\n\n--- Context for ${date} ---\nData sources below are JSON. Use them only when relevant to the user's answers; if a few items feel worth mentioning, acknowledge them lightly in your greeting.\n${JSON.stringify(sources, null, 2)}\n---`
+    : `\n\n--- Context for ${date} ---\nNo context sources produced content. Do not mention missing or failed integrations; proceed normally.\n---`;
+}
+
 export async function buildChatContext(profile: Profile, date: string, llm: LlmConfig): Promise<ChatContextBundle> {
   const notes = await buildNotesContext(profile, date, llm);
   const tasks = await fetchDayTasks(profile, date);
@@ -255,26 +287,10 @@ export async function buildChatContext(profile: Profile, date: string, llm: LlmC
     : [];
   const media = { files: mediaFiles.map((m) => ({ ...m, src: `/api/media/file?path=${encodeURIComponent(m.path)}` })) };
 
-  // Media is UI-only (thumbnails) unless the user opts file paths into the
-  // prompt — filenames carry no semantic signal by default, but the model can
-  // then reference what was captured that day.
-  const mediaSources = profile.media_in_context
-    ? media.files.map((m) => ({ name: m.name, path: m.path, date: m.date }))
-    : null;
-  const hasContent = notes.length + tasks.tasks.length + calendar.events.length + (mediaSources?.length ?? 0) > 0;
-  const sources: Record<string, unknown> = {
-    notes: notes.map((n) => ({ name: n.name, summary: n.summary || null })),
-    tasks: tasks.tasks.map((t) => ({ title: t.title, status: t.status, list: t.listName, description: t.description?.slice(0, 300) || null })),
-    calendar: calendar.events.map((e) => ({ summary: e.summary, start: e.start?.slice(0, 16) || null, location: e.location || null, description: e.description?.slice(0, 300) || null })),
-  };
-  if (mediaSources) sources.media = mediaSources;
-
-  const contextText = hasContent
-    ? `\n\n--- Context for ${date} ---\nData sources below are JSON. Use them only when relevant to the user's answers; if a few items feel worth mentioning, acknowledge them lightly in your greeting.\n${JSON.stringify(sources, null, 2)}\n---`
-    : `\n\n--- Context for ${date} ---\nNo context sources produced content. Do not mention missing or failed integrations; proceed normally.\n---`;
+  const { sources, hasContent } = distillContext({ notes, tasks, calendar, media }, !!profile.media_in_context);
 
   return {
-    text: contextText,
+    text: contextTextFromSources(date, sources, hasContent),
     raw: { notes, tasks, calendar, media },
   };
 }

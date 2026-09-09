@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { IntegrationsPanel } from "@/components/integrations-panel";
 import { RawContextPanel } from "@/components/raw-context-panel";
@@ -27,12 +27,13 @@ export function FormContent() {
 
   const [date, setDate] = useState(urlDate);
   const [questions, setQuestions] = useState<FormQuestion[]>([]);
-  const [inputMethod, setInputMethod] = useState("form_single");
+  const [askMode, setAskMode] = useState("separate");
   const [formOutput, setFormOutput] = useState("raw");
   const [aiAvailable, setAiAvailable] = useState(false);
   const [integrations, setIntegrations] = useState<Record<string, unknown>>({});
   const [enabledIntegrations, setEnabledIntegrations] = useState<string[]>([]);
   const [rawContext, setRawContext] = useState<any>(null);
+  const [contextSources, setContextSources] = useState<Record<string, unknown> | null>(null);
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [blob, setBlob] = useState("");
   const [status, setStatus] = useState<"loading" | "ready" | "saving" | "complete" | "error">("loading");
@@ -67,10 +68,11 @@ export function FormContent() {
         }
         setDate(d.date);
         setQuestions(d.questions || []);
-        setInputMethod(d.input_method);
+        setAskMode(d.ask_mode);
         setFormOutput(d.form_output);
         setAiAvailable(d.ai_available);
         setEnabledIntegrations(d.enabled_integrations || []);
+        setContextSources(d.context_sources || null);
         const ctx = d.context || {};
         setRawContext(ctx);
         const integ: Record<string, unknown> = {};
@@ -88,8 +90,9 @@ export function FormContent() {
     return () => { cancelled = true; };
   }, [urlDate]);
 
-  // One-big-text is AI-only: swap to per-question inputs when AI is off.
-  const effectiveMethod = inputMethod === "form_single" && !aiAvailable ? "form_each" : inputMethod;
+  // All-at-once is AI-only (the model splits the blob per question): swap to
+  // separate inputs when AI is off.
+  const effectiveAskMode = askMode === "all" && !aiAvailable ? "separate" : askMode;
 
   async function submit(forceOverwrite = false) {
     setStatus("saving");
@@ -99,8 +102,9 @@ export function FormContent() {
         date,
         overwrite: forceOverwrite,
         context: rawContext,
+        context_sources: contextSources,
       };
-      if (effectiveMethod === "form_single") payload.blob = blob;
+      if (effectiveAskMode === "all") payload.blob = blob;
       else payload.answers = answers;
 
       const res = await fetch("/api/entries", {
@@ -132,12 +136,12 @@ export function FormContent() {
   }
 
   const canSubmit =
-    effectiveMethod === "form_single"
+    effectiveAskMode === "all"
       ? blob.trim().length > 0
       : questions.some((q) => (answers[q.identifier] || "").trim().length > 0);
 
   const transcript =
-    effectiveMethod === "form_single"
+    effectiveAskMode === "all"
       ? blob
       : questions.map((q) => `${q.question}\n${answers[q.identifier] || ""}`).join("\n\n---\n\n");
 
@@ -159,42 +163,56 @@ export function FormContent() {
 
         {status === "ready" && (
           <div className="space-y-4">
-            {effectiveMethod === "form_single" && (
+            {askMode === "all" && !aiAvailable && (
+              <p className="text-xs text-amber-400/90 bg-amber-950/30 border border-amber-800/50 rounded-lg px-3 py-2">
+                AI is off — the all-at-once input needs AI to split your text per question. Answer each question separately below; your note falls back to raw output.
+              </p>
+            )}
+
+            {effectiveAskMode === "all" && (
               <div>
-                {inputMethod === "form_single" && !aiAvailable && (
-                  <p className="text-xs text-amber-400/90 bg-amber-950/30 border border-amber-800/50 rounded-lg px-3 py-2 mb-3">
-                    AI is off — the one-big-text input needs AI to split your text per question. Use separate inputs below; your note falls back to raw output.
-                  </p>
-                )}
-                <label className="block text-xs text-zinc-500 mb-1">
-                  How did your day go? (one text — AI splits it into your questions)
-                </label>
-                <textarea
+                <p className="text-xs text-zinc-500 mb-2">
+                  Answer these in one text — AI organizes your input into each question:
+                </p>
+                <ol className="list-decimal pl-5 space-y-1 text-sm text-zinc-300 mb-3">
+                  {questions.map((q) => (
+                    <li key={q.identifier}>{q.question}</li>
+                  ))}
+                </ol>
+                <AutoTextarea
                   value={blob}
-                  onChange={(e) => setBlob(e.target.value)}
-                  className="w-full bg-zinc-800 border border-zinc-700 rounded-2xl px-4 py-3 text-sm text-zinc-200 focus:outline-none focus:border-emerald-500 box-border resize-y min-h-32"
+                  onChange={setBlob}
+                  className="w-full bg-zinc-800 border border-zinc-700 rounded-2xl px-4 py-3 text-sm text-zinc-200 focus:outline-none focus:border-emerald-500 box-border resize-none overflow-y-auto"
                   placeholder="Write freely about your day…"
                 />
               </div>
             )}
 
-            {effectiveMethod === "form_each" && (
+            {effectiveAskMode === "separate" && (
               <div className="space-y-4">
                 {questions.map((q) => (
                   <div key={q.identifier}>
                     <label className="block text-sm text-zinc-300 mb-1">{q.question}</label>
-                    <textarea
+                    <AutoTextarea
                       value={answers[q.identifier] || ""}
-                      onChange={(e) => setAnswers((prev) => ({ ...prev, [q.identifier]: e.target.value }))}
-                      rows={2}
-                      className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-none focus:border-emerald-500 resize-y"
+                      onChange={(v) => setAnswers((prev) => ({ ...prev, [q.identifier]: v }))}
+                      className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-none focus:border-emerald-500 resize-none overflow-y-auto"
                     />
                   </div>
                 ))}
               </div>
             )}
 
-            <RawContextPanel rawContext={status === "ready" || status === "complete" ? rawContext : null} transcript={transcript || undefined} />
+            <RawContextPanel
+              rawContext={status === "ready" || status === "complete" ? rawContext : null}
+              contextSources={contextSources}
+              transcript={transcript || undefined}
+              uiMode="form"
+              askMode={effectiveAskMode}
+              questions={questions}
+              answers={answers}
+              blob={effectiveAskMode === "all" ? blob : undefined}
+            />
           </div>
         )}
 
@@ -257,5 +275,39 @@ export function FormContent() {
         </div>
       )}
     </div>
+  );
+}
+
+// Auto-growing textarea: starts at 1 line, grows with content up to maxH.
+// ponytail: cap via inline max-height; swap for a measured gutter if line
+// heights ever vary beyond rem rounding.
+function AutoTextarea({
+  value,
+  onChange,
+  className,
+  placeholder,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  className?: string;
+  placeholder?: string;
+}) {
+  const ref = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    const t = ref.current;
+    if (!t) return;
+    t.style.height = "auto";
+    t.style.height = Math.min(t.scrollHeight, 320) + "px";
+  }, [value]);
+  return (
+    <textarea
+      ref={ref}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      placeholder={placeholder}
+      rows={1}
+      className={className}
+      style={{ maxHeight: 320 }}
+    />
   );
 }

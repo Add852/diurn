@@ -84,7 +84,7 @@ db.prepare(`UPDATE profiles SET
       media_enabled=?, media_folder=?,
       obsidian_enabled=?, obsidian_folder=?, obsidian_exclude_folders=?, obsidian_include_content=?,
       llm_endpoint=?, llm_model=?,
-      llm_api_key=?, ai_enabled=?, input_method=?, form_output=?,
+      llm_api_key=?, ai_enabled=?, ui_mode=?, ask_mode=?, form_output=?,
       media_in_context=?, raw_context_enabled=?, raw_context_folder=?,
       personality_prompt=?, timezone=?
       WHERE id=?`).run(
@@ -95,7 +95,7 @@ db.prepare(`UPDATE profiles SET
       p.media_enabled ? 1 : 0, p.media_folder || "",
       p.obsidian_enabled ? 1 : 0, p.obsidian_folder || "", p.obsidian_exclude_folders || "", p.obsidian_include_content ? 1 : 0,
       p.llm_endpoint, p.llm_model,
-      p.llm_api_key || "", p.ai_enabled === false ? 0 : 1, p.input_method || "form_single", p.form_output || "raw",
+      p.llm_api_key || "", p.ai_enabled === false ? 0 : 1, p.ui_mode || "form", p.ask_mode || "separate", p.form_output || "raw",
       p.media_in_context ? 1 : 0, p.raw_context_enabled ? 1 : 0, p.raw_context_folder || "",
       p.personality_prompt || "", p.timezone || "UTC",
       p.id,
@@ -182,7 +182,7 @@ db.prepare(`UPDATE profiles SET
       "google_client_id", "google_client_secret", "day_offset_hours",
       "media_enabled", "media_folder", "media_in_context",
       "obsidian_enabled", "obsidian_folder", "obsidian_exclude_folders", "obsidian_include_content",
-      "llm_endpoint", "llm_model", "llm_api_key", "ai_enabled", "input_method", "form_output",
+      "llm_endpoint", "llm_model", "llm_api_key", "ai_enabled", "ui_mode", "ask_mode", "form_output",
       "raw_context_enabled", "raw_context_folder",
       "personality_prompt", "timezone",
     ] as const;

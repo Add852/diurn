@@ -18,14 +18,7 @@ $date("dddd")                - e.g. "Monday"
 $date("d")                   - e.g. "10"
 $date("MMMM d, yyyy")        - e.g. "August 10, 2026"`;
 
-// Input-method labels for the profiles list. AI is "on" only with the master
-// toggle AND endpoint+model set (mirrors the server's aiAvailable()).
-const INPUT_METHOD_LABEL: Record<string, string> = {
-  form_single: "Form · one big text",
-  form_each: "Form · per question",
-  chat_one_go: "Chat · all at once",
-  chat_one_by_one: "Chat · one by one",
-};
+
 
 interface Question {
   id?: number;
@@ -545,32 +538,63 @@ export function SettingsClient({
       {tab === "questions" && (
         <div className="space-y-3">
           <div className="pb-2 border-b border-zinc-800 space-y-2">
-            <label className="block text-xs text-zinc-500">Input interface</label>
-            <select
-              value={draft.input_method || "form_single"}
-              onChange={(e) => updateDraft({ input_method: e.target.value })}
-              className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-200"
-            >
-              <option value="form_single">Form — one big text (AI required)</option>
-              <option value="form_each">Form — separate input per question</option>
-              <option value="chat_one_go" disabled={!aiOn}>Chat — ask all at once (AI required)</option>
-              <option value="chat_one_by_one" disabled={!aiOn}>Chat — one by one (AI required)</option>
-            </select>
-            <div>
-              <label className="block text-xs text-zinc-500 mt-1">Form output</label>
-              <select
-                value={draft.form_output || "raw"}
-                onChange={(e) => updateDraft({ form_output: e.target.value })}
-                className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-200"
+            <label className="block text-xs text-zinc-500">Interface</label>
+            <div className="flex gap-2">
+              <button
+                onClick={() => updateDraft({ ui_mode: "form" })}
+                className={`flex-1 rounded-lg border px-3 py-2 text-xs transition-colors ${draft.ui_mode === "form" ? "border-emerald-500 bg-zinc-800 text-zinc-100" : "border-zinc-700 text-zinc-400 hover:text-zinc-200"}`}
               >
-                <option value="raw">Raw — your typed text, verbatim</option>
-                <option value="ai">AI — refined per answer prompt</option>
-              </select>
+                Form
+              </button>
+              <button
+                onClick={() => updateDraft({ ui_mode: aiOn ? "chat" : "form" })}
+                disabled={!aiOn}
+                title={aiOn ? undefined : "Chat needs AI enabled and configured"}
+                className={`flex-1 rounded-lg border px-3 py-2 text-xs transition-colors disabled:opacity-40 ${draft.ui_mode === "chat" ? "border-emerald-500 bg-zinc-800 text-zinc-100" : "border-zinc-700 text-zinc-400 hover:text-zinc-200"}`}
+              >
+                Chat{!aiOn ? " (needs AI)" : ""}
+              </button>
             </div>
+
+            <label className="block text-xs text-zinc-500 mt-1">Questions</label>
+            <div className="flex gap-2">
+              <button
+                onClick={() => updateDraft({ ask_mode: "separate" })}
+                className={`flex-1 rounded-lg border px-3 py-2 text-xs transition-colors ${draft.ask_mode === "separate" ? "border-emerald-500 bg-zinc-800 text-zinc-100" : "border-zinc-700 text-zinc-400 hover:text-zinc-200"}`}
+              >
+                One at a time / separate
+              </button>
+              <button
+                onClick={() => updateDraft({ ask_mode: "all" })}
+                className={`flex-1 rounded-lg border px-3 py-2 text-xs transition-colors ${draft.ask_mode === "all" ? "border-emerald-500 bg-zinc-800 text-zinc-100" : "border-zinc-700 text-zinc-400 hover:text-zinc-200"}`}
+              >
+                All at once
+              </button>
+            </div>
+
+            {(draft.ui_mode === "form" && draft.ask_mode === "separate") ? (
+              <div>
+                <label className="block text-xs text-zinc-500 mt-1">Output</label>
+                <select
+                  value={draft.form_output || "raw"}
+                  onChange={(e) => updateDraft({ form_output: e.target.value })}
+                  className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-200"
+                >
+                  <option value="raw">Raw — your typed text, verbatim</option>
+                  <option value="ai">AI — refined per answer prompt</option>
+                </select>
+              </div>
+            ) : (
+              <p className="text-[11px] text-zinc-600">
+                {draft.ask_mode === "all"
+                  ? "All-at-once output is always AI — the model splits and organizes your one text into each question."
+                  : "Chat output is always AI — the conversation itself is AI-driven."}
+              </p>
+            )}
+
             <p className="text-[11px] text-zinc-600 leading-relaxed">
-              Form is the default. Chat interfaces are only available when AI is enabled and configured.
-              With AI off, the one-big-text form falls back to separate inputs, and AI output falls back to raw.
-              The <code className="text-zinc-400">asked</code> flag per question only works with AI on (AI infers unasked answers);
+              AI off: chat is unavailable, all-at-once form falls back to separate inputs, AI output falls back to raw.
+              The <code className="text-zinc-400">asked</code> flag only works with AI on (AI infers unasked answers);
               with AI off every question becomes an input.
             </p>
           </div>
@@ -738,7 +762,7 @@ export function SettingsClient({
               <div key={p.id} className="flex items-center gap-2 bg-zinc-900 border border-zinc-800 rounded-lg p-3">
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium truncate">{p.name}{p.is_default ? <span className="text-xs text-zinc-500 ml-2">default</span> : null}</p>
-                  <p className="text-xs text-zinc-600">{p.llm_model || "no AI"} &middot; {INPUT_METHOD_LABEL[p.input_method] || p.input_method}</p>
+                  <p className="text-xs text-zinc-600">{p.llm_model || "no AI"} &middot; {p.ui_mode === "chat" ? "Chat" : "Form"} · {p.ask_mode === "all" ? "all at once" : "separate"}{p.ui_mode === "form" && p.ask_mode === "separate" ? ` · ${p.form_output === "ai" ? "AI" : "raw"} output` : ""}</p>
                 </div>
                 {!p.is_active && <button onClick={() => activateProfile(p.id)} className="text-xs bg-zinc-800 hover:bg-zinc-700 rounded px-2 py-1 text-zinc-300 whitespace-nowrap">Activate</button>}
                 <button onClick={() => exportProfile(p.id)} className="text-xs bg-zinc-800 hover:bg-zinc-700 rounded px-2 py-1 text-zinc-300 whitespace-nowrap">Export</button>

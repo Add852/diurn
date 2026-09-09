@@ -40,6 +40,22 @@ export async function GET(req: NextRequest) {
   const profile = getActiveProfile();
   const db = getDb();
 
+  // Raw context snapshot for the entry-dialog panel: reads {date}-context.json
+  // from the configured folder. Absent file / disabled feature -> {context: null}
+  // and the dialog simply doesn't render the panel.
+  if (url.searchParams.get("raw_context") === "1") {
+    if (!profile?.raw_context_enabled || !profile.raw_context_folder) {
+      return NextResponse.json({ context: null });
+    }
+    const ctxPath = join(profile.raw_context_folder, `${queryDate}-context.json`);
+    try {
+      const content = readFileSync(ctxPath, "utf-8");
+      return NextResponse.json({ context: JSON.parse(content) });
+    } catch {
+      return NextResponse.json({ context: null });
+    }
+  }
+
   if (streakOnly && profile) {
     return NextResponse.json(getStreakStatus(profile.id, profile.timezone, profile.day_offset_hours));
   }
@@ -102,7 +118,7 @@ export async function POST(req: NextRequest) {
   const session = await requireAuth();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const { session_id, date, overwrite, answers: formAnswers, blob, context } = await req.json();
+  const { session_id, date, overwrite, answers: formAnswers, blob, context, context_sources } = await req.json();
   const profile = getActiveProfile();
   if (!profile) {
     return NextResponse.json({ error: "No active profile" }, { status: 400 });
@@ -123,22 +139,6 @@ export async function POST(req: NextRequest) {
   }
 
   const aiOn = !!profile.ai_enabled && !!profile.llm_endpoint && !!profile.llm_model;
-
-  // Raw context snapshot: the form/chat page passes back the context object
-  // it fetched (/api/form or /api/chat already built it). Saved atomically as
-  // {date}-context.json next to the notes when the user opted in.
-  let contextSaved = false;
-  if (profile.raw_context_enabled && profile.raw_context_folder && context) {
-    try {
-      const ctxDir = profile.raw_context_folder;
-      if (!existsSync(ctxDir)) mkdirSync(ctxDir, { recursive: true });
-      const ctxPath = join(ctxDir, `${date}-context.json`);
-      const tmp = ctxPath + ".tmp";
-      writeFileSync(tmp, JSON.stringify({ date, saved_at: new Date().toISOString(), context }, null, 2), "utf-8");
-      renameSync(tmp, ctxPath);
-      contextSaved = true;
-    } catch {}
-  }
 
   // Form submissions arrive as {answers: {identifier: text}} or {blob: text}
   // (one-big-text mode) instead of a chat session. Both skip the transcript
@@ -183,9 +183,9 @@ export async function POST(req: NextRequest) {
     // The blob is the sole user turn; settle() extracts per-question answers.
   }
 
-  // chat_one_by_one: question i is answered by user message i (the flow's own
-  // stop condition). Raw answer pre-fills the slot — good even without AI.
-  if (!isFormSubmission && profile.input_method === "chat_one_by_one") {
+  // chat separate-mode: question i is answered by user message i (the flow's
+  // own stop condition). Raw answer pre-fills the slot — good even without AI.
+  if (!isFormSubmission && profile.ask_mode === "separate") {
     const asked = questions.filter((q) => q.asked);
     for (let i = 0; i < asked.length; i++) {
       const q = asked[i];
@@ -197,22 +197,31 @@ export async function POST(req: NextRequest) {
     .map((m) => `${m.role === "user" ? "user" : "assistant"}: ${m.content}`)
     .join("\n");
 
+  // FULL transparency: every prompt sent to the AI is recorded verbatim and
+  // shown in the raw-context panel + {date}-context.json. Answer calls use
+  // ONLY: system instruction + question + answer_prompt + integration
+  // context + the user's own input. Nothing else is appended.
+  const userInputText = blob !== undefined
+    ? `user: ${blob}`
+    : isFormSubmission
+      ? questions.filter((q) => formAnswers[q.identifier]?.trim()).map((q) => `user (${q.identifier}): ${formAnswers[q.identifier].trim()}`).join("\n")
+      : transcript;
+  const integrationContext = context_sources
+    ? `\n\n--- Context for ${date} ---\n${JSON.stringify(context_sources, null, 2)}\n---`
+    : "";
+
   const settle = async (q: ProfileQuestion) => {
-    const fallback = answers[q.identifier]?.answer || "";
-    const guidance = q.answer_prompt
-      ? `Answering instructions: ${q.answer_prompt}`
-      : "Extract or infer the answer from the conversation, focusing on what the user actually said.";
     try {
       const reply = await chatCompletion(config, [
-        { role: "system", content: `You answer ONE question about the user's day for their journal note. ${guidance} Answer in 1-3 sentences, plain prose, no preamble, no quotes, no markdown. If the conversation contains nothing relevant, reply with just "-".` },
-        { role: "user", content: `Question: ${q.question}\n\nConversation:\n${blob !== undefined ? `user: ${blob}` : transcript}` },
+        { role: "system", content: `You answer ONE question about the user's day for their journal note. Answer in 1-3 sentences, plain prose, no preamble, no quotes, no markdown. If the input contains nothing relevant to the question, reply with just "-".` },
+        { role: "user", content: `Question: ${q.question}\n${q.answer_prompt ? `Answering instructions: ${q.answer_prompt}\n` : ""}\n${integrationContext}\n\n--- User's input ---\n${userInputText}` },
       ], 45_000);
       const clean = reply.trim();
       if (clean && clean !== "-") {
         answers[q.identifier] = { question: q.question, answer: clean, asked: !!q.asked, prompt: q.answer_prompt || "" };
       }
     } catch {
-      // AI unreachable / call failed: keep the raw pre-fill (one_by_one user
+      // AI unreachable / call failed: keep the raw pre-fill (separate-mode user
       // text) — better than empty. The note still renders either way.
     }
   };
@@ -257,6 +266,41 @@ export async function POST(req: NextRequest) {
   let filePath = "";
   if (profile.daily_note_folder) {
     filePath = writeNote(profile.daily_note_folder, date, rendered);
+  }
+
+  // Raw context snapshot — written AFTER generation so it captures exactly
+  // what went in: the user's own words, the distilled integration sources,
+  // and every AI prompt used. All optional fields stay absent when unused.
+  let contextSaved = false;
+  if (profile.raw_context_enabled && profile.raw_context_folder) {
+    try {
+      const ctxDir = profile.raw_context_folder;
+      if (!existsSync(ctxDir)) mkdirSync(ctxDir, { recursive: true });
+      const ctxPath = join(ctxDir, `${date}-context.json`);
+      const snapshot: Record<string, unknown> = {
+        date,
+        saved_at: new Date().toISOString(),
+        ui_mode: profile.ui_mode,
+        ask_mode: profile.ask_mode,
+        form_output: profile.form_output,
+        ai_enabled: aiOn,
+        user_input: userInputText || null,
+        integration_sources: context_sources ?? null,
+        ai_prompts: wantsAi && questions.length > 0
+          ? questions.map((q) => ({
+              identifier: q.identifier,
+              system: `You answer ONE question about the user's day for their journal note. Answer in 1-3 sentences, plain prose, no preamble, no quotes, no markdown. If the input contains nothing relevant to the question, reply with just "-".`,
+              user: `Question: ${q.question}\n${q.answer_prompt ? `Answering instructions: ${q.answer_prompt}\n` : ""}\n${integrationContext}\n\n--- User's input ---\n${userInputText}`,
+              generated_answer: answers[q.identifier]?.answer ?? "",
+            }))
+          : null,
+        answers,
+      };
+      const tmp = ctxPath + ".tmp";
+      writeFileSync(tmp, JSON.stringify(snapshot, null, 2), "utf-8");
+      renameSync(tmp, ctxPath);
+      contextSaved = true;
+    } catch {}
   }
 
   const result = db

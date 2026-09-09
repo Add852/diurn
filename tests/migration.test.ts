@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 // Migration contract: an old profiles table with asking_method migrates to
 // input_method (chat flows preserved), asking_method is dropped, and the six
 // new columns exist with correct defaults.
-test("profiles migration: asking_method -> input_method + new columns", async () => {
+test("profiles migration: asking_method -> ui_mode/ask_mode + new columns", async () => {
   const Database = (await import("better-sqlite3")).default;
   const db = new Database(":memory:");
 
@@ -41,7 +41,7 @@ test("profiles migration: asking_method -> input_method + new columns", async ()
   db.prepare("INSERT INTO profiles (user_id, name, asking_method) VALUES (1, 'chatuser', 'one_by_one')").run();
   db.prepare("INSERT INTO profiles (user_id, name, asking_method) VALUES (1, 'batchuser', 'ask_in_one_go')").run();
 
-  // Mirror migrateProfileColumns from src/lib/db.ts
+  // Mirror migrateProfileColumns from src/lib/db.ts (current scheme)
   const cols = new Set((db.prepare("PRAGMA table_info(profiles)").all() as { name: string }[]).map((c) => c.name));
   const add = (name: string, def: string) => {
     if (!cols.has(name)) {
@@ -49,21 +49,25 @@ test("profiles migration: asking_method -> input_method + new columns", async ()
     }
   };
   add("ai_enabled", "INTEGER NOT NULL DEFAULT 1");
-  add("input_method", "TEXT NOT NULL DEFAULT 'form_single'");
+  add("ui_mode", "TEXT NOT NULL DEFAULT 'form'");
+  add("ask_mode", "TEXT NOT NULL DEFAULT 'separate'");
   add("form_output", "TEXT NOT NULL DEFAULT 'raw'");
   add("media_in_context", "INTEGER NOT NULL DEFAULT 0");
   add("raw_context_enabled", "INTEGER NOT NULL DEFAULT 0");
   add("raw_context_folder", "TEXT NOT NULL DEFAULT ''");
-  db.exec(`UPDATE profiles SET input_method = CASE asking_method WHEN 'one_by_one' THEN 'chat_one_by_one' ELSE 'chat_one_go' END
-    WHERE input_method = 'form_single' AND asking_method IS NOT NULL`);
+  // asking_method -> (ui_mode, ask_mode): chat users stay on chat.
+  db.exec(`UPDATE profiles SET ui_mode = 'chat',
+    ask_mode = CASE asking_method WHEN 'ask_in_one_go' THEN 'all' ELSE 'separate' END`);
   try { db.exec("ALTER TABLE profiles DROP COLUMN asking_method"); } catch {}
 
-  const rows = db.prepare("SELECT name, input_method, ai_enabled, form_output FROM profiles ORDER BY id").all() as any[];
-  assert.equal(rows[0].input_method, "chat_one_by_one");
-  assert.equal(rows[1].input_method, "chat_one_go");
+  const rows = db.prepare("SELECT name, ui_mode, ask_mode, ai_enabled, form_output FROM profiles ORDER BY id").all() as any[];
+  assert.equal(rows[0].ui_mode, "chat");
+  assert.equal(rows[0].ask_mode, "separate");
+  assert.equal(rows[1].ask_mode, "all");
   assert.equal(rows[0].ai_enabled, 1);
   assert.equal(rows[0].form_output, "raw");
   const names = (db.prepare("PRAGMA table_info(profiles)").all() as { name: string }[]).map((c) => c.name);
   assert.equal(names.includes("asking_method"), false);
   assert.equal(names.includes("raw_context_folder"), true);
+  assert.equal(names.includes("ui_mode"), true);
 });

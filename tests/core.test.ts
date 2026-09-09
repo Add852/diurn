@@ -171,7 +171,7 @@ test("profile export/import: settings columns round-trip", async () => {
     "google_client_id", "google_client_secret", "day_offset_hours",
     "media_enabled", "media_folder", "media_in_context",
     "obsidian_enabled", "obsidian_folder", "obsidian_exclude_folders", "obsidian_include_content",
-    "llm_endpoint", "llm_model", "llm_api_key", "ai_enabled", "input_method", "form_output",
+    "llm_endpoint", "llm_model", "llm_api_key", "ai_enabled", "ui_mode", "ask_mode", "form_output",
     "raw_context_enabled", "raw_context_folder",
     "personality_prompt", "timezone"];
   assert.deepEqual(Object.keys(exported).sort(), expected.sort());

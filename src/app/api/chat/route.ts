@@ -3,7 +3,7 @@ import { requireAuth, requireProfile } from "@/lib/auth";
 import { getDb, getActiveProfile, getProfileQuestions } from "@/lib/db";
 import { chatCompletion, llmConfig, extractJson } from "@/lib/ai";
 import { aiAvailable } from "@/lib/ai";
-import { buildChatContext } from "@/lib/chat-context";
+import { buildChatContext, distillContext } from "@/lib/chat-context";
 import { localDate } from "@/lib/timezone";
 import { randomUUID } from "crypto";
 import { scanMediaFolder, pendingScan, needsRefresh, isDirty, maybeBackgroundScan } from "@/lib/media-cache";
@@ -58,7 +58,7 @@ export async function GET(req: NextRequest) {
 
   try {
     // One instruction for the greeting, one call — same shape as POST.
-    const instruction = profile.input_method === "chat_one_by_one"
+    const instruction = profile.ask_mode === "separate"
       ? `Today's date is ${date}. You have today's context in your system message. Acknowledge it lightly when relevant, then ask ALL of these questions in one message, clearly numbered. Tell the user they can answer all at once:\n\n${askedQuestions.map((q, i) => `${i + 1}. ${q.question}`).join("\n")}`
       : `Today is ${date}. You have today's context in your system message. Acknowledge it lightly when relevant, then ask ONLY this one question naturally: "${askedQuestions[0].question}"`;
     const greeting = await chatCompletion(config, [
@@ -82,10 +82,12 @@ export async function GET(req: NextRequest) {
     date,
     messages: getFullMessages(session_id),
     profile_id: profile.id,
-    asking_method: profile.input_method,
+    asking_method: profile.ask_mode,
+    questions: askedQuestions.map((q) => ({ identifier: q.identifier, question: q.question, answer_prompt: q.answer_prompt || "" })),
     total_questions: askedQuestions.length,
     remaining_identifiers: askedQuestions.map((q) => q.identifier),
     context: ctx.raw,
+    context_sources: distillContext(ctx.raw, !!profile.media_in_context).sources,
     enabled_integrations,
   });
 }
@@ -125,7 +127,7 @@ export async function POST(req: NextRequest) {
     let instruction: string;
     let done = false;
 
-    if (profile.input_method === "chat_one_by_one") {
+    if (profile.ask_mode === "separate") {
       // Sequential mode: progress is just how many user turns we've seen.
       const userMsgCount = history.filter((m) => m.role === "user").length;
       if (userMsgCount >= askedQuestions.length) {

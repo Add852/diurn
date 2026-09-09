@@ -31,6 +31,7 @@ export function EntryDialog({ date, onClose, onChanged }: Props) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState("");
+  const [rawContext, setRawContext] = useState<Record<string, unknown> | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -44,6 +45,11 @@ export function EntryDialog({ date, onClose, onChanged }: Props) {
     fetch(`/api/media?date=${encodeURIComponent(date)}`)
       .then((r) => r.json())
       .then((d) => { if (!cancelled) setMedia(d.files || []); })
+      .catch(() => {});
+    // Raw context snapshot — panel only renders when the file exists.
+    fetch(`/api/entries?date=${encodeURIComponent(date)}&raw_context=1`)
+      .then((r) => r.json())
+      .then((d) => { if (!cancelled) setRawContext(d.context || null); })
       .catch(() => {});
     return () => { cancelled = true; };
   }, [date]);
@@ -206,6 +212,16 @@ export function EntryDialog({ date, onClose, onChanged }: Props) {
                 </div>
               )}
               <EntryPreview markdown={entry.rendered_markdown} bare />
+              {rawContext && (
+                <details className="mt-4 bg-zinc-950 border border-zinc-800 rounded-lg p-3">
+                  <summary className="text-xs text-zinc-500 cursor-pointer list-none">
+                    Raw context &amp; AI input (JSON)
+                  </summary>
+                  <pre className="whitespace-pre-wrap bg-zinc-900 rounded p-2 mt-2 overflow-x-auto text-xs text-zinc-400">
+                    {JSON.stringify(rawContext, null, 2)}
+                  </pre>
+                </details>
+              )}
             </>
           )}
         </div>

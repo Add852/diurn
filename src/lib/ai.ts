@@ -69,8 +69,22 @@ export async function chatCompletion(
   try {
     const raw = await res.text();
     const clean = raw.replace(/\ndata:\s*\[DONE\]\s*$/, "").replace(/\s*data:\s*\[DONE\].*$/, "").trim();
-    return JSON.parse(clean).choices?.[0]?.message?.content ?? "";
+    const content: string = JSON.parse(clean).choices?.[0]?.message?.content ?? "";
+    return stripThinking(content);
   } catch {
     throw new Error("LLM returned invalid JSON response");
   }
+}
+
+// Reasoning models (DeepSeek R1, QwQ, Qwen3…) leak their chain-of-thought
+// into content — either wrapped in <think>…</think> or as text before a bare
+// closing </think>. Strip both; if the reply was ONLY thinking, fall back to
+// the raw content rather than an empty string. reasoning_content fields are
+// simply never read.
+function stripThinking(content: string): string {
+  const noBlocks = content.replace(/<think>[\s\S]*?<\/think>/g, "").trim();
+  if (noBlocks) return noBlocks;
+  const idx = content.lastIndexOf("</think>");
+  if (idx >= 0) return content.slice(idx + "</think>".length).trim();
+  return content.trim();
 }
