@@ -165,13 +165,14 @@ test("profile export/import: settings columns round-trip", async () => {
   db.prepare("INSERT INTO profiles (user_id, name) VALUES (1, 'X')").run();
   const profile = db.prepare("SELECT * FROM profiles LIMIT 1").get() as Record<string, unknown>;
   const { id, user_id, is_default, is_active, created_at, ...exported } = profile;
-  // name + the 25 settings columns the import whitelist expects
+  // name + the 28 settings columns the import whitelist expects
   const expected = ["name", "daily_note_folder", "template_note_path",
     "google_tasks_enabled", "google_tasks_config", "google_calendar_enabled", "google_calendar_config",
     "google_client_id", "google_client_secret", "day_offset_hours",
     "media_enabled", "media_folder", "media_in_context",
     "obsidian_enabled", "obsidian_folder", "obsidian_exclude_folders", "obsidian_include_content",
-    "llm_endpoint", "llm_model", "llm_api_key", "ai_enabled", "ui_mode", "ask_mode", "form_output",
+    "llm_endpoint", "llm_model", "llm_api_key", "llm_retries", "llm_retry_delay_ms", "llm_timeout_ms",
+    "ai_enabled", "ui_mode", "ask_mode", "form_output",
     "raw_context_enabled", "raw_context_folder",
     "personality_prompt", "timezone"];
   assert.deepEqual(Object.keys(exported).sort(), expected.sort());
@@ -208,4 +209,99 @@ test("answer generation: prose reply is the answer, sentinel excluded", () => {
   assert.equal(adopt("-"), "");
   assert.equal(adopt("   "), "");
   assert.equal(adopt(`"quoted answer"`), '"quoted answer"'); // quotes kept — plain text is fine
+});
+
+// chatCompletion error surface: descriptive reasons for status codes, body
+// message extraction, retry-then-succeed on 429/5xx, and no retry on 401.
+// Uses node's http server as a mock OpenAI-compatible endpoint.
+test("chatCompletion: descriptive errors + retries", async () => {
+  const http = await import("node:http");
+  const { chatCompletion } = await import("../src/lib/ai.ts");
+
+  const reply = (content: string) => JSON.stringify({ choices: [{ message: { content } }] });
+
+  // 1. Retries 429 with Retry-After, then succeeds.
+  {
+    let calls = 0;
+    const srv = http.createServer((req, res) => {
+      calls++;
+      if (calls === 1) {
+        res.writeHead(429, { "retry-after": "0" });
+        res.end(JSON.stringify({ error: { message: "Too many requests, slow down" } }));
+      } else {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(reply("hello after retry"));
+      }
+    });
+    await new Promise<void>((r) => srv.listen(0, r));
+    const port = (srv.address() as any).port;
+    const out = await chatCompletion(
+      { endpoint: `http://127.0.0.1:${port}/v1`, apiKey: "", model: "m", retries: 2, retryDelayMs: 1 },
+      [{ role: "user", content: "hi" }]
+    );
+    assert.equal(out, "hello after retry");
+    assert.equal(calls, 2);
+    srv.close();
+  }
+
+  // 2. 401 is NOT retried; message names the cause + server's detail.
+  {
+    let calls = 0;
+    const srv = http.createServer((req, res) => {
+      calls++;
+      res.writeHead(401);
+      res.end(JSON.stringify({ error: { message: "invalid api key" } }));
+    });
+    await new Promise<void>((r) => srv.listen(0, r));
+    const port = (srv.address() as any).port;
+    await assert.rejects(
+      chatCompletion(
+        { endpoint: `http://127.0.0.1:${port}/v1`, apiKey: "bad", model: "m", retries: 2, retryDelayMs: 1 },
+        [{ role: "user", content: "hi" }]
+      ),
+      (err: Error) => {
+        assert.match(err.message, /LLM error 401 \(authentication failed — check your API key\): invalid api key/);
+        return true;
+      }
+    );
+    assert.equal(calls, 1); // no retry on auth errors
+    srv.close();
+  }
+
+  // 3. Exhausted retries on 503 -> error carries the overload reason.
+  {
+    const srv = http.createServer((req, res) => {
+      res.writeHead(503);
+      res.end("service unavailable");
+    });
+    await new Promise<void>((r) => srv.listen(0, r));
+    const port = (srv.address() as any).port;
+    await assert.rejects(
+      chatCompletion(
+        { endpoint: `http://127.0.0.1:${port}/v1`, apiKey: "", model: "m", retries: 1, retryDelayMs: 1 },
+        [{ role: "user", content: "hi" }]
+      ),
+      (err: Error) => {
+        assert.match(err.message, /503 \(server overloaded or restarting/);
+        return true;
+      }
+    );
+    srv.close();
+  }
+
+  // 4. Thinking-model content is stripped (Ollama-style bare closing tag).
+  {
+    const srv = http.createServer((req, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(reply("Let me think about this.\n</think>\n\nOkay, the user said they hiked."));
+    });
+    await new Promise<void>((r) => srv.listen(0, r));
+    const port = (srv.address() as any).port;
+    const out = await chatCompletion(
+      { endpoint: `http://127.0.0.1:${port}/v1`, apiKey: "", model: "m", retries: 0 },
+      [{ role: "user", content: "hi" }]
+    );
+    assert.equal(out, "Okay, the user said they hiked.");
+    srv.close();
+  }
 });

@@ -159,6 +159,7 @@ export async function POST(req: NextRequest) {
   // the answer. No JSON, no parsing: formatting can't fail. AI failure can't
   // break the batch either (each call pre-fills, a failed call just keeps it).
   const answers: Record<string, TemplateVar> = {};
+  const failures: { identifier: string; error: string }[] = [];
   let extractionWarning: string | undefined;
 
   // form_each: per-question inputs land verbatim — the user typed them. With
@@ -217,14 +218,20 @@ export async function POST(req: NextRequest) {
       const reply = await chatCompletion(config, [
         { role: "system", content: system },
         { role: "user", content: settleUser(q, integrationContext, userInputText) },
-      ], 45_000);
+      ]);
       const clean = reply.trim();
       if (clean && clean !== "-") {
         answers[q.identifier] = { question: q.question, answer: clean, asked: !!q.asked, prompt: q.answer_prompt || "" };
+      } else if (clean === "-") {
+        // Model saw nothing relevant: an empty answer, not a failure.
+        answers[q.identifier] = answers[q.identifier]
+          ?? { question: q.question, answer: "", asked: !!q.asked, prompt: q.answer_prompt || "" };
       }
-    } catch {
-      // AI unreachable / call failed: keep the raw pre-fill (separate-mode user
-      // text) — better than empty. The note still renders either way.
+    } catch (err: any) {
+      // Record the cause per question — the user sees exactly which question
+      // failed and why (timeout, rate limit, 401…). Raw pre-fill (separate-mode
+      // user text) still wins below when present.
+      failures.push({ identifier: q.identifier, error: err?.message || "unknown error" });
     }
   };
 
@@ -247,11 +254,26 @@ export async function POST(req: NextRequest) {
     }
     await Promise.all(questions.map((q) => settle(q)));
 
+  }
+
+  // Failures + empty answers -> one descriptive warning: which questions and
+  // the concrete AI error (timeouts, rate limits, auth…), not "check logs".
+  if (wantsAi && questions.length > 0) {
     const missing = questions.filter((q) => !answers[q.identifier]?.answer);
-    if (missing.length === questions.length) {
-      extractionWarning = "AI answer generation failed — answers are empty. Check Settings → AI (endpoint/model).";
-    } else if (missing.length > 0) {
-      extractionWarning = `No answer generated for: ${missing.map((q) => q.identifier).join(", ")}`;
+    if (failures.length === questions.length) {
+      const first = failures[0]?.error || "unknown error";
+      extractionWarning = `Note saved, but no answers were generated — every question's AI call failed. First error: ${first}`;
+    } else if (failures.length > 0 || missing.length > 0) {
+      const parts: string[] = [];
+      if (failures.length > 0) {
+        const byErr = [...new Set(failures.map((f) => f.error))];
+        parts.push(`AI failed for ${failures.map((f) => f.identifier).join(", ")} — ${byErr.join("; ")}`);
+      }
+      const noAnswer = missing.filter((q) => !failures.some((f) => f.identifier === q.identifier));
+      if (noAnswer.length > 0) {
+        parts.push(`No relevant input found for: ${noAnswer.map((q) => q.identifier).join(", ")}`);
+      }
+      extractionWarning = `Note saved with partial answers. ${parts.join(". ")}.`;
     }
   }
 

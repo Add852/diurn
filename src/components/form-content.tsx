@@ -129,11 +129,11 @@ export function FormContent() {
         if (d.context_saved) toast.show("info", "Raw context saved next to your notes.");
       } else {
         setError(d.error || "Failed to save entry");
-        setStatus("error");
+        setStatus("ready");
       }
-    } catch {
-      setError("Failed to save entry. Try again?");
-      setStatus("error");
+    } catch (err: any) {
+      setError(`Failed to save entry: ${err?.message || "network error — is the server running?"}`);
+      setStatus("ready");
     }
   }
 
@@ -162,6 +162,7 @@ export function FormContent() {
         {status === "loading" && <SkeletonLines />}
 
         {status === "error" && <p className="text-red-400 text-sm py-2">{error}</p>}
+        {status === "ready" && error && <p className="text-red-400 text-sm py-2">{error}</p>}
 
         {status === "ready" && (
           <div className="space-y-4">

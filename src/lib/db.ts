@@ -28,6 +28,9 @@ export interface Profile {
   llm_endpoint: string;
   llm_model: string;
   llm_api_key: string;
+  llm_retries: number;
+  llm_retry_delay_ms: number;
+  llm_timeout_ms: number;
   ai_enabled: number;
   ui_mode: string;
   ask_mode: string;
@@ -150,6 +153,9 @@ function migrateProfileColumns(db: Database.Database) {
   add("timezone", "TEXT NOT NULL DEFAULT 'UTC'");
   add("day_offset_hours", "INTEGER NOT NULL DEFAULT 0");
   add("ai_enabled", "INTEGER NOT NULL DEFAULT 1");
+  add("llm_retries", "INTEGER NOT NULL DEFAULT 2");
+  add("llm_retry_delay_ms", "INTEGER NOT NULL DEFAULT 1000");
+  add("llm_timeout_ms", "INTEGER NOT NULL DEFAULT 120000");
   add("ui_mode", "TEXT NOT NULL DEFAULT 'form'");
   add("ask_mode", "TEXT NOT NULL DEFAULT 'separate'");
   add("form_output", "TEXT NOT NULL DEFAULT 'raw'");

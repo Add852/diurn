@@ -213,8 +213,8 @@ export function SettingsClient({
       setNewProfileName("");
       await refreshSettings();
       toast.show("success", "Profile created");
-    } catch {
-      toast.show("error", "Failed to create");
+    } catch (err: any) {
+      toast.show("error", `Failed to create profile: ${err?.message || "network or server error"}`);
     } finally {
       setSaving(false);
     }
@@ -281,8 +281,8 @@ export function SettingsClient({
       const d = await res.json();
       if (d.success) toast.show("success", `Connected in ${d.latency_ms}ms`);
       else toast.show("error", d.error || "Failed");
-    } catch {
-      toast.show("error", "Connection error");
+    } catch (err: any) {
+      toast.show("error", `Could not reach the server: ${err?.message || "network error"}`);
     } finally {
       setAiTesting(false);
     }
@@ -519,6 +519,21 @@ export function SettingsClient({
           <Field label="Endpoint" value={draft.llm_endpoint} onChange={(v) => updateDraft({ llm_endpoint: v })} placeholder="e.g. http://localhost:11434/v1 (Ollama)" />
           <Field label="Model" value={draft.llm_model} onChange={(v) => updateDraft({ llm_model: v })} placeholder="e.g. llama3.2:3b (Ollama)" />
           <Field label="API Key" value={draft.llm_api_key} onChange={(v) => updateDraft({ llm_api_key: v })} type="password" placeholder="(optional)" />
+          <Expander title="Reliability" hint="retries, delay, timeout">
+            <div>
+              <label className="block text-xs text-zinc-500 mb-1">Auto-retries per request <span className="text-zinc-600">(0–5, default 2)</span></label>
+              <input type="number" min={0} max={5} value={draft.llm_retries ?? 2} onChange={(e) => updateDraft({ llm_retries: Math.max(0, Math.min(5, Number(e.target.value) || 0)) })} className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-200" />
+            </div>
+            <div>
+              <label className="block text-xs text-zinc-500 mb-1">Delay between retries <span className="text-zinc-600">(ms, doubles each retry; default 1000)</span></label>
+              <input type="number" min={0} max={60000} step={100} value={draft.llm_retry_delay_ms ?? 1000} onChange={(e) => updateDraft({ llm_retry_delay_ms: Math.max(0, Math.min(60000, Number(e.target.value) || 0)) })} className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-200" />
+            </div>
+            <div>
+              <label className="block text-xs text-zinc-500 mb-1">Request timeout <span className="text-zinc-600">(seconds per attempt, default 120)</span></label>
+              <input type="number" min={5} max={600} value={Math.round((draft.llm_timeout_ms ?? 120000) / 1000)} onChange={(e) => updateDraft({ llm_timeout_ms: Math.max(5, Math.min(600, Number(e.target.value) || 120)) * 1000 })} className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-200" />
+              <p className="text-xs text-zinc-600 mt-1">Slow or thinking models can legitimately take minutes — raise this instead of watching the note fail. Each attempt gets the full timeout; timeouts are retried.</p>
+            </div>
+          </Expander>
           <div>
             <label className="block text-xs text-zinc-500 mb-1">Personality</label>
             <textarea
