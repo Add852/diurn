@@ -103,7 +103,7 @@ db.prepare(`UPDATE profiles SET
       p.llm_endpoint, p.llm_model,
       p.llm_api_key || "",
       clampInt(p.llm_retries, 0, 5, 2), clampInt(p.llm_retry_delay_ms, 0, 60_000, 1000), clampInt(p.llm_timeout_ms, 5_000, 600_000, 120_000),
-      p.ai_enabled === false ? 0 : 1, p.ui_mode || "form", p.ask_mode || "separate", p.form_output || "raw",
+      p.ai_enabled ? 1 : 0, p.ui_mode || "form", p.ask_mode || "separate", p.form_output || "raw",
       p.media_in_context ? 1 : 0, p.raw_context_enabled ? 1 : 0, p.raw_context_folder || "",
       p.personality_prompt || "", p.timezone || "UTC",
       p.id,
@@ -196,10 +196,18 @@ db.prepare(`UPDATE profiles SET
       "personality_prompt", "timezone",
     ] as const;
     const vals: any[] = [user.id, p.name || "Imported", 0, 0];
+    // Numeric defaults keep INTEGER columns integers — "" is falsy in JS and
+    // would silently disable AI (ai_enabled) or zero out retries on imports.
+    const numericDefaults: Record<string, number> = {
+      ai_enabled: 1, llm_retries: 2, llm_retry_delay_ms: 1000, llm_timeout_ms: 120_000, day_offset_hours: 0,
+    };
     for (const col of settingCols) {
       const v = p[col];
       if (col === "llm_api_key" || col === "google_client_secret") {
         vals.push(v || "");
+      } else if (col in numericDefaults) {
+        const n = typeof v === "number" ? v : parseInt(String(v ?? ""), 10);
+        vals.push(Number.isFinite(n) ? n : numericDefaults[col]);
       } else if (typeof v === "boolean") {
         vals.push(v ? 1 : 0);
       } else {

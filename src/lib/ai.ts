@@ -100,7 +100,10 @@ export async function chatCompletion(
   const baseDelay = Math.max(0, config.retryDelayMs ?? 1000);
   const url = `${config.endpoint.replace(/\/$/, "")}/chat/completions`;
   const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (config.apiKey) headers["Authorization"] = `Bearer ${config.apiKey}`;
+  // Always send a Bearer header: keyless local servers ignore it, but some
+  // gateways/proxies reject requests lacking the header outright ("API key
+  // is required") even when the backend itself needs no key.
+  headers["Authorization"] = `Bearer ${config.apiKey || "none"}`;
 
   let lastError: Error | null = null;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {

@@ -1,4 +1,5 @@
 import { SkeletonBlock, SkeletonPage } from "@/components/skeleton";
+import { MediaSkeleton } from "@/components/media-skeleton";
 
 export default function ViewerLoading() {
   return (
@@ -13,7 +14,7 @@ export default function ViewerLoading() {
           <div key={c} className="flex-1 flex flex-col gap-3">
             {Array.from({ length: 3 }).map((_, i) => (
               <div key={i} className="bg-zinc-900 border border-zinc-800 rounded-lg overflow-hidden">
-                <div className="aspect-video bg-zinc-800 animate-pulse" />
+                <MediaSkeleton className="aspect-video rounded-none" />
                 <div className="p-3 space-y-2">
                   <SkeletonBlock w="40%" h="14px" />
                   <SkeletonBlock w="90%" h="11px" rounded="rounded" />

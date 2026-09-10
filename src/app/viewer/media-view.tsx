@@ -4,6 +4,7 @@ import { useEffect, useState, useRef, useCallback } from "react";
 import { EntryDialog } from "@/components/entry-dialog";
 import { MediaLightbox, type MediaItem } from "@/components/media-lightbox";
 import { MediaThumb, MediaImage } from "@/components/media-thumb";
+import { MediaSkeleton, MediaSkeletonGrid } from "@/components/media-skeleton";
 const DAY_LIMIT = 500;
 
 function fmtDay(date?: string) {
@@ -140,17 +141,7 @@ export function MediaView() {
   if (loading) {
     // Placeholder mimics the real masonry grid — tiles of varied heights, not
     // text lines — so the layout doesn't jump when content lands.
-    return (
-      <div className="columns-2 sm:columns-3 md:columns-4 lg:columns-5 gap-2">
-        {[...Array(15)].map((_, i) => (
-          <div
-            key={i}
-            className="mb-2 break-inside-avoid rounded-lg bg-zinc-800/60 animate-pulse"
-            style={{ height: `${110 + ((i * 53) % 120)}px` }}
-          />
-        ))}
-      </div>
-    );
+    return <MediaSkeletonGrid />;
   }
 
   if (disabled) {
@@ -178,7 +169,10 @@ export function MediaView() {
   return (
     <div className="space-y-8 pb-8">
       {scanning && (
-        <p className="text-xs text-zinc-500 text-center animate-pulse">Scanning for new files...</p>
+        <p className="text-xs text-zinc-500 text-center flex items-center justify-center gap-2">
+          <MediaSkeleton className="w-24 h-2" />
+          Scanning for new files...
+        </p>
       )}
       {dates.map((date) => {
         const items = groups[date] || [];

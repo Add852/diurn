@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { MediaThumb } from "@/components/media-thumb";
+import { MediaThumb, MediaImage } from "@/components/media-thumb";
+import { MediaSkeleton } from "@/components/media-skeleton";
 import { MediaLightbox, type MediaItem } from "@/components/media-lightbox";
 
 const DEFAULT_LIMIT = 5;
@@ -56,7 +57,7 @@ export function IntegrationsPanel({
             if (data[key] === undefined) {
               return (
                 <div key={key} className="flex items-center gap-2 text-xs text-zinc-600">
-                  <span className="w-3 h-3 rounded-full bg-zinc-800 animate-pulse" />
+                  <MediaSkeleton className="w-3 h-3 rounded-full" />
                   <span className="capitalize">{key} loading&hellip;</span>
                 </div>
               );
@@ -116,7 +117,7 @@ function MediaSection({ value }: { value: any }) {
             className="flex-shrink-0 w-14 h-14 bg-zinc-800 rounded-lg border border-zinc-700 overflow-hidden hover:border-zinc-500 transition-colors"
           >
             {m.type === "image" ? (
-              <img src={m.src} alt={m.name} className="w-full h-full object-cover" loading="lazy" />
+              <MediaImage src={m.src} alt={m.name} className="w-full h-full object-cover" loading="lazy" />
             ) : (
               <MediaThumb src={m.src} iconClass="w-3 h-3" />
             )}

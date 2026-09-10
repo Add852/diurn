@@ -23,13 +23,10 @@ export async function GET(req: NextRequest) {
 
   const aiOn = !!profile.ai_enabled && !!profile.llm_endpoint && !!profile.llm_model;
 
-  // asked=false questions are only asked when a human must answer them (AI
-  // off, or raw output — no AI inference pass will run). With AI output on,
-  // they're hidden and the AI infers their answers from the user's input.
-  const manualAnswers = !aiOn || profile.form_output === "raw";
-  const questions = manualAnswers
-    ? allQuestions
-    : allQuestions.filter((q) => q.asked);
+  // asked=false questions are never shown or asked — same as chat. With AI
+  // on, their answers are inferred from the user's input; with AI off they
+  // simply stay empty in the note.
+  const questions = allQuestions.filter((q) => q.asked);
 
   if (profile.media_enabled && profile.media_folder && existsSync(profile.media_folder)) {
     maybeBackgroundScan();

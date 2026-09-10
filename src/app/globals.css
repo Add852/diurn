@@ -108,3 +108,46 @@ textarea::-webkit-scrollbar {
   from { opacity: 0; transform: translateY(-4px); }
   to { opacity: 1; transform: translateY(0); }
 }
+
+/* Media loading shimmer: a soft diagonal highlight sweeping across skeleton
+   tiles and loading media. One visual language everywhere media loads
+   (MediaSkeleton, MediaImage, MediaThumb in media-thumb.tsx). */
+/* On imgs/videos: the gradient is the element's own background — it animates
+   via background-position (no transform; the bitmap must not move) and is
+   covered by the bitmap once loaded, then the class is dropped entirely. */
+.media-loading {
+  background-color: rgb(63 63 70 / 0.6);
+  background-image: linear-gradient(
+    110deg,
+    transparent 25%,
+    rgba(255, 255, 255, 0.06) 45%,
+    rgba(255, 255, 255, 0.09) 50%,
+    rgba(255, 255, 255, 0.06) 55%,
+    transparent 75%
+  );
+  background-size: 200% 100%;
+  animation: media-shimmer 1.6s infinite linear;
+}
+
+/* Skeleton tiles: an overlay div sweeping across, over the tile's flat color. */
+.media-shimmer {
+  background: linear-gradient(
+    110deg,
+    transparent 25%,
+    rgba(255, 255, 255, 0.06) 45%,
+    rgba(255, 255, 255, 0.09) 50%,
+    rgba(255, 255, 255, 0.06) 55%,
+    transparent 75%
+  );
+  animation: media-shimmer-sweep 1.6s infinite linear;
+}
+
+@keyframes media-shimmer {
+  from { background-position: 200% 0; }
+  to { background-position: -200% 0; }
+}
+
+@keyframes media-shimmer-sweep {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(100%); }
+}
