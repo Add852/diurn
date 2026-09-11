@@ -5,6 +5,7 @@ import { EntryDialog } from "@/components/entry-dialog";
 import { MediaLightbox, type MediaItem } from "@/components/media-lightbox";
 import { MediaThumb, MediaImage } from "@/components/media-thumb";
 import { MediaSkeleton, MediaSkeletonGrid } from "@/components/media-skeleton";
+import { cachedGet } from "@/lib/viewer-cache";
 const DAY_LIMIT = 500;
 
 function fmtDay(date?: string) {
@@ -46,14 +47,13 @@ export function MediaView() {
   const seenGroups = useRef<Set<string>>(new Set());
   const inflight = useRef(false);
 
-  const loadPage = useCallback(async (reset: boolean) => {
+  const loadPage = useCallback(async (reset: boolean, fresh = false) => {
     if (inflight.current) return;
     inflight.current = true;
     const next = reset ? 0 : offset;
     const url = `/api/media?limit=${DAY_LIMIT}&offset=${next}`;
     try {
-      const r = await fetch(url);
-      const d = await r.json();
+      const d: any = await cachedGet(url, { fresh });
       if (d.disabled) {
         setDisabled(d.reason || "not_configured");
         setLoading(false);
@@ -110,8 +110,7 @@ export function MediaView() {
   }, []);
 
   useEffect(() => {
-    fetch("/api/entries")
-      .then((r) => r.json())
+    cachedGet("/api/entries")
       .then((list) => {
         if (Array.isArray(list)) setEntryDates(new Set(list.map((e: any) => e.date)));
       })
@@ -131,7 +130,8 @@ export function MediaView() {
 
   useEffect(() => {
     if (!scanning) return;
-    const t = setInterval(() => loadPage(true), 2000);
+    // Fresh bypasses the viewer cache: the poll must see scan progress.
+    const t = setInterval(() => loadPage(true, true), 2000);
     return () => clearInterval(t);
   }, [scanning, loadPage]);
 

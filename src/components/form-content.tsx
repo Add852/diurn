@@ -8,6 +8,7 @@ import { SkeletonLines } from "@/components/skeleton";
 import { EntryDialog } from "@/components/entry-dialog";
 import { useToast } from "@/components/toast";
 import { localDate } from "@/lib/timezone";
+import { invalidateViewerCache } from "@/lib/viewer-cache";
 
 interface FormQuestion {
   identifier: string;
@@ -121,6 +122,7 @@ export function FormContent() {
         return;
       }
       if (d.rendered) {
+        invalidateViewerCache();
         setOverwriteConfirm(false);
         setStatus("complete");
         localStorage.removeItem(draftKey);

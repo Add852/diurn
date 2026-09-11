@@ -16,6 +16,10 @@ const MIME: Record<string, string> = {
   ".png": "image/png",
   ".gif": "image/gif",
   ".webp": "image/webp",
+  // Browsers besides Safari can't render HEIC natively, but serving the true
+  // type lets Safari show originals; other browsers use the WebP thumb.
+  ".heic": "image/heic",
+  ".heif": "image/heif",
   ".svg": "image/svg+xml",
   ".mp4": "video/mp4",
   ".webm": "video/webm",

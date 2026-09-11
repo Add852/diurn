@@ -2,18 +2,14 @@ const withPWA = (await import("next-pwa")).default;
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // All pages here are dynamic (auth/DB-driven). Disable the client router
-  // cache so navigating back to a page always refetches — otherwise a saved
-  // settings change isn't visible when returning within the default 30s window.
-  experimental: {
-    staleTimes: {
-      dynamic: 0,
-    },
-  },
+  // staleTimes.dynamic stays at its default (30s): the client router cache
+  // makes back-navigation to /viewer restore instantly instead of remounting
+  // and refetching everything. Settings freshness is unaffected —
+  // settings-client handleSave calls router.refresh() after every save.
   webpack: (config, { isServer }) => {
     if (isServer) {
       config.externals = config.externals || [];
-      config.externals.push("better-sqlite3");
+      config.externals.push("better-sqlite3", "sharp");
     }
     return config;
   },

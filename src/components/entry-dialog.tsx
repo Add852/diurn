@@ -5,6 +5,7 @@ import Link from "next/link";
 import { EntryPreview } from "@/components/entry-preview";
 import { MediaThumb, MediaImage } from "@/components/media-thumb";
 import { MediaLightbox, type MediaItem } from "@/components/media-lightbox";
+import { invalidateViewerCache } from "@/lib/viewer-cache";
 
 interface Props {
   date: string;
@@ -66,6 +67,7 @@ export function EntryDialog({ date, onClose, onChanged }: Props) {
       });
       const d = await res.json();
       if (!res.ok) throw new Error(d.error || "Failed to save");
+      invalidateViewerCache();
       setEntry({ ...entry, rendered_markdown: draft });
       setEditing(false);
       onChanged?.();
@@ -84,6 +86,7 @@ export function EntryDialog({ date, onClose, onChanged }: Props) {
       const res = await fetch(`/api/entries?date=${encodeURIComponent(date)}`, { method: "DELETE" });
       const d = await res.json();
       if (!res.ok) throw new Error(d.error || "Failed to delete");
+      invalidateViewerCache();
       onChanged?.();
       onClose();
     } catch (e) {

@@ -8,6 +8,7 @@ import { fmt } from "@/components/entry-preview";
 import { EntryDialog } from "@/components/entry-dialog";
 import { MediaThumb, MediaImage } from "@/components/media-thumb";
 import { SkeletonLines } from "@/components/skeleton";
+import { cachedGet } from "@/lib/viewer-cache";
 
 // Journal icon used by media-less entries.
 function JournalIcon() {
@@ -148,8 +149,7 @@ export function JournalView() {
     if (dates.length === 0) return;
     if (dates.length === 1) {
       try {
-        const r = await fetch(`/api/media?date=${dates[0]}&limit=1`);
-        const j = await r.json();
+        const j: any = await cachedGet(`/api/media?date=${dates[0]}&limit=1`);
         if (j.files?.length > 0) {
           setThumbnails({ [dates[0]]: { src: j.files[0].thumb || j.files[0].src, type: j.files[0].type } });
         }
@@ -157,8 +157,7 @@ export function JournalView() {
       return;
     }
     try {
-      const r = await fetch(`/api/media?dates=${dates.join(",")}`);
-      const j = await r.json();
+      const j: any = await cachedGet(`/api/media?dates=${dates.join(",")}`);
       const t: Record<string, Thumb> = {};
       for (const f of j.files || []) {
         if (f.date && !t[f.date]) {
@@ -170,8 +169,7 @@ export function JournalView() {
   }, []);
   const loadEntries = useCallback(async () => {
     try {
-      const r = await fetch("/api/entries");
-      const d = await r.json();
+      const d: any = await cachedGet("/api/entries");
       const list: Entry[] = Array.isArray(d) ? d : [];
       setRawEntries(list);
       loadThumbnails(list);

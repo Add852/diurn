@@ -8,6 +8,7 @@ import { RawContextPanel } from "@/components/raw-context-panel";
 import { SkeletonLines } from "@/components/skeleton";
 import { useToast } from "@/components/toast";
 import { FormContent } from "@/components/form-content";
+import { invalidateViewerCache } from "@/lib/viewer-cache";
 
 interface Message {
   id: number;
@@ -98,6 +99,7 @@ function ChatContent({ personality = "" }: { personality?: string }) {
       }
 
       if (d.rendered) {
+        invalidateViewerCache();
         setOverwriteConfirm(false);
         setStatus("complete");
         if (d.extraction_warning) toast.show("error", d.extraction_warning);
