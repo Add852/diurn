@@ -88,6 +88,7 @@ CREATE TABLE IF NOT EXISTS media_cache (
   captured_at INTEGER,
   type TEXT NOT NULL,
   mtime INTEGER NOT NULL,
+  thumb TEXT,
   scanned_at TEXT NOT NULL DEFAULT (datetime('now')),
   PRIMARY KEY (path, profile_id)
 );

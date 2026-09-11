@@ -63,6 +63,7 @@ export async function GET(req: NextRequest) {
     path: e.path,
     date: e.date,
     src: `/api/media/file?path=${encodeURIComponent(e.path)}`,
+    thumb: e.thumb ? `/api/media/file?path=${encodeURIComponent(e.path)}&size=thumb` : null,
     type: e.type,
   }));
 

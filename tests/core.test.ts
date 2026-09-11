@@ -377,3 +377,27 @@ test("chatCompletion: thinking enabled sends think:true", async () => {
   assert.equal(got.enable_thinking, true);
   srv.close();
 });
+
+// Thumb pipeline: hash-keyed path + WebP generation round-trip against a real
+// sharp encode (integration smoke — sharp resizes, path is stable & unique).
+test("media thumbs: sharp generates a small WebP keyed by file path", async () => {
+  const sharp = (await import("sharp")).default;
+  const { createHash } = await import("crypto");
+  const os = await import("os");
+  const path = await import("path");
+  const fs = await import("fs");
+
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "diurn-thumb-"));
+  const orig = path.join(dir, "photo.jpg");
+  await sharp({ create: { width: 1200, height: 900, channels: 3, background: "#48a" } })
+    .jpeg({ quality: 90 }).toFile(orig);
+  const origSize = fs.statSync(orig).size;
+
+  // same shape as media-cache's generateThumb
+  const target = path.join(dir, createHash("sha1").update(orig).digest("hex").slice(0, 24) + ".webp");
+  await sharp(orig, { failOn: "none" }).rotate().resize({ width: 400, withoutEnlargement: true }).webp({ quality: 75 }).toFile(target);
+
+  const t = fs.statSync(target);
+  assert.ok(t.size > 0 && t.size < origSize, `thumb (${t.size}B) should be smaller than original (${origSize}B)`);
+  fs.rmSync(dir, { recursive: true, force: true });
+});

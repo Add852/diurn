@@ -117,7 +117,7 @@ function MediaSection({ value }: { value: any }) {
             className="flex-shrink-0 w-14 h-14 bg-zinc-800 rounded-lg border border-zinc-700 overflow-hidden hover:border-zinc-500 transition-colors"
           >
             {m.type === "image" ? (
-              <MediaImage src={m.src} alt={m.name} className="w-full h-full object-cover" loading="lazy" />
+              <MediaImage src={m.thumb || m.src} alt="" className="w-full h-full object-cover" loading="lazy" />
             ) : (
               <MediaThumb src={m.src} iconClass="w-3 h-3" />
             )}

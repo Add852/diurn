@@ -8,6 +8,8 @@ export interface MediaItem {
   path: string;
   date?: string;
   src: string;
+  /** Small WebP (scan-time generated). Null when unavailable — fall back to src. */
+  thumb?: string | null;
   type: "image" | "video";
 }
 
@@ -45,6 +47,20 @@ export function MediaLightbox({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [go, onClose]);
+
+  // Prefetch the neighbors' full-res files so next/prev opens instantly
+  // instead of re-running the shimmer. Decoded via <img> preloads (they land
+  // in the browser HTTP cache; the SW CacheFirst route keeps them there).
+  useEffect(() => {
+    for (const delta of [1, -1]) {
+      const n = clamp(index + delta);
+      if (n === index) continue;
+      const it = items[n];
+      if (!it || it.type !== "image") continue;
+      const img = new Image();
+      img.src = it.src;
+    }
+  }, [index, items]);
 
   // Slide the media in from the direction of travel on every index change.
   // Direct style writes (not a remount): the <img>/<video> node is reused, so

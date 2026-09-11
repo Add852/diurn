@@ -24,4 +24,18 @@ export default withPWA({
   disable: process.env.NODE_ENV === "development",
   register: true,
   skipWaiting: true,
+  runtimeCaching: [
+    {
+      // Media files (immutable, ETagged) — cache what the user viewed so
+      // revisits and offline browsing are instant. Bounded so a huge library
+      // can't balloon storage; LRU evicts oldest.
+      urlPattern: /\/api\/media\/file.*/i,
+      handler: "CacheFirst",
+      options: {
+        cacheName: "diurn-media",
+        expiration: { maxEntries: 300, maxAgeSeconds: 60 * 60 * 24 * 30 },
+        cacheableResponse: { statuses: [0, 200] },
+      },
+    },
+  ],
 })(nextConfig);

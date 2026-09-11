@@ -1,9 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getActiveProfile } from "@/lib/db";
 import { requireAuth } from "@/lib/auth";
+import { existingThumb } from "@/lib/media-cache";
 import { createReadStream, existsSync, statSync, realpathSync } from "fs";
 import { parseByteRange } from "@/lib/range";
 import { extname, resolve, sep } from "path";
+
+// Mirror of media-cache's THUMB_DIR — duplicated to keep this route importable
+// without pulling the whole cache module server-state into route scope.
+const THUMB_DIR_ROOT = resolve(process.env.HOME || "", ".diurn", "thumbs");
 
 const MIME: Record<string, string> = {
   ".jpg": "image/jpeg",
@@ -59,12 +64,23 @@ export async function GET(req: NextRequest) {
     return new NextResponse("Forbidden", { status: 403 });
   }
 
+  // Grid tiles and previews ask for ?size=thumb — a 400px WebP generated at
+  // scan time instead of the full original (a 4MB phone photo becomes ~30KB).
+  // Falls back to the original when no thumb exists (video, sharp-decodable
+  // failure, or a not-yet-rescanned library).
+  if (url.searchParams.get("size") === "thumb") {
+    // existingThumb stats the file on disk; the path is built from a hash of
+    // (profileId, resolved path) inside ~/.diurn/thumbs — it can't point outside.
+    const thumb = await existingThumb(profile.id, resolved);
+    if (thumb) resolved = thumb;
+  }
+
   if (!existsSync(resolved)) {
     return new NextResponse("Not found", { status: 404 });
   }
 
-  const ext = extname(resolved).toLowerCase();
-  const contentType = MIME[ext] || "application/octet-stream";
+  const isThumb = resolved.endsWith(".webp") && resolved.startsWith(THUMB_DIR_ROOT);
+  const contentType = isThumb ? "image/webp" : MIME[extname(resolved).toLowerCase()] || "application/octet-stream";
 
   let stat;
   try {

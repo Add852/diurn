@@ -271,9 +271,6 @@ function ChatContent({ personality = "" }: { personality?: string }) {
         {status === "loading" && (
           <p className="text-zinc-500 text-sm animate-pulse">Setting up...</p>
         )}
-        {status === "error" && !messages.length && (
-          <p className="text-red-400 text-sm">{error}</p>
-        )}
         {messages.map((m) => (
           <div key={m.id} className={`${m.role === "user" ? "ml-8" : "mr-8"}`}>
             <div

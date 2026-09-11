@@ -1,14 +1,58 @@
 import { getDb, getActiveProfile } from "./db";
 import { existsSync, watch, FSWatcher } from "fs";
-import { readdir, stat } from "fs/promises";
-import { join, extname } from "path";
+import { readdir, stat, mkdir, writeFile } from "fs/promises";
+import { join, extname, resolve } from "path";
+import { homedir } from "os";
+import { createHash } from "crypto";
 import { localDate } from "./timezone";
+
+const THUMB_DIR = join(homedir(), ".diurn", "thumbs");
+const THUMB_WIDTH = 400; // px — grid tiles are ~100-200px on 2x screens; 400 covers lightboxes pre-full-res nicely too
+const THUMB_MAX_AGE_MS = 0; // thumbs are mtime-keyed, never stale-dated
 
 const MEDIA_EXTS = new Set([".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".mp4", ".webm", ".mov", ".mkv", ".avi", ".heic", ".heif"]);
 const VIDEO_EXTS = new Set([".mp4", ".webm", ".mov", ".mkv", ".avi"]);
 const IMAGE_EXTS = new Set([".jpg", ".jpeg", ".png", ".heic", ".heif", ".webp"]);
 
 type ResolvedDate = { date: string; capturedAt: number | null };
+
+// Thumbnail path for a media file: ~/.diurn/thumbs/<profileId>/<hash>.webp.
+// Hash includes the file path so renaming an original regenerates, not
+// cross-links; mtime lives in the DB row (thumb column) for cheap staleness.
+function thumbPath(profileId: number, filePath: string): string {
+  const h = createHash("sha1").update(filePath).digest("hex").slice(0, 24);
+  return join(THUMB_DIR, String(profileId), `${h}.webp`);
+}
+
+// Generate a WebP thumbnail (side effect: HEIC becomes actually viewable in
+// browsers that can't render HEIC natively). Returns null when sharp can't
+// decode the file — callers keep serving the original then.
+async function generateThumb(profileId: number, filePath: string): Promise<string | null> {
+  const target = thumbPath(profileId, filePath);
+  try {
+    const sharp = (await import("sharp")).default;
+    await sharp(filePath, { failOn: "none" })
+      .rotate() // honor EXIF orientation
+      .resize({ width: THUMB_WIDTH, withoutEnlargement: true })
+      .webp({ quality: 75 })
+      .toFile(target);
+    return target;
+  } catch {
+    try { (await import("fs/promises")).unlink(target).catch(() => {}); } catch {}
+    return null;
+  }
+}
+
+// Serve-with-fallback helper for the file route: returns the thumb path when
+// one exists on disk, else null (caller serves the original).
+export async function existingThumb(profileId: number, filePath: string): Promise<string | null> {
+  const t = thumbPath(profileId, filePath);
+  try {
+    const s = await stat(t);
+    if (s.isFile() && s.size > 0) return t;
+  } catch {}
+  return null;
+}
 
 async function dateFromExif(filePath: string, timezone?: string, offsetHours?: number): Promise<ResolvedDate | undefined> {
   if (!IMAGE_EXTS.has(extname(filePath).toLowerCase())) return undefined;
@@ -57,6 +101,7 @@ interface MediaEntry {
   name: string;
   date: string | undefined;
   type: "image" | "video";
+  thumb?: string;
 }
 
 const _scanLocks = new Map<number, Promise<number>>();
@@ -170,17 +215,25 @@ async function _doScan(folder: string, profileId: number, timezone?: string, off
   }
 
   const insert = db.prepare(
-    "INSERT OR REPLACE INTO media_cache (path, profile_id, date, captured_at, type, mtime) VALUES (?, ?, ?, ?, ?, ?)"
+    "INSERT OR REPLACE INTO media_cache (path, profile_id, date, captured_at, type, mtime, thumb) VALUES (?, ?, ?, ?, ?, ?, ?)"
   );
 
   if (fresh.length > 0) {
+    // Thumb dir is per-profile; create lazily before the first write.
+    try { await mkdir(join(THUMB_DIR, String(profileId)), { recursive: true }); } catch {}
     const BATCH = 16;
     for (let i = 0; i < fresh.length; i += BATCH) {
       const batch = fresh.slice(i, i + BATCH);
       const resolved = await Promise.all(batch.map((f) => resolveDate(f.path, timezone, offsetHours)));
+      // Thumbs only for images (video keeps the metadata-poster trick) and
+      // only for fresh/changed files — unchanged ones reuse the stored row.
+      const thumbJobs = batch.map((f) =>
+        f.type === "image" ? generateThumb(profileId, f.path) : Promise.resolve(null)
+      );
+      const thumbs = await Promise.all(thumbJobs);
       db.transaction(() => {
         for (let j = 0; j < batch.length; j++) {
-          insert.run(batch[j].path, profileId, resolved[j].date, resolved[j].capturedAt, batch[j].type, batch[j].mtime);
+          insert.run(batch[j].path, profileId, resolved[j].date, resolved[j].capturedAt, batch[j].type, batch[j].mtime, thumbs[j] || null);
         }
       })();
     }
@@ -226,7 +279,7 @@ export function getMediaFiles(opts: {
   if (opts.offset) params.push(opts.offset);
 
   const rows = db
-    .prepare(`SELECT path, date, type FROM media_cache ${where} ORDER BY date DESC, captured_at ASC NULLS LAST, path ASC ${limitClause} ${offsetClause}`)
+    .prepare(`SELECT path, date, type, thumb FROM media_cache ${where} ORDER BY date DESC, captured_at ASC NULLS LAST, path ASC ${limitClause} ${offsetClause}`)
     .all(...params) as any[];
 
   return rows.map((r) => ({
@@ -234,6 +287,7 @@ export function getMediaFiles(opts: {
     name: r.path.split("/").pop()!,
     date: r.date || undefined,
     type: r.type as "image" | "video",
+    thumb: r.thumb || undefined,
   }));
 }
 

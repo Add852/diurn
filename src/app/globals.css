@@ -116,7 +116,13 @@ textarea::-webkit-scrollbar {
    via background-position (no transform; the bitmap must not move) and is
    covered by the bitmap once loaded, then the class is dropped entirely. */
 .media-loading {
-  background-color: rgb(63 63 70 / 0.6);
+  /* Dark placeholder paint: Chrome fills a decoded-in-progress bitmap with
+     white by default — this zinc tone matches the theme while the bitmap
+     decodes (progressive JPEG lines). font-size: 0 hides alt text during
+     load (screen readers still read the alt attribute). */
+  color: transparent;
+  font-size: 0;
+  background-color: rgb(39 39 42 / 0.95);
   background-image: linear-gradient(
     110deg,
     transparent 25%,

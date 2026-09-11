@@ -203,6 +203,9 @@ function migrateObsidianColumns(db: Database.Database) {
 
 function migrateMediaCacheColumns(db: Database.Database) {
   const cols = new Set((db.prepare("PRAGMA table_info(media_cache)").all() as { name: string }[]).map((c) => c.name));
+  if (!cols.has("thumb")) {
+    try { db.exec("ALTER TABLE media_cache ADD COLUMN thumb TEXT"); } catch {}
+  }
   if (!cols.has("captured_at")) {
     try {
       db.exec("ALTER TABLE media_cache ADD COLUMN captured_at INTEGER");

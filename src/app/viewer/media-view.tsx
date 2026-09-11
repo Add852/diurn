@@ -205,7 +205,7 @@ export function MediaView() {
                     className="mb-2 break-inside-avoid w-full bg-zinc-900 rounded-lg overflow-hidden border border-zinc-800 hover:border-zinc-600 transition-colors"
                   >
                     {m.type === "image" ? (
-                      <MediaImage src={m.src} alt={m.name} loading="lazy" className="w-full object-cover" />
+                      <MediaImage src={m.thumb || m.src} alt="" loading="lazy" className="w-full object-cover" />
                     ) : (
                       <div className="aspect-video">
                         <MediaThumb src={m.src} />

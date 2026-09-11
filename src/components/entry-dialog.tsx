@@ -202,7 +202,7 @@ export function EntryDialog({ date, onClose, onChanged }: Props) {
                         className="flex-shrink-0 w-16 h-16 bg-zinc-800 rounded-lg border border-zinc-700 overflow-hidden hover:border-zinc-500 transition-colors"
                       >
                         {m.type === "image" ? (
-                          <MediaImage src={m.src} alt={m.name} className="w-full h-full object-cover" />
+                          <MediaImage src={m.thumb || m.src} alt="" className="w-full h-full object-cover" />
                         ) : (
                           <MediaThumb src={m.src} />
                         )}

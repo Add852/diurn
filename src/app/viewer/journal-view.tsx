@@ -41,9 +41,10 @@ function monthLabel(dateStr: string) {
 }
 
 
-// Masonry is pure CSS multi-column now (columns-2 md:columns-3 lg:columns-4):
-// the browser balances from real rendered heights and reflows automatically
-// when lazy images load or the viewport resizes. No JS estimation.
+// Row-major grid (grid-flow row): entries read left-to-right, top-to-bottom —
+// chronological scan order, matching how people read a journal index.
+// grid-auto-rows keeps tiles near-uniform; the masonry column layout was
+// column-first (filled top-to-bottom per column), which read out of order.
 
 
 
@@ -150,7 +151,7 @@ export function JournalView() {
         const r = await fetch(`/api/media?date=${dates[0]}&limit=1`);
         const j = await r.json();
         if (j.files?.length > 0) {
-          setThumbnails({ [dates[0]]: { src: j.files[0].src, type: j.files[0].type } });
+          setThumbnails({ [dates[0]]: { src: j.files[0].thumb || j.files[0].src, type: j.files[0].type } });
         }
       } catch {}
       return;
@@ -161,7 +162,7 @@ export function JournalView() {
       const t: Record<string, Thumb> = {};
       for (const f of j.files || []) {
         if (f.date && !t[f.date]) {
-          t[f.date] = { src: f.src, type: f.type };
+          t[f.date] = { src: f.thumb || f.src, type: f.type };
         }
       }
       setThumbnails(t);
@@ -215,11 +216,9 @@ export function JournalView() {
               <h3 className="text-xs font-semibold text-zinc-500 uppercase tracking-wider mb-3 sticky top-0 -mx-4 px-4 bg-zinc-950 py-1 z-10">
                 {monthEntries[0]?.monthLabel || mk}
               </h3>
-              <div className="columns-2 md:columns-3 lg:columns-4 gap-3">
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 items-start">
                 {monthEntries.map((e) => (
-                  <div key={e.id} className="mb-3 break-inside-avoid">
-                    <EntryCard entry={e} thumb={thumbnails[e.date]} onOpen={() => openEntry(e)} />
-                  </div>
+                  <EntryCard key={e.id} entry={e} thumb={thumbnails[e.date]} onOpen={() => openEntry(e)} />
                 ))}
               </div>
             </div>
