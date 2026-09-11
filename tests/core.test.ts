@@ -171,7 +171,7 @@ test("profile export/import: settings columns round-trip", async () => {
     "google_client_id", "google_client_secret", "day_offset_hours",
     "media_enabled", "media_folder", "media_in_context",
     "obsidian_enabled", "obsidian_folder", "obsidian_exclude_folders", "obsidian_include_content",
-    "llm_endpoint", "llm_model", "llm_api_key", "llm_retries", "llm_retry_delay_ms", "llm_timeout_ms",
+    "llm_endpoint", "llm_model", "llm_api_key", "llm_retries", "llm_retry_delay_ms", "llm_timeout_ms", "llm_thinking",
     "ai_enabled", "ui_mode", "ask_mode", "form_output",
     "raw_context_enabled", "raw_context_folder",
     "personality_prompt", "timezone"];
@@ -304,4 +304,76 @@ test("chatCompletion: descriptive errors + retries", async () => {
     assert.equal(out, "Okay, the user said they hiked.");
     srv.close();
   }
+});
+
+// Thinking toggle: off by default sends think:false; strict servers that
+// reject the params get one negotiated retry without them, then it's memoized.
+test("chatCompletion: thinking param negotiation", async () => {
+  const http = await import("node:http");
+  const { chatCompletion } = await import("../src/lib/ai.ts");
+  const reply = (content: string) => JSON.stringify({ choices: [{ message: { content } }] });
+
+  // Server that 400s on the think params, then succeeds without them.
+  let bodies: any[] = [];
+  let calls = 0;
+  const srv = http.createServer((req, res) => {
+    calls++;
+    let body = "";
+    req.on("data", (c) => (body += c));
+    req.on("end", () => {
+      const parsed = JSON.parse(body);
+      bodies.push(parsed);
+      if (parsed.think !== undefined) {
+        res.writeHead(400);
+        res.end(JSON.stringify({ error: { message: "unknown field: think" } }));
+      } else {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(reply("fine"));
+      }
+    });
+  });
+  await new Promise<void>((r) => srv.listen(0, r));
+  const port = (srv.address() as any).port;
+
+  const cfg = { endpoint: `http://127.0.0.1:${port}/v1`, apiKey: "", model: "m", retries: 0 };
+
+  // Off by default: the request asks the model not to think.
+  const out1 = await chatCompletion({ ...cfg, thinking: false }, [{ role: "user", content: "hi" }]);
+  assert.equal(out1, "fine");
+  assert.equal(bodies[0].think, false);
+
+  // Strict server rejected it (400) -> negotiated retry without params.
+  assert.equal(bodies[1].think, undefined);
+  assert.equal(calls, 2);
+
+  // Memoized: the next call doesn't send think params at all.
+  await chatCompletion({ ...cfg, thinking: false }, [{ role: "user", content: "again" }]);
+  assert.equal(bodies[2].think, undefined);
+  assert.equal(calls, 3);
+  srv.close();
+});
+
+// Server that accepts think params: on-by-default toggle passes them through.
+test("chatCompletion: thinking enabled sends think:true", async () => {
+  const http = await import("node:http");
+  const { chatCompletion } = await import("../src/lib/ai.ts");
+  let got: any = null;
+  const srv = http.createServer((req, res) => {
+    let body = "";
+    req.on("data", (c) => (body += c));
+    req.on("end", () => {
+      got = JSON.parse(body);
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ choices: [{ message: { content: "ok" } }] }));
+    });
+  });
+  await new Promise<void>((r) => srv.listen(0, r));
+  const port = (srv.address() as any).port;
+  await chatCompletion(
+    { endpoint: `http://127.0.0.1:${port}/v1`, apiKey: "", model: "m", retries: 0, thinking: true },
+    [{ role: "user", content: "hi" }]
+  );
+  assert.equal(got.think, true);
+  assert.equal(got.enable_thinking, true);
+  srv.close();
 });

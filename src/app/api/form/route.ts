@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth";
 import { getActiveProfile, getProfileQuestions } from "@/lib/db";
-import { llmConfig } from "@/lib/ai";
-import { buildChatContext, distillContext } from "@/lib/chat-context";
+import { llmConfig, aiAvailable } from "@/lib/ai";
+import { buildChatContext, distillContext, enabledIntegrationKeys } from "@/lib/chat-context";
 import { localDate } from "@/lib/timezone";
-import { scanMediaFolder, pendingScan, needsRefresh, isDirty, maybeBackgroundScan } from "@/lib/media-cache";
+import { kickMediaScan } from "@/lib/media-cache";
 import { existsSync } from "fs";
 
 export async function GET(req: NextRequest) {
@@ -21,27 +21,18 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "No questions configured" }, { status: 400 });
   }
 
-  const aiOn = !!profile.ai_enabled && !!profile.llm_endpoint && !!profile.llm_model;
+  const aiOn = aiAvailable(profile);
 
   // asked=false questions are never shown or asked — same as chat. With AI
   // on, their answers are inferred from the user's input; with AI off they
   // simply stay empty in the note.
   const questions = allQuestions.filter((q) => q.asked);
 
-  if (profile.media_enabled && profile.media_folder && existsSync(profile.media_folder)) {
-    maybeBackgroundScan();
-    if (!pendingScan(profile.id) && (needsRefresh(profile.id) || isDirty(profile.id))) {
-      scanMediaFolder(profile.media_folder, profile.id, profile.timezone, profile.day_offset_hours).catch(() => {});
-    }
-  }
+  kickMediaScan(profile, existsSync(profile.media_folder));
 
   const ctx = await buildChatContext(profile, date, llmConfig(profile));
 
-  const enabled_integrations: string[] = [];
-  if (profile.media_enabled && profile.media_folder) enabled_integrations.push("media");
-  if (profile.google_tasks_enabled) enabled_integrations.push("tasks");
-  if (profile.google_calendar_enabled) enabled_integrations.push("calendar");
-  if (profile.obsidian_enabled && profile.obsidian_folder) enabled_integrations.push("notes");
+  const enabled_integrations = enabledIntegrationKeys(profile);
 
   return NextResponse.json({
     date,
@@ -53,7 +44,6 @@ export async function GET(req: NextRequest) {
     ai_available: aiOn,
     context: ctx.raw,
     context_sources: distillContext(ctx.raw, !!profile.media_in_context).sources,
-    context_media_included: !!profile.media_in_context,
     enabled_integrations,
   });
 }

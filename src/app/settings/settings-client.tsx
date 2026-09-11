@@ -181,14 +181,15 @@ export function SettingsClient({
         return;
       }
 
-      const res = await fetch("/api/settings", {
-        method: "PUT",
-        headers: JSON_HEADERS,
-        body: JSON.stringify(body),
-      });
-      const d = await res.json().catch(() => ({}));
-      if (!res.ok || d.error) {
-        toast.show("error", d.error || `Save failed (${res.status})`);
+      let d;
+      try {
+        d = await settingsPut(body);
+      } catch (err: any) {
+        toast.show("error", `Save failed: ${err?.message || "network error"}`);
+        return;
+      }
+      if (d.error) {
+        toast.show("error", d.error);
         return;
       }
       if (d.template_content !== undefined) setTemplateContent(d.template_content);
@@ -533,6 +534,13 @@ export function SettingsClient({
               <input type="number" min={5} max={600} value={Math.round((draft.llm_timeout_ms ?? 120000) / 1000)} onChange={(e) => updateDraft({ llm_timeout_ms: Math.max(5, Math.min(600, Number(e.target.value) || 120)) * 1000 })} className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-200" />
               <p className="text-xs text-zinc-600 mt-1">Slow or thinking models can legitimately take minutes — raise this instead of watching the note fail. Each attempt gets the full timeout; timeouts are retried.</p>
             </div>
+            <label className="flex items-start gap-2 text-sm">
+              <input type="checkbox" checked={!!draft.llm_thinking} onChange={(e) => updateDraft({ llm_thinking: e.target.checked ? 1 : 0 })} />
+              <span>
+                Allow thinking / reasoning
+                <span className="block text-[11px] text-zinc-600">Off by default — requests ask the model NOT to think (faster, cheaper). Some models think by default and some don't support thinking at all; unsupported request params are dropped automatically, and any reasoning that still comes back is stripped from output either way. Enable only if your answers need it.</span>
+              </span>
+            </label>
           </Expander>
           <div>
             <label className="block text-xs text-zinc-500 mb-1">Personality</label>

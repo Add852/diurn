@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { settleSystem, settleUser } from "@/lib/prompt";
+import { settleSystem, settleUser, integrationContextBlock } from "@/lib/prompt";
 
 // Full-transparency panel: everything that feeds the entry — the user's own
 // input, the distilled integration sources the AI sees, and the exact prompts
@@ -18,6 +18,7 @@ export function RawContextPanel({
   answers,
   blob,
   personality,
+  date,
 }: {
   rawContext: any;
   contextSources?: Record<string, unknown> | null;
@@ -29,6 +30,7 @@ export function RawContextPanel({
   answers?: Record<string, string>;
   blob?: string;
   personality?: string;
+  date?: string;
 }) {
   const [show, setShow] = useState(true);
   useEffect(() => {
@@ -37,9 +39,7 @@ export function RawContextPanel({
   if (!show || !rawContext) return null;
 
   const sources = contextSources ?? null;
-  const integrationContext = sources
-    ? `\n\n--- Context ---\n${JSON.stringify(sources, null, 2)}\n---`
-    : "";
+  const integrationContext = integrationContextBlock(date || "", sources);
 
   // Mirrors the settle() prompt in entries POST byte-for-byte so the panel
   // shows exactly what the AI receives per question.

@@ -89,7 +89,7 @@ db.prepare(`UPDATE profiles SET
       media_enabled=?, media_folder=?,
       obsidian_enabled=?, obsidian_folder=?, obsidian_exclude_folders=?, obsidian_include_content=?,
       llm_endpoint=?, llm_model=?,
-      llm_api_key=?, llm_retries=?, llm_retry_delay_ms=?, llm_timeout_ms=?,
+      llm_api_key=?, llm_retries=?, llm_retry_delay_ms=?, llm_timeout_ms=?, llm_thinking=?,
       ai_enabled=?, ui_mode=?, ask_mode=?, form_output=?,
       media_in_context=?, raw_context_enabled=?, raw_context_folder=?,
       personality_prompt=?, timezone=?
@@ -103,6 +103,7 @@ db.prepare(`UPDATE profiles SET
       p.llm_endpoint, p.llm_model,
       p.llm_api_key || "",
       clampInt(p.llm_retries, 0, 5, 2), clampInt(p.llm_retry_delay_ms, 0, 60_000, 1000), clampInt(p.llm_timeout_ms, 5_000, 600_000, 120_000),
+      p.llm_thinking ? 1 : 0,
       p.ai_enabled ? 1 : 0, p.ui_mode || "form", p.ask_mode || "separate", p.form_output || "raw",
       p.media_in_context ? 1 : 0, p.raw_context_enabled ? 1 : 0, p.raw_context_folder || "",
       p.personality_prompt || "", p.timezone || "UTC",
@@ -190,7 +191,7 @@ db.prepare(`UPDATE profiles SET
       "google_client_id", "google_client_secret", "day_offset_hours",
       "media_enabled", "media_folder", "media_in_context",
       "obsidian_enabled", "obsidian_folder", "obsidian_exclude_folders", "obsidian_include_content",
-      "llm_endpoint", "llm_model", "llm_api_key", "llm_retries", "llm_retry_delay_ms", "llm_timeout_ms",
+      "llm_endpoint", "llm_model", "llm_api_key", "llm_retries", "llm_retry_delay_ms", "llm_timeout_ms", "llm_thinking",
       "ai_enabled", "ui_mode", "ask_mode", "form_output",
       "raw_context_enabled", "raw_context_folder",
       "personality_prompt", "timezone",
@@ -199,7 +200,7 @@ db.prepare(`UPDATE profiles SET
     // Numeric defaults keep INTEGER columns integers — "" is falsy in JS and
     // would silently disable AI (ai_enabled) or zero out retries on imports.
     const numericDefaults: Record<string, number> = {
-      ai_enabled: 1, llm_retries: 2, llm_retry_delay_ms: 1000, llm_timeout_ms: 120_000, day_offset_hours: 0,
+      ai_enabled: 1, llm_retries: 2, llm_retry_delay_ms: 1000, llm_timeout_ms: 120_000, llm_thinking: 0, day_offset_hours: 0,
     };
     for (const col of settingCols) {
       const v = p[col];

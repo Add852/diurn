@@ -87,6 +87,19 @@ export function maybeBackgroundScan() {
   } catch {}
 }
 
+// Warm the cache for a profile's media folder: fire the boot scan if this is
+// the first request of the process, then kick a background rescan when the
+// cache is empty or the watcher flagged the folder dirty. NEVER awaits the
+// scan — a long EXIF pass used to hang the greeting behind it. Shared by
+// /api/chat and /api/form so both interfaces behave identically.
+export function kickMediaScan(profile: { id: number; media_enabled: number; media_folder: string; timezone?: string; day_offset_hours?: number }, folderExists: boolean) {
+  if (!profile.media_enabled || !profile.media_folder || !folderExists) return;
+  maybeBackgroundScan();
+  if (!pendingScan(profile.id) && (needsRefresh(profile.id) || isDirty(profile.id))) {
+    scanMediaFolder(profile.media_folder, profile.id, profile.timezone, profile.day_offset_hours).catch(() => {});
+  }
+}
+
 export async function scanMediaFolder(folder: string, profileId: number, timezone?: string, offsetHours?: number): Promise<number> {
   startWatcher(folder, profileId);
   const existing = _scanLocks.get(profileId);

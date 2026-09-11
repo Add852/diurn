@@ -24,15 +24,16 @@ export async function POST(req: NextRequest) {
       const userId = (db.prepare("SELECT id FROM users WHERE username = 'admin'").get() as any).id;
 
       db.prepare(
-        `INSERT INTO profiles (user_id, name, is_default, is_active, llm_endpoint, llm_model, personality_prompt, asking_method, timezone)
-         VALUES (?, ?, 1, 1, ?, ?, ?, ?, ?)`
+        `INSERT INTO profiles (user_id, name, is_default, is_active, llm_endpoint, llm_model, personality_prompt, ui_mode, ask_mode, timezone)
+         VALUES (?, ?, 1, 1, ?, ?, ?, ?, ?, ?)`
       ).run(
         userId,
         "Default",
         "",
         "",
         "You are a thoughtful daily journaling companion. You help the user reflect on their day with warmth and directness. Ask questions to capture the day's texture — concise, natural, no therapy-fluff. No bullet points in conversation — save those for notes.",
-        "ask_in_one_go",
+        "chat",
+        "all",
         validTZ
       );
 

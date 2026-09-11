@@ -1,12 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb, getActiveProfile, getProfileQuestions, getStreakStatus, type ProfileQuestion } from "@/lib/db";
-import { requireAuth } from "@/lib/auth";
-import { chatCompletion, llmConfig } from "@/lib/ai";
-import { settleSystem, settleUser } from "@/lib/prompt";
+import { requireAuth, requireProfile } from "@/lib/auth";
+import { chatCompletion, llmConfig, aiAvailable } from "@/lib/ai";
+import { settleSystem, settleUser, integrationContextBlock } from "@/lib/prompt";
 import { renderTemplate, type TemplateVar } from "@/lib/template";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "fs";
 import { readFile, readdir } from "fs/promises";
 import { join, extname } from "path";
+
+
 import { getMessages } from "@/lib/conversation";
 
 function isValidDate(date: string): boolean {
@@ -87,8 +89,8 @@ export async function GET(req: NextRequest) {
   const seenDates = new Set(dbEntries.map((e) => e.date));
   let fsOnlyId = 0;
 
-    if (profile?.daily_note_folder) {
-      const dirFiles = await readdir(profile.daily_note_folder).catch(() => [] as string[]);
+  if (profile?.daily_note_folder) {
+    const dirFiles = await readdir(profile.daily_note_folder).catch(() => [] as string[]);
     for (const file of dirFiles.filter((f) => extname(f) === ".md")) {
       const dateMatch = file.match(/^(\d{4}-\d{2}-\d{2})\.md$/);
       if (!dateMatch) continue;
@@ -109,21 +111,17 @@ export async function GET(req: NextRequest) {
         _fs_only: true,
       });
     }
-    }
+  }
 
-dbEntries.sort((a, b) => b.date.localeCompare(a.date));
+  dbEntries.sort((a, b) => b.date.localeCompare(a.date));
   return NextResponse.json(dbEntries);
 }
 
 export async function POST(req: NextRequest) {
-  const session = await requireAuth();
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-  const { session_id, date, overwrite, answers: formAnswers, blob, context, context_sources } = await req.json();
-  const profile = getActiveProfile();
-  if (!profile) {
-    return NextResponse.json({ error: "No active profile" }, { status: 400 });
-  }
+  const guard = await requireProfile();
+  if (guard instanceof NextResponse) return guard;
+  const { profile } = guard;
+  const { session_id, date, overwrite, answers: formAnswers, blob, context_sources } = await req.json();
 
   if (!isValidDate(date)) {
     return NextResponse.json({ error: "Invalid date" }, { status: 400 });
@@ -139,7 +137,7 @@ export async function POST(req: NextRequest) {
     db.prepare("DELETE FROM entries WHERE id = ?").run((existing as any).id);
   }
 
-  const aiOn = !!profile.ai_enabled && !!profile.llm_endpoint && !!profile.llm_model;
+  const aiOn = aiAvailable(profile);
 
   // Form submissions arrive as {answers: {identifier: text}} or {blob: text}
   // (one-big-text mode) instead of a chat session. Both skip the transcript
@@ -208,9 +206,7 @@ export async function POST(req: NextRequest) {
     : isFormSubmission
       ? questions.filter((q) => formAnswers[q.identifier]?.trim()).map((q) => `user (${q.identifier}): ${formAnswers[q.identifier].trim()}`).join("\n")
       : transcript;
-  const integrationContext = context_sources
-    ? `\n\n--- Context for ${date} ---\n${JSON.stringify(context_sources, null, 2)}\n---`
-    : "";
+  const integrationContext = integrationContextBlock(date, context_sources);
 
   const system = settleSystem(profile.personality_prompt);
   const settle = async (q: ProfileQuestion) => {
@@ -343,20 +339,15 @@ export async function POST(req: NextRequest) {
 }
 
 export async function PUT(req: NextRequest) {
-  const session = await requireAuth();
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
+  const guard = await requireProfile();
+  if (guard instanceof NextResponse) return guard;
+  const { profile } = guard;
   const { date, markdown } = await req.json();
   if (typeof date !== "string" || !isValidDate(date)) {
     return NextResponse.json({ error: "Invalid date" }, { status: 400 });
   }
   if (typeof markdown !== "string" || !markdown.trim()) {
     return NextResponse.json({ error: "Markdown is required" }, { status: 400 });
-  }
-
-  const profile = getActiveProfile();
-  if (!profile) {
-    return NextResponse.json({ error: "No active profile" }, { status: 400 });
   }
 
   const db = getDb();
@@ -394,18 +385,14 @@ export async function PUT(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
-  const session = await requireAuth();
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const guard = await requireProfile();
+  if (guard instanceof NextResponse) return guard;
+  const { profile } = guard;
 
   const url = new URL(req.url);
   const date = url.searchParams.get("date") || "";
   if (!isValidDate(date)) {
     return NextResponse.json({ error: "Invalid date" }, { status: 400 });
-  }
-
-  const profile = getActiveProfile();
-  if (!profile) {
-    return NextResponse.json({ error: "No active profile" }, { status: 400 });
   }
 
   const db = getDb();

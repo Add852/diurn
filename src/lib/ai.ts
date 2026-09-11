@@ -7,19 +7,27 @@ export interface LlmProfileConfig {
   llm_endpoint: string;
   llm_api_key: string;
   llm_model: string;
+  ai_enabled?: number;
   llm_retries?: number;
   llm_retry_delay_ms?: number;
   llm_timeout_ms?: number;
+  llm_thinking?: number;
 }
 
 export function llmConfig(profile: LlmProfileConfig) {
+  // ai_enabled === 0 (strictly the off state — undefined means the caller
+  // didn't set it, e.g. ai-test's ad-hoc config) kills the endpoint so every
+  // consumer sees "AI is not configured". Disabled AI must behave identically
+  // to unconfigured AI everywhere — including obsidian summarizeNotes.
+  const off = profile.ai_enabled === 0;
   return {
-    endpoint: profile.llm_endpoint,
+    endpoint: off ? "" : profile.llm_endpoint,
     apiKey: profile.llm_api_key,
     model: profile.llm_model,
     retries: profile.llm_retries ?? 2,
     retryDelayMs: profile.llm_retry_delay_ms ?? 1000,
     timeoutMs: profile.llm_timeout_ms ?? 120_000,
+    thinking: !!profile.llm_thinking,
   };
 }
 
@@ -49,6 +57,7 @@ interface ChatConfig {
   retries?: number;
   retryDelayMs?: number;
   timeoutMs?: number;
+  thinking?: boolean;
 }
 
 // Human-meaningful cause for an HTTP status from an OpenAI-compatible server.
@@ -86,6 +95,10 @@ function extractBodyMessage(body: string): string {
   return body.trim().slice(0, 300);
 }
 
+// Endpoints that rejected the thinking request params — in-process memo so
+// the negotiation costs at most one extra request per endpoint+model.
+const rejectedThinkParams = new Set<string>();
+
 export async function chatCompletion(
   config: ChatConfig,
   messages: Message[],
@@ -99,6 +112,21 @@ export async function chatCompletion(
   const maxAttempts = 1 + Math.max(0, Math.min(config.retries ?? 2, 5));
   const baseDelay = Math.max(0, config.retryDelayMs ?? 1000);
   const url = `${config.endpoint.replace(/\/$/, "")}/chat/completions`;
+  // Thinking/reasoning request params. The model landscape is heterogeneous:
+  // some models think by default, some can't think at all, and some strict
+  // servers reject unknown params with a 400. So: send the two widely
+  // understood switches (Ollama `think`, Qwen-style `enable_thinking`) in the
+  // requested direction; if the server 400/422s while they were sent, retry
+  // once WITHOUT them and memoize per endpoint+model so later calls skip the
+  // negotiation. stripThinking below is the unconditional safety net — models
+  // that think regardless never leak reasoning into output.
+  // ponytail: skip provider-specific switches (reasoning_effort, chat_template_kwargs) — add only if a user's server needs one.
+  const thinkKey = `${url}|${config.model}`;
+  let thinkParams: Record<string, unknown> | null = rejectedThinkParams.has(thinkKey)
+    ? null
+    : config.thinking
+      ? { think: true, enable_thinking: true }
+      : { think: false, enable_thinking: false };
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   // Always send a Bearer header: keyless local servers ignore it, but some
   // gateways/proxies reject requests lacking the header outright ("API key
@@ -116,7 +144,7 @@ export async function chatCompletion(
         headers,
         // 4096: reasoning models burn most of the budget on thinking before
         // the answer — 1024 truncated real answers.
-        body: JSON.stringify({ model: config.model, messages, temperature: 0.7, max_tokens: 4096, stream: false }),
+        body: JSON.stringify({ model: config.model, messages, temperature: 0.7, max_tokens: 4096, stream: false, ...(thinkParams ?? {}) }),
         signal: controller.signal,
       });
 
@@ -144,6 +172,16 @@ export async function chatCompletion(
       return stripThinking(content);
     } catch (err: any) {
       lastError = err;
+
+      // Server rejected the thinking params (400/422 = client error; strict
+      // OpenAI-style servers 400 unknown fields). Retry the same attempt
+      // without them, once per server lifetime (memoized).
+      if ((err.status === 400 || err.status === 422) && thinkParams) {
+        rejectedThinkParams.add(thinkKey);
+        thinkParams = null;
+        attempt--; // param negotiation doesn't consume a retry
+        continue;  // and skips the backoff below
+      }
 
       const retriable =
         err.name === "AbortError" || // timeout — slow/thinking model, try again

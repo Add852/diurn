@@ -21,3 +21,11 @@ export function settleUser(
 ): string {
   return `Question: ${q.question}\n${q.answer_prompt ? `Answering instructions: ${q.answer_prompt}\n` : ""}\n${integrationContext}\n\n--- User's input ---\n${userInputText}`;
 }
+
+// The integration-context block settle() appends to every answer prompt.
+// Shared with the raw-context panel so the panel renders the exact prompt
+// the AI received (transparency contract). Client-safe (no server imports).
+export function integrationContextBlock(date: string, sources: Record<string, unknown> | null | undefined): string {
+  if (!sources) return "";
+  return `\n\n--- Context for ${date} ---\n${JSON.stringify(sources, null, 2)}\n---`;
+}

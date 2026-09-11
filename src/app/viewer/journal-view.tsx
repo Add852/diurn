@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { useSearchParams } from "next/navigation";
 import { parseFrontmatter } from "@/lib/frontmatter";
+import { formatTemplateDate } from "@/lib/template";
 import { fmt } from "@/components/entry-preview";
 import { EntryDialog } from "@/components/entry-dialog";
 import { MediaThumb, MediaImage } from "@/components/media-thumb";
@@ -35,12 +36,8 @@ interface Thumb {
   type: string;
 }
 
-const FULL_MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
-
 function monthLabel(dateStr: string) {
-  const m = parseInt(dateStr.slice(5, 7));
-  const y = dateStr.slice(0, 4);
-  return `${FULL_MONTHS[m - 1] || "?"} ${y}`;
+  return formatTemplateDate(dateStr, "MMMM yyyy");
 }
 
 

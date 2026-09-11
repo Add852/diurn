@@ -8,6 +8,26 @@ import { localDate, dateRange } from "./timezone";
 import { getMediaFiles } from "./media-cache";
 import { ensureAccessToken } from "./google-auth";
 
+// The profile's enabled integration keys — shared by /api/chat and
+// /api/form so both interfaces report identical lists. Media is gated on
+// media_in_context too: the panel shows media only when the AI sees it.
+export function enabledIntegrationKeys(profile: {
+  media_enabled: number;
+  media_folder: string;
+  media_in_context: number;
+  google_tasks_enabled: number;
+  google_calendar_enabled: number;
+  obsidian_enabled: number;
+  obsidian_folder: string;
+}): string[] {
+  const keys: string[] = [];
+  if (profile.media_enabled && profile.media_folder && profile.media_in_context) keys.push("media");
+  if (profile.google_tasks_enabled) keys.push("tasks");
+  if (profile.google_calendar_enabled) keys.push("calendar");
+  if (profile.obsidian_enabled && profile.obsidian_folder) keys.push("notes");
+  return keys;
+}
+
 export interface ChatContextBundle {
   text: string;
   raw: {
@@ -277,6 +297,7 @@ function contextTextFromSources(date: string, sources: Record<string, unknown>, 
     ? `\n\n--- Context for ${date} ---\nData sources below are JSON. Use them only when relevant to the user's answers; if a few items feel worth mentioning, acknowledge them lightly in your greeting.\n${JSON.stringify(sources, null, 2)}\n---`
     : `\n\n--- Context for ${date} ---\nNo context sources produced content. Do not mention missing or failed integrations; proceed normally.\n---`;
 }
+
 
 export async function buildChatContext(profile: Profile, date: string, llm: LlmConfig): Promise<ChatContextBundle> {
   const notes = await buildNotesContext(profile, date, llm);

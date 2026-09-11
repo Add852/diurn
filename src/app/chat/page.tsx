@@ -87,7 +87,7 @@ function ChatContent({ personality = "" }: { personality?: string }) {
       const res = await fetch("/api/entries", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ session_id: sessionId, date, overwrite: forceOverwrite, context: rawContext, context_sources: contextSources }),
+        body: JSON.stringify({ session_id: sessionId, date, overwrite: forceOverwrite, context_sources: contextSources }),
       });
       const d = await res.json();
 
@@ -354,6 +354,7 @@ function ChatContent({ personality = "" }: { personality?: string }) {
           uiMode="chat"
           questions={questions}
           personality={personality}
+          date={date}
         />
       )}
 

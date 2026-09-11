@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth, requireProfile } from "@/lib/auth";
-import { getDb, getActiveProfile, getProfileQuestions } from "@/lib/db";
+import { requireProfile } from "@/lib/auth";
+import { getDb, getProfileQuestions } from "@/lib/db";
 import { chatCompletion, llmConfig, extractJson } from "@/lib/ai";
 import { aiAvailable } from "@/lib/ai";
-import { buildChatContext, distillContext } from "@/lib/chat-context";
+import { buildChatContext, distillContext, enabledIntegrationKeys } from "@/lib/chat-context";
 import { localDate } from "@/lib/timezone";
 import { randomUUID } from "crypto";
-import { scanMediaFolder, pendingScan, needsRefresh, isDirty, maybeBackgroundScan } from "@/lib/media-cache";
+import { kickMediaScan } from "@/lib/media-cache";
 import { existsSync } from "fs";
 import { appendMessage, getFullMessages, getMessages } from "@/lib/conversation";
 
@@ -15,14 +15,9 @@ const WRAPUP_PROMPT =
 
 
 export async function GET(req: NextRequest) {
-  const session = await requireAuth();
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-  const profile = getActiveProfile();
-
-  if (!profile) {
-    return NextResponse.json({ error: "No active profile" }, { status: 400 });
-  }
+  const guard = await requireProfile();
+  if (guard instanceof NextResponse) return guard;
+  const { profile } = guard;
 
   // Chat input needs a live LLM — it's an AI-only interface. Disabled or
   // unconfigured AI must fail loudly (the UI also hides the option).
@@ -40,15 +35,9 @@ export async function GET(req: NextRequest) {
 
   const session_id = randomUUID();
   const config = llmConfig(profile);
-  if (profile.media_enabled && profile.media_folder && existsSync(profile.media_folder)) {
-    // Fire the boot scan if it hasn't run, but NEVER await it — a long scan
-    // (thousands of EXIF reads) used to hang the chat greeting and everything
-    // behind it on the same request chain. Context reads the cached rows.
-    maybeBackgroundScan();
-    if (!pendingScan(profile.id) && (needsRefresh(profile.id) || isDirty(profile.id))) {
-      scanMediaFolder(profile.media_folder, profile.id, profile.timezone, profile.day_offset_hours).catch(() => {});
-    }
-  }
+  // Boot scan fires without awaiting — a long scan (thousands of EXIF reads)
+  // used to hang the chat greeting behind it. Context reads the cached rows.
+  kickMediaScan(profile, existsSync(profile.media_folder));
 
   const ctx = await buildChatContext(profile, date, config);
 
@@ -71,21 +60,14 @@ export async function GET(req: NextRequest) {
     appendMessage(session_id, "assistant", askedQuestions.map((q, i) => `${i + 1}. ${q.question}`).join("\n"));
   }
 
-  const enabled_integrations: string[] = [];
-  if (profile.media_enabled && profile.media_folder) enabled_integrations.push("media");
-  if (profile.google_tasks_enabled) enabled_integrations.push("tasks");
-  if (profile.google_calendar_enabled) enabled_integrations.push("calendar");
-  if (profile.obsidian_enabled && profile.obsidian_folder) enabled_integrations.push("notes");
+  const enabled_integrations = enabledIntegrationKeys(profile);
 
   return NextResponse.json({
     session_id,
     date,
     messages: getFullMessages(session_id),
     profile_id: profile.id,
-    asking_method: profile.ask_mode,
     questions: askedQuestions.map((q) => ({ identifier: q.identifier, question: q.question, answer_prompt: q.answer_prompt || "" })),
-    total_questions: askedQuestions.length,
-    remaining_identifiers: askedQuestions.map((q) => q.identifier),
     context: ctx.raw,
     context_sources: distillContext(ctx.raw, !!profile.media_in_context).sources,
     enabled_integrations,

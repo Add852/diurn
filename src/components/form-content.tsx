@@ -103,7 +103,6 @@ export function FormContent() {
       const payload: Record<string, unknown> = {
         date,
         overwrite: forceOverwrite,
-        context: rawContext,
         context_sources: contextSources,
       };
       if (effectiveAskMode === "all") payload.blob = blob;
@@ -216,6 +215,7 @@ export function FormContent() {
               answers={answers}
               blob={effectiveAskMode === "all" ? blob : undefined}
               personality={personality}
+              date={date}
             />
           </div>
         )}

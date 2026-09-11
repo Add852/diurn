@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS profiles (
   llm_retries INTEGER NOT NULL DEFAULT 2,
   llm_retry_delay_ms INTEGER NOT NULL DEFAULT 1000,
   llm_timeout_ms INTEGER NOT NULL DEFAULT 120000,
+  llm_thinking INTEGER NOT NULL DEFAULT 0,
   ai_enabled INTEGER NOT NULL DEFAULT 1,
   ui_mode TEXT NOT NULL DEFAULT 'form',
   ask_mode TEXT NOT NULL DEFAULT 'separate',
