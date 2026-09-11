@@ -306,7 +306,12 @@ export async function buildChatContext(profile: Profile, date: string, llm: LlmC
   const mediaFiles = profile.media_enabled && profile.media_folder
     ? getMediaFiles({ profileId: profile.id, date, limit: 20 })
     : [];
-  const media = { files: mediaFiles.map((m) => ({ ...m, src: `/api/media/file?path=${encodeURIComponent(m.path)}` })) };
+  // Panels render thumb-size media — send the thumb src (with full-res
+  // fallback); raw keeps path for transparency output.
+  const media = { files: mediaFiles.map((m) => ({
+    ...m,
+    src: `/api/media/file?path=${encodeURIComponent(m.path)}${m.thumb ? "&size=thumb" : ""}`,
+  })) };
 
   const { sources, hasContent } = distillContext({ notes, tasks, calendar, media }, !!profile.media_in_context);
 

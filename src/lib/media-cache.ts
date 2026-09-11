@@ -29,16 +29,19 @@ function thumbPath(profileId: number, filePath: string): string {
 // decode the file — callers keep serving the original then.
 async function generateThumb(profileId: number, filePath: string): Promise<string | null> {
   const target = thumbPath(profileId, filePath);
+  const tmp = target + ".tmp";
   try {
     const sharp = (await import("sharp")).default;
     await sharp(filePath, { failOn: "none" })
       .rotate() // honor EXIF orientation
       .resize({ width: THUMB_WIDTH, withoutEnlargement: true })
       .webp({ quality: 75 })
-      .toFile(target);
+      .toFile(tmp);
+    const { rename } = await import("fs/promises");
+    await rename(tmp, target); // atomic: a partial file is never served
     return target;
   } catch {
-    try { (await import("fs/promises")).unlink(target).catch(() => {}); } catch {}
+    try { (await import("fs/promises")).unlink(tmp).catch(() => {}); } catch {}
     return null;
   }
 }
@@ -162,9 +165,9 @@ export async function scanMediaFolder(folder: string, profileId: number, timezon
 
 async function _doScan(folder: string, profileId: number, timezone?: string, offsetHours?: number): Promise<number> {
   const db = getDb();
-  const cached = new Map<string, number>();
-  for (const r of db.prepare("SELECT path, mtime FROM media_cache WHERE profile_id = ?").all(profileId) as { path: string; mtime: number }[]) {
-    cached.set(r.path, r.mtime);
+  const cached = new Map<string, { mtime: number; thumb: string | null }>();
+  for (const r of db.prepare("SELECT path, mtime, thumb FROM media_cache WHERE profile_id = ?").all(profileId) as { path: string; mtime: number; thumb: string | null }[]) {
+    cached.set(r.path, { mtime: r.mtime, thumb: r.thumb ?? null });
   }
 
   const files: { path: string; name: string; mtime: number; type: "image" | "video" }[] = [];
@@ -210,7 +213,15 @@ async function _doScan(folder: string, profileId: number, timezone?: string, off
   const seen = new Set<string>();
   for (const f of files) {
     seen.add(f.path);
-    if (cached.get(f.path) === f.mtime) continue;
+    const c = cached.get(f.path);
+    if (c && c.mtime === f.mtime) {
+      // Backfill: image rows saved before the thumb pipeline have no thumb.
+      // Re-process them once (INSERT OR REPLACE rewrites the row with the
+      // thumb); videos never get thumbs, so they stay skipped. A thumb that
+      // failed to decode (null) retries on later scans — self-healing if a
+      // future sharp adds the format.
+      if (!(f.type === "image" && !c.thumb)) continue;
+    }
     fresh.push(f);
   }
 
@@ -225,8 +236,9 @@ async function _doScan(folder: string, profileId: number, timezone?: string, off
     for (let i = 0; i < fresh.length; i += BATCH) {
       const batch = fresh.slice(i, i + BATCH);
       const resolved = await Promise.all(batch.map((f) => resolveDate(f.path, timezone, offsetHours)));
-      // Thumbs only for images (video keeps the metadata-poster trick) and
-      // only for fresh/changed files — unchanged ones reuse the stored row.
+      // Thumbs only for images (video keeps the metadata-poster trick). The
+      // backfill above enqueues unchanged-but-thumbless image rows once; a
+      // null thumb (undecodable file) retries next scan — self-healing.
       const thumbJobs = batch.map((f) =>
         f.type === "image" ? generateThumb(profileId, f.path) : Promise.resolve(null)
       );
