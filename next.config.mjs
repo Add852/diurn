@@ -2,10 +2,16 @@ const withPWA = (await import("next-pwa")).default;
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // staleTimes.dynamic stays at its default (30s): the client router cache
-  // makes back-navigation to /viewer restore instantly instead of remounting
-  // and refetching everything. Settings freshness is unaffected —
-  // settings-client handleSave calls router.refresh() after every save.
+  experimental: {
+    staleTimes: {
+      // Next 14's default for dynamic routes is 0 — every revisit refetches
+      // the page payload (through the tunnel here), flashing loading.tsx and
+      // remounting the viewer. A 30s window serves the cached shell instantly
+      // on revisit; client data goes through viewer-cache.ts (SWR) anyway.
+      // Settings freshness is unaffected: handleSave calls router.refresh().
+      dynamic: 30,
+    },
+  },
   webpack: (config, { isServer }) => {
     if (isServer) {
       config.externals = config.externals || [];
