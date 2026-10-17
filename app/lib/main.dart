@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:media_kit/media_kit.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'api.dart';
 import 'viewer.dart';
+
+const _kPrefUrl = 'server_url';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -28,7 +31,8 @@ class DiurnApp extends StatelessWidget {
   }
 }
 
-/// Bootstraps /api/config, then shows Media + Browse tabs rooted at roots[0].
+/// Bootstraps: load saved server URL -> /api/config -> tabs.
+/// No saved URL, unreachable server, or gear tap -> connect form.
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -39,57 +43,79 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   Api? _api;
   List<String> _roots = [];
-  String? _error;
+  String _savedUrl = kDefaultUrl;
+  bool _booting = true;
 
   @override
   void initState() {
     super.initState();
-    _load();
+    _boot();
   }
 
-  Future<void> _load() async {
-    setState(() => _error = null);
-    final api = Api();
+  Future<void> _boot() async {
+    setState(() => _booting = true);
+    final prefs = await SharedPreferences.getInstance();
+    _savedUrl = prefs.getString(_kPrefUrl) ?? kDefaultUrl;
+    if (!mounted) return;
+    setState(() => _booting = false);
+    await _connect(_savedUrl);
+  }
+
+  Future<void> _connect(String base) async {
     try {
-      final roots = await api.config();
-      if (roots.isEmpty) throw ApiException('server has no configured roots');
+      final roots = await Api(base).config();
+      if (!mounted) return;
       setState(() {
-        _api = api;
+        _api = Api(base);
         _roots = roots;
       });
-    } catch (e) {
-      setState(() => _error = 'Cannot reach server at $kBaseUrl\n\n$e');
+    } catch (_) {
+      // unreachable: connect form stays visible with its own error display
     }
+  }
+
+  Future<void> _onConnected(String base, List<String> roots) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_kPrefUrl, base);
+    if (!mounted) return;
+    setState(() {
+      _savedUrl = base;
+      _api = Api(base);
+      _roots = roots;
+    });
+  }
+
+  Future<void> _forget() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_kPrefUrl);
+    if (!mounted) return;
+    setState(() => _api = null);
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_error != null) {
-      return Scaffold(
-        body: Center(
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(_error!, textAlign: TextAlign.center),
-                const SizedBox(height: 16),
-                FilledButton(onPressed: _load, child: const Text('Retry')),
-              ],
-            ),
-          ),
-        ),
-      );
-    }
-    if (_api == null) {
+    if (_booting) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
-    final api = _api!;
+    final api = _api;
+    if (api == null) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('diurn')),
+        body: ConnectForm(initial: _savedUrl, onConnected: _onConnected),
+      );
+    }
     return DefaultTabController(
       length: 2,
       child: Scaffold(
         appBar: AppBar(
           title: const Text('diurn'),
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.settings_outlined),
+              tooltip: 'Change server',
+              onPressed: _forget,
+            ),
+          ],
           bottom: const TabBar(
             tabs: [Tab(text: 'Media'), Tab(text: 'Browse')],
           ),
@@ -100,6 +126,98 @@ class _HomeScreenState extends State<HomeScreen> {
             BrowserScreen(api: api, initialDir: _roots.first),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// Server address form. Validates against /api/config before reporting
+/// success; shows the server's/network's error verbatim on failure.
+class ConnectForm extends StatefulWidget {
+  final String initial;
+  final void Function(String base, List<String> roots) onConnected;
+  const ConnectForm({
+    super.key,
+    required this.initial,
+    required this.onConnected,
+  });
+
+  @override
+  State<ConnectForm> createState() => _ConnectFormState();
+}
+
+class _ConnectFormState extends State<ConnectForm> {
+  late final TextEditingController _ctrl =
+      TextEditingController(text: widget.initial);
+  bool _checking = false;
+  String? _error;
+
+  Future<void> _save() async {
+    var base = _ctrl.text.trim();
+    if (base.isEmpty) {
+      setState(() => _error = 'Enter a server address');
+      return;
+    }
+    if (!base.startsWith('http://') && !base.startsWith('https://')) {
+      base = 'http://$base';
+    }
+    while (base.endsWith('/')) {
+      base = base.substring(0, base.length - 1);
+    }
+    setState(() {
+      _checking = true;
+      _error = null;
+    });
+    try {
+      final roots = await Api(base).config();
+      if (!mounted) return;
+      widget.onConnected(base, roots);
+    } catch (e) {
+      setState(() {
+        _checking = false;
+        _error = '$e';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Text(
+            'Connect to your diurn server',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'The address of the machine running the Rust server.',
+            style: TextStyle(color: Colors.white.withValues(alpha: 0.6)),
+          ),
+          const SizedBox(height: 16),
+          TextField(
+            controller: _ctrl,
+            keyboardType: TextInputType.url,
+            autocorrect: false,
+            enabled: !_checking,
+            onSubmitted: (_) => _save(),
+            decoration: const InputDecoration(
+              border: OutlineInputBorder(),
+              labelText: 'Server URL',
+              hintText: 'http://192.168.1.147:8080',
+            ),
+          ),
+          if (_error != null) ...[
+            const SizedBox(height: 12),
+            Text(_error!, style: const TextStyle(color: Colors.redAccent)),
+          ],
+          const SizedBox(height: 16),
+          _checking
+              ? const Center(child: CircularProgressIndicator())
+              : FilledButton(onPressed: _save, child: const Text('Connect')),
+        ],
       ),
     );
   }
@@ -152,7 +270,7 @@ class _MediaGridScreenState extends State<MediaGridScreen> {
             final f = files[i];
             return InkWell(
               onTap: () => Navigator.of(context).push(MaterialPageRoute(
-                builder: (_) => ViewerScreen(entry: f),
+                builder: (_) => ViewerScreen(api: widget.api, entry: f),
               )),
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(10),
@@ -160,7 +278,7 @@ class _MediaGridScreenState extends State<MediaGridScreen> {
                   fit: StackFit.expand,
                   children: [
                     if (isImage(f.path))
-                      Image.network(mediaUrl(f.path), fit: BoxFit.cover)
+                      Image.network(widget.api.mediaUrl(f.path), fit: BoxFit.cover)
                     else
                       const ColoredBox(
                         color: Color(0xff27272a),
@@ -262,7 +380,8 @@ class _BrowserScreenState extends State<BrowserScreen> {
                     ? () => _open(e.path)
                     : media
                         ? () => Navigator.of(context).push(MaterialPageRoute(
-                              builder: (_) => ViewerScreen(entry: e),
+                              builder: (_) => ViewerScreen(
+                                  api: widget.api, entry: e),
                             ))
                         : null,
               );

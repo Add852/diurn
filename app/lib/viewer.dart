@@ -7,8 +7,9 @@ import 'api.dart';
 /// Fullscreen viewer for one media file. Images get pinch/pan via
 /// InteractiveViewer; videos play through media_kit (works on all 5 platforms).
 class ViewerScreen extends StatefulWidget {
+  final Api api;
   final FsEntry entry;
-  const ViewerScreen({super.key, required this.entry});
+  const ViewerScreen({super.key, required this.api, required this.entry});
 
   @override
   State<ViewerScreen> createState() => _ViewerScreenState();
@@ -24,7 +25,7 @@ class _ViewerScreenState extends State<ViewerScreen> {
     if (isVideo(widget.entry.path)) {
       _player = Player();
       _controller = VideoController(_player);
-      _player.open(Media(mediaUrl(widget.entry.path)));
+      _player.open(Media(widget.api.mediaUrl(widget.entry.path)));
     }
   }
 
@@ -50,7 +51,7 @@ class _ViewerScreenState extends State<ViewerScreen> {
             : InteractiveViewer(
                 maxScale: 8,
                 child: Image.network(
-                  mediaUrl(e.path),
+                  widget.api.mediaUrl(e.path),
                   fit: BoxFit.contain,
                   errorBuilder: (_, _, _) => const Icon(
                     Icons.broken_image_outlined,

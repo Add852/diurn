@@ -22,8 +22,9 @@ void main() {
   });
 
   test('mediaUrl encodes the path as a query param', () {
-    final url = mediaUrl('/srv/my media/a&b.jpg');
-    expect(url.startsWith('$kBaseUrl/api/media?path='), isTrue);
+    final api = Api('http://192.168.1.147:8080');
+    final url = api.mediaUrl('/srv/my media/a&b.jpg');
+    expect(url.startsWith('http://192.168.1.147:8080/api/media?path='), isTrue);
     expect(Uri.parse(url).queryParameters['path'], '/srv/my media/a&b.jpg');
   });
 }

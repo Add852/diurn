@@ -33,6 +33,7 @@ dependencies:
 
   cupertino_icons: ^1.0.8
   http: ^1.2.0
+  shared_preferences: ^2.2.0
   # media_kit instead of video_player: official plugin has no Windows/Linux backend.
   media_kit: ^1.2.0
   media_kit_video: ^1.2.0

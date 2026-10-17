@@ -3,10 +3,9 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
-/// Server URL, injected at build/run time:
+/// Compile-time default, used only to prefill the connect form:
 ///   flutter run --dart-define=DIURN_URL=http://192.168.1.20:8080
-/// ponytail: hardcoded base URL; add a settings field once there is auth.
-const kBaseUrl = String.fromEnvironment(
+const kDefaultUrl = String.fromEnvironment(
   'DIURN_URL',
   defaultValue: 'http://127.0.0.1:8080',
 );
@@ -23,9 +22,6 @@ String? ext(String path) {
 bool isVideo(String path) => kVideoExts.contains(ext(path));
 bool isImage(String path) => kImageExts.contains(ext(path));
 bool isMedia(String path) => isVideo(path) || isImage(path);
-
-String mediaUrl(String path) =>
-    '$kBaseUrl/api/media?path=${Uri.encodeQueryComponent(path)}';
 
 class FsEntry {
   final String name;
@@ -48,11 +44,14 @@ class ApiException implements Exception {
 }
 
 class Api {
-  final http.Client _client = http.Client();
+  final String baseUrl;
+  Api(this.baseUrl);
+
+  String mediaUrl(String path) =>
+      '$baseUrl/api/media?path=${Uri.encodeQueryComponent(path)}';
 
   Future<dynamic> _getJson(String path, Map<String, String> query) async {
-    final uri =
-        Uri.parse('$kBaseUrl$path').replace(queryParameters: query);
+    final uri = Uri.parse('$baseUrl$path').replace(queryParameters: query);
     final http.Response res;
     try {
       res = await _client.get(uri).timeout(const Duration(seconds: 15));
@@ -66,6 +65,8 @@ class Api {
     }
     return jsonDecode(res.body);
   }
+
+  final http.Client _client = http.Client();
 
   /// GET /api/config -> allowed roots
   Future<List<String>> config() async {
