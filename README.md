@@ -17,10 +17,12 @@ app/      Flutter client: media grid, directory browser, image/video viewer
 ```sh
 cd server
 DIURN_ROOTS="$HOME:$HOME/pictures" cargo run        # ':'-separated allowed roots, default: $HOME
+DIURN_TOKEN=sekrit cargo run                        # optional: require Bearer auth on all routes
 ```
 
 Port: `DIURN_PORT` (default 8080). Only paths under a root are readable —
-everything else is 403.
+everything else is 403. Thumbnails cache under `DIURN_CACHE`
+(default: system temp dir, `diurn-thumbs/`).
 
 ## Run the app
 
@@ -39,6 +41,11 @@ flutter run --dart-define=DIURN_URL=http://192.168.1.20:8080
 | `GET /api/fs?dir=<abs>&filter=<media>` | `{"entries":[{name,path,isDir}]}` |
 | `GET /api/fs?check=<abs>&kind=<media>` | `{"ok":bool,"reason"?}` |
 | `GET /api/media?path=<abs>` | file stream; `Range` supported (206/416) |
+| `GET /api/thumbnail?path=<abs>&size=` | JPEG thumb (longest edge, default 400), disk-cached |
+
+Auth: when `DIURN_TOKEN` is set, every route needs `Authorization: Bearer
+<token>`; media/thumbnail also accept `?token=` (img/video tags can't send
+headers). Unset = no auth (LAN dev).
 
 ## Tests
 

@@ -18,7 +18,7 @@ use std::{
 use axum::{
     body::Body,
     extract::{Query, State},
-    http::{header, HeaderMap, HeaderValue, StatusCode},
+    http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::get,
     Json, Router,
@@ -35,9 +35,11 @@ const MEDIA_EXTS: &[&str] = &[
 #[derive(Clone)]
 pub struct AppState {
     roots: Arc<Vec<PathBuf>>,
+    token: Option<Arc<String>>,
 }
 
-pub fn build_router(roots: Vec<PathBuf>) -> Router {
+pub fn build_router(roots: Vec<PathBuf>, token: Option<String>) -> Router {
+    let state = AppState { roots: Arc::new(roots), token: token.map(Arc::new) };
     // ponytail: permissive CORS is fine pre-auth for LAN dev, but it lets any
     // webpage you visit read the API (files on this box) — restrict to known
     // origins at the same time as the auth middleware lands.
@@ -45,8 +47,41 @@ pub fn build_router(roots: Vec<PathBuf>) -> Router {
         .route("/api/config", get(config))
         .route("/api/fs", get(fs))
         .route("/api/media", get(media))
+        .route("/api/thumbnail", get(thumbnail))
+        .layer(axum::middleware::from_fn_with_state(state.clone(), auth))
         .layer(CorsLayer::permissive())
-        .with_state(AppState { roots: Arc::new(roots) })
+        .with_state(state)
+}
+
+/// Bearer-token gate for every /api route. Disabled when DIURN_TOKEN unset.
+/// ponytail: `==` comparison, fine for a LAN shared secret; swap in
+/// constant-time compare (e.g. `subtle`) if tokens become user-scoped.
+async fn auth(
+    State(state): State<AppState>,
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    let Some(expected) = &state.token else {
+        return next.run(req).await;
+    };
+    let header_ok = req
+        .headers()
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.strip_prefix("Bearer ") == Some(expected.as_str()));
+    // <img>/<video> tags cannot send headers: allow ?token= as a fallback.
+    let query_ok = req
+        .uri()
+        .query()
+        .and_then(|q| {
+            q.split('&').find_map(|kv| kv.strip_prefix("token="))
+        })
+        .is_some_and(|t| t == expected.as_str());
+    if header_ok || query_ok {
+        next.run(req).await
+    } else {
+        StatusCode::UNAUTHORIZED.into_response()
+    }
 }
 
 /// Bootstrap for clients: the allowed roots, so the UI knows where to start.
@@ -195,6 +230,86 @@ async fn media(state: State<AppState>, Query(q): Query<MediaQuery>, headers: Hea
         builder = builder.header(header::CONTENT_RANGE, format!("bytes {start}-{end}/{size}"));
     }
     builder.body(Body::from_stream(stream)).unwrap()
+}
+
+#[derive(Deserialize)]
+struct ThumbQuery {
+    path: String,
+    size: Option<u32>,
+}
+
+/// Server-side thumbnail: longest edge resized to ?size= (default 400),
+/// JPEG-encoded, cached on disk keyed by path+mtime+size.
+async fn thumbnail(state: State<AppState>, Query(q): Query<ThumbQuery>) -> Response {
+    let Ok(path) = Path::new(&q.path).canonicalize() else {
+        return (StatusCode::NOT_FOUND, "no such file").into_response();
+    };
+    if !under_any_root(&state.roots, &path) || !path.is_file() {
+        return (StatusCode::FORBIDDEN, "path outside allowed roots").into_response();
+    }
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    if !is_media_file(&name) {
+        return (StatusCode::UNSUPPORTED_MEDIA_TYPE, "not a raster image").into_response();
+    }
+    let size = q.size.unwrap_or(400).clamp(64, 1200);
+
+    let Ok(meta) = tokio::fs::metadata(&path).await else {
+        return (StatusCode::NOT_FOUND, "no such file").into_response();
+    };
+    let mtime = meta
+        .modified()
+        .ok()
+        .and_then(|m| m.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    use std::hash::Hasher;
+    hasher.write(path.to_string_lossy().as_bytes());
+    hasher.write(&mtime.to_le_bytes());
+    hasher.write_u32(size);
+    let key = format!("{:016x}.jpg", hasher.finish());
+
+    let cache_dir = std::env::var("DIURN_CACHE")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| std::env::temp_dir().join("diurn-thumbs"));
+    let cache_path = cache_dir.join(key);
+
+    if let Ok(bytes) = tokio::fs::read(&cache_path).await {
+        return jpeg_response(bytes);
+    }
+
+    let src = path.clone();
+    let generated = tokio::task::spawn_blocking(move || generate_thumb(&src, size)).await;
+    match generated {
+        Ok(Ok(bytes)) => {
+            let _ = tokio::fs::create_dir_all(&cache_dir).await;
+            let _ = tokio::fs::write(&cache_path, &bytes).await;
+            jpeg_response(bytes)
+        }
+        _ => (StatusCode::UNPROCESSABLE_ENTITY, "cannot decode image").into_response(),
+    }
+}
+
+fn generate_thumb(src: &Path, size: u32) -> Result<Vec<u8>, ()> {
+    let img = image::open(src).map_err(|_| ())?;
+    let thumb = img.thumbnail(size, size);
+    let mut out = std::io::Cursor::new(Vec::new());
+    thumb
+        .write_to(&mut out, image::ImageFormat::Jpeg)
+        .map_err(|_| ())?;
+    Ok(out.into_inner())
+}
+
+fn jpeg_response(bytes: Vec<u8>) -> Response {
+    (
+        [(header::CONTENT_TYPE, "image/jpeg")],
+        bytes,
+    )
+        .into_response()
 }
 
 /// Ok(None): no Range header -> serve whole file (200).

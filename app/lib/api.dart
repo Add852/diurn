@@ -45,20 +45,37 @@ class ApiException implements Exception {
 
 class Api {
   final String baseUrl;
-  Api(this.baseUrl);
+  final String? token;
+  Api(this.baseUrl, {this.token});
 
-  String mediaUrl(String path) =>
-      '$baseUrl/api/media?path=${Uri.encodeQueryComponent(path)}';
+  /// Media/thumbnail URLs carry ?token= because <img>/<video> tags cannot
+  /// send Authorization headers.
+  String _fileUrl(String endpoint, String path) {
+    return Uri.parse('$baseUrl/api/$endpoint').replace(queryParameters: {
+      'path': path,
+      if (token != null) 'token': token,
+    }).toString();
+  }
+
+  String mediaUrl(String path) => _fileUrl('media', path);
+  String thumbUrl(String path) => _fileUrl('thumbnail', path);
 
   Future<dynamic> _getJson(String path, Map<String, String> query) async {
     final uri = Uri.parse('$baseUrl$path').replace(queryParameters: query);
     final http.Response res;
     try {
-      res = await _client.get(uri).timeout(const Duration(seconds: 15));
+      res = await _client
+          .get(uri, headers: {
+            if (token != null) 'Authorization': 'Bearer $token',
+          })
+          .timeout(const Duration(seconds: 15));
     } on TimeoutException {
       throw ApiException('Request timed out');
     } catch (e) {
       throw ApiException('Cannot reach server: $e');
+    }
+    if (res.statusCode == 401) {
+      throw ApiException('Unauthorized — check the token in settings');
     }
     if (res.statusCode != 200) {
       throw ApiException('HTTP ${res.statusCode}: ${res.body}');

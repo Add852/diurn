@@ -11,6 +11,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 mime_guess = "2"
 tower-http = { version = "0.6", features = ["cors"] }
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp"] }
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }

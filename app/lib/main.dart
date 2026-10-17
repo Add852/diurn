@@ -5,6 +5,7 @@ import 'api.dart';
 import 'viewer.dart';
 
 const _kPrefUrl = 'server_url';
+const _kPrefToken = 'server_token';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -42,6 +43,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Api? _api;
   List<String> _roots = [];
   String _savedUrl = kDefaultUrl;
+  String? _savedToken;
   bool _booting = true;
 
   @override
@@ -54,17 +56,18 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() => _booting = true);
     final prefs = await SharedPreferences.getInstance();
     _savedUrl = prefs.getString(_kPrefUrl) ?? kDefaultUrl;
+    _savedToken = prefs.getString(_kPrefToken);
     if (!mounted) return;
     setState(() => _booting = false);
-    await _connect(_savedUrl);
+    await _connect(_savedUrl, _savedToken);
   }
 
-  Future<void> _connect(String base) async {
+  Future<void> _connect(String base, String? token) async {
     try {
-      final roots = await Api(base).config();
+      final roots = await Api(base, token: token).config();
       if (!mounted) return;
       setState(() {
-        _api = Api(base);
+        _api = Api(base, token: token);
         _roots = roots;
       });
     } catch (_) {
@@ -72,13 +75,19 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  Future<void> _onConnected(String base, List<String> roots) async {
+  Future<void> _onConnected(String base, String? token, List<String> roots) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_kPrefUrl, base);
+    if (token == null) {
+      await prefs.remove(_kPrefToken);
+    } else {
+      await prefs.setString(_kPrefToken, token);
+    }
     if (!mounted) return;
     setState(() {
       _savedUrl = base;
-      _api = Api(base);
+      _savedToken = token;
+      _api = Api(base, token: token);
       _roots = roots;
     });
   }
@@ -86,6 +95,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _forget() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_kPrefUrl);
+    await prefs.remove(_kPrefToken);
     if (!mounted) return;
     setState(() => _api = null);
   }
@@ -99,7 +109,11 @@ class _HomeScreenState extends State<HomeScreen> {
     if (api == null) {
       return Scaffold(
         appBar: AppBar(title: const Text('diurn')),
-        body: ConnectForm(initial: _savedUrl, onConnected: _onConnected),
+        body: ConnectForm(
+          initial: _savedUrl,
+          initialToken: _savedToken,
+          onConnected: _onConnected,
+        ),
       );
     }
     return DefaultTabController(
@@ -133,10 +147,12 @@ class _HomeScreenState extends State<HomeScreen> {
 /// success; shows the server's/network's error verbatim on failure.
 class ConnectForm extends StatefulWidget {
   final String initial;
-  final void Function(String base, List<String> roots) onConnected;
+  final String? initialToken;
+  final void Function(String base, String? token, List<String> roots) onConnected;
   const ConnectForm({
     super.key,
     required this.initial,
+    required this.initialToken,
     required this.onConnected,
   });
 
@@ -147,6 +163,8 @@ class ConnectForm extends StatefulWidget {
 class _ConnectFormState extends State<ConnectForm> {
   late final TextEditingController _ctrl =
       TextEditingController(text: widget.initial);
+  late final TextEditingController _tokenCtrl =
+      TextEditingController(text: widget.initialToken ?? '');
   bool _checking = false;
   String? _error;
 
@@ -166,10 +184,11 @@ class _ConnectFormState extends State<ConnectForm> {
       _checking = true;
       _error = null;
     });
+    final token = _tokenCtrl.text.trim();
     try {
-      final roots = await Api(base).config();
+      final roots = await Api(base, token: token.isEmpty ? null : token).config();
       if (!mounted) return;
-      widget.onConnected(base, roots);
+      widget.onConnected(base, token.isEmpty ? null : token, roots);
     } catch (e) {
       setState(() {
         _checking = false;
@@ -205,6 +224,18 @@ class _ConnectFormState extends State<ConnectForm> {
               border: OutlineInputBorder(),
               labelText: 'Server URL',
               hintText: 'http://192.168.1.147:8080',
+            ),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _tokenCtrl,
+            autocorrect: false,
+            enabled: !_checking,
+            onSubmitted: (_) => _save(),
+            decoration: const InputDecoration(
+              border: OutlineInputBorder(),
+              labelText: 'Token (optional)',
+              hintText: 'DIURN_TOKEN set on the server, if any',
             ),
           ),
           if (_error != null) ...[
@@ -276,7 +307,14 @@ class _MediaGridScreenState extends State<MediaGridScreen> {
                   fit: StackFit.expand,
                   children: [
                     if (isImage(f.path))
-                      Image.network(widget.api.mediaUrl(f.path), fit: BoxFit.cover)
+                      Image.network(
+                        widget.api.thumbUrl(f.path),
+                        fit: BoxFit.cover,
+                        // thumbnail decode failed (e.g. unsupported format)
+                        // -> fall back to the full-size image
+                        errorBuilder: (_, _, _) =>
+                            Image.network(widget.api.mediaUrl(f.path), fit: BoxFit.cover),
+                      )
                     else
                       const ColoredBox(
                         color: Color(0xff27272a),

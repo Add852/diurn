@@ -7,7 +7,11 @@ use http_body_util::BodyExt;
 use tower::ServiceExt;
 
 fn app(root: &PathBuf) -> axum::Router {
-    diurn_server::build_router(vec![root.clone()])
+    diurn_server::build_router(vec![root.clone()], None)
+}
+
+fn app_with_token(root: &PathBuf, token: &str) -> axum::Router {
+    diurn_server::build_router(vec![root.clone()], Some(token.to_string()))
 }
 
 fn tmp_root(tag: &str) -> PathBuf {
@@ -161,4 +165,97 @@ async fn media_rejects_outside_root() {
         .unwrap();
     assert_eq!(res.status(), StatusCode::FORBIDDEN);
     std::fs::remove_file(&outside).ok();
+}
+
+#[tokio::test]
+async fn thumbnail_resizes_and_caches() {
+    let root = tmp_root("thumb");
+    // 1200x600 red PNG -> 400x200 JPEG thumb
+    let img = image::RgbaImage::from_pixel(1200, 600, image::Rgba([255u8, 0, 0, 255]));
+    img.save(root.join("big.png")).unwrap();
+
+    let res = app(&root)
+        .oneshot(
+            Request::get(format!("/api/thumbnail?path={}", root.join("big.png").display()))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(res.headers()["content-type"], "image/jpeg");
+    let body = res.into_body().collect().await.unwrap().to_bytes();
+    let decoded = image::load_from_memory(&body).unwrap();
+    assert_eq!((decoded.width(), decoded.height()), (400, 200));
+
+    // non-image -> 415
+    std::fs::write(root.join("note.txt"), b"x").unwrap();
+    let res = app(&root)
+        .oneshot(
+            Request::get(format!("/api/thumbnail?path={}", root.join("note.txt").display()))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
+}
+
+#[tokio::test]
+async fn auth_gate_and_media_token_query_fallback() {
+    let root = tmp_root("auth");
+    let content: Vec<u8> = (0u8..=9).collect();
+    std::fs::write(root.join("clip.bin"), &content).unwrap();
+    let media_url = format!("/api/media?path={}", root.join("clip.bin").display());
+    let app = app_with_token(&root, "sekrit");
+
+    // no credentials -> 401 on JSON route
+    let res = app
+        .clone()
+        .oneshot(Request::get("/api/config").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+
+    // correct header -> 200
+    let res = app
+        .clone()
+        .oneshot(
+            Request::get("/api/config")
+                .header("authorization", "Bearer sekrit")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    // media via ?token= (img/video tags can't send headers)
+    let res = app
+        .clone()
+        .oneshot(Request::get(&media_url).body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+    let res = app
+        .clone()
+        .oneshot(
+            Request::get(format!("{media_url}&token=sekrit"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    // wrong token rejected
+    let res = app
+        .oneshot(
+            Request::get("/api/config?token=wrong")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
 }
