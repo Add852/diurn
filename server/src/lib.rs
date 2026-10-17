@@ -26,6 +26,7 @@ use axum::{
 use serde::Deserialize;
 use serde_json::json;
 use tokio_util::io::ReaderStream;
+use tower_http::cors::CorsLayer;
 
 const MEDIA_EXTS: &[&str] = &[
     "mp4", "mkv", "webm", "mov", "avi", "jpg", "jpeg", "png", "gif", "webp", "bmp", "avif",
@@ -37,10 +38,14 @@ pub struct AppState {
 }
 
 pub fn build_router(roots: Vec<PathBuf>) -> Router {
+    // ponytail: permissive CORS is fine pre-auth for LAN dev, but it lets any
+    // webpage you visit read the API (files on this box) — restrict to known
+    // origins at the same time as the auth middleware lands.
     Router::new()
         .route("/api/config", get(config))
         .route("/api/fs", get(fs))
         .route("/api/media", get(media))
+        .layer(CorsLayer::permissive())
         .with_state(AppState { roots: Arc::new(roots) })
 }
 

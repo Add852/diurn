@@ -17,6 +17,22 @@ fn tmp_root(tag: &str) -> PathBuf {
 }
 
 #[tokio::test]
+async fn cors_preflight_allowed() {
+    let root = tmp_root("cors");
+    let res = app(&root)
+        .oneshot(
+            Request::get("/api/config")
+                .header("origin", "http://localhost:5173")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    assert!(res.headers().contains_key("access-control-allow-origin"));
+}
+
+#[tokio::test]
 async fn config_lists_roots() {
     let root = tmp_root("config");
     let res = app(&root)

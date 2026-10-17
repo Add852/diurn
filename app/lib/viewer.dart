@@ -1,8 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:media_kit/media_kit.dart';
-import 'package:media_kit_video/media_kit_video.dart';
 
 import 'api.dart';
+import 'video/video_file.dart';
 
 /// Fullscreen viewer for one media file. Images get pinch/pan via
 /// InteractiveViewer; videos play through media_kit (works on all 5 platforms).
@@ -16,22 +15,13 @@ class ViewerScreen extends StatefulWidget {
 }
 
 class _ViewerScreenState extends State<ViewerScreen> {
-  late final Player _player;
-  late final VideoController _controller;
-
   @override
   void initState() {
     super.initState();
-    if (isVideo(widget.entry.path)) {
-      _player = Player();
-      _controller = VideoController(_player);
-      _player.open(Media(widget.api.mediaUrl(widget.entry.path)));
-    }
   }
 
   @override
   void dispose() {
-    if (isVideo(widget.entry.path)) _player.dispose();
     super.dispose();
   }
 
@@ -47,7 +37,7 @@ class _ViewerScreenState extends State<ViewerScreen> {
       ),
       body: Center(
         child: isVideo(e.path)
-            ? Video(controller: _controller)
+            ? VideoFileWidget(url: widget.api.mediaUrl(e.path))
             : InteractiveViewer(
                 maxScale: 8,
                 child: Image.network(
