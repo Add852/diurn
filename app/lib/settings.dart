@@ -85,6 +85,7 @@ class _SettingsFormState extends State<_SettingsForm> {
   late final Map<String, dynamic> _profile;
   late List<Map<String, dynamic>> _questions;
   final _fields = <String, TextEditingController>{};
+  final _tzFocus = FocusNode();
   bool _saving = false;
   String? _error;
   String? _savedFlash;
@@ -111,6 +112,7 @@ class _SettingsFormState extends State<_SettingsForm> {
     for (final c in _fields.values) {
       c.dispose();
     }
+    _tzFocus.dispose();
     super.dispose();
   }
 
@@ -292,6 +294,7 @@ class _SettingsFormState extends State<_SettingsForm> {
       padding: const EdgeInsets.only(bottom: 12),
       child: RawAutocomplete<String>(
         textEditingController: _ctrl(key),
+        focusNode: _tzFocus,
         optionsBuilder: (TextEditingValue v) => zones.where(
           (z) => z.toLowerCase().contains(v.text.toLowerCase()),
         ),
