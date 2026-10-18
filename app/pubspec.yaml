@@ -35,6 +35,7 @@ dependencies:
   http: ^1.2.0
   shared_preferences: ^2.2.0
   flutter_markdown_plus: ^1.0.3
+  share_plus: ^11.0.0
   # media_kit instead of video_player: official plugin has no Windows/Linux backend.
   media_kit: ^1.2.0
   media_kit_video: ^1.2.0

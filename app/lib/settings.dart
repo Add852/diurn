@@ -5,6 +5,7 @@ import 'package:file_selector/file_selector.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:share_plus/share_plus.dart';
 
 import 'api.dart';
 import 'widgets/timezone_field.dart';
@@ -299,6 +300,22 @@ class _SettingsFormState extends State<_SettingsForm> {
     try {
       final data = await widget.api.settings();
       final json = const JsonEncoder.withIndent('  ').convert(data);
+      if (defaultTargetPlatform == TargetPlatform.android) {
+        // Android has no system save dialog — hand the file to the share
+        // sheet ("Save to Files", Drive, or any target app).
+        final result = await Share.shareXFiles([
+          XFile.fromData(
+            utf8.encode(json),
+            mimeType: 'application/json',
+            name: 'diurn-settings.json',
+          ),
+        ], subject: 'diurn settings');
+        if (!mounted) return;
+        _flash(result.status == ShareResultStatus.success
+            ? 'Exported via share sheet'
+            : 'Share dismissed');
+        return;
+      }
       final location = await getSaveLocation(
         suggestedName: 'diurn-settings.json',
       );
