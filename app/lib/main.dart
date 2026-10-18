@@ -65,11 +65,11 @@ class _HomeScreenState extends State<HomeScreen> {
     super.dispose();
   }
 
-  /// Single navigation entry point: leaving Settings bumps the refresh
-  /// signal, which discards that tab's unsaved draft.
+  /// Single navigation entry point: entering OR leaving Settings bumps the
+  /// refresh signal — the tab always loads the last saved settings.
   void _select(int i) {
     if (i == _index) return;
-    if (_index == 3 && i != 3) _refreshTick.value++;
+    if (i == 3 || _index == 3) _refreshTick.value++;
     setState(() => _index = i);
   }
 
@@ -171,6 +171,7 @@ class _HomeScreenState extends State<HomeScreen> {
               onChangeServer: _forget,
               onSaved: () => _refreshTick.value++,
               saveTrigger: _saveTrigger,
+              refreshSignal: _refreshTick,
             ),
           ],
         ),
