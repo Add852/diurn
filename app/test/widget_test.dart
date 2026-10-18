@@ -25,7 +25,7 @@ void main() {
   test('mediaUrl encodes the path as a query param', () {
     final api = Api('http://192.168.1.147:12321');
     final url = api.mediaUrl('/srv/my media/a&b.jpg');
-    expect(url.startsWith('http://192.168.1.147:12321/api/media?path='), isTrue);
+    expect(url.startsWith('http://192.168.1.147:12321/api/media/file?path='), isTrue);
     expect(Uri.parse(url).queryParameters['path'], '/srv/my media/a&b.jpg');
   });
 
