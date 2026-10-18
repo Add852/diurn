@@ -43,7 +43,6 @@ class _FormScreenState extends State<FormScreen> {
     }
     super.dispose();
   }
-  }
 
   Future<void> _save(FormInfo info, {bool overwrite = false}) async {
     setState(() {
