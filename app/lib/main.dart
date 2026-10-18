@@ -65,6 +65,14 @@ class _HomeScreenState extends State<HomeScreen> {
     super.dispose();
   }
 
+  /// Single navigation entry point: leaving Settings bumps the refresh
+  /// signal, which discards that tab's unsaved draft.
+  void _select(int i) {
+    if (i == _index) return;
+    if (_index == 3 && i != 3) _refreshTick.value++;
+    setState(() => _index = i);
+  }
+
   @override
   void initState() {
     super.initState();
@@ -176,7 +184,7 @@ class _HomeScreenState extends State<HomeScreen> {
             )
           : FloatingActionButton(
               shape: const CircleBorder(),
-              onPressed: () => setState(() => _index = 0),
+              onPressed: () => _select(0),
               tooltip: 'Add entry',
               child: const Icon(Icons.add),
             ),
@@ -191,26 +199,26 @@ class _HomeScreenState extends State<HomeScreen> {
               icon: Icons.edit_note_outlined,
               label: 'Today',
               selected: _index == 0,
-              onTap: () => setState(() => _index = 0),
+              onTap: () => _select(0),
             ),
             _NavItem(
               icon: Icons.book_outlined,
               label: 'Journal',
               selected: _index == 1,
-              onTap: () => setState(() => _index = 1),
+              onTap: () => _select(1),
             ),
             const SizedBox(width: 48), // notch gap for the FAB
             _NavItem(
               icon: Icons.photo_library_outlined,
               label: 'Media',
               selected: _index == 2,
-              onTap: () => setState(() => _index = 2),
+              onTap: () => _select(2),
             ),
             _NavItem(
               icon: Icons.settings_outlined,
               label: 'Settings',
               selected: _index == 3,
-              onTap: () => setState(() => _index = 3),
+              onTap: () => _select(3),
             ),
           ],
         ),
