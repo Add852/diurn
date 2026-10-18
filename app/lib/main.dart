@@ -98,6 +98,17 @@ class _HomeScreenState extends State<HomeScreen> {
       // config doubles as the auth check (401 -> credential fallback below)
       await Api(base, username: user, password: pass).config();
       if (!mounted) return;
+      // Fresh install: config is open pre-setup, but there is no profile yet —
+      // route to the setup screen instead of the (broken) tabs.
+      final st = await Api(base).authStatus();
+      if (!mounted) return;
+      if (st['needs_setup'] == true) {
+        setState(() {
+          _authMode = 'setup';
+          _hintUser = null;
+        });
+        return;
+      }
       setState(() {
         _api = Api(base, username: user, password: pass);
         _authMode = null;
