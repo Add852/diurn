@@ -129,9 +129,15 @@ class _HomeScreenState extends State<HomeScreen> {
             IconButton(
               icon: const Icon(Icons.settings_outlined),
               tooltip: 'Settings',
-              onPressed: () => Navigator.of(context).push(MaterialPageRoute(
-                builder: (_) => SettingsScreen(api: api, onChangeServer: _forget),
-              )),
+              onPressed: () => Navigator.of(context)
+                  .push(MaterialPageRoute(
+                    builder: (_) => SettingsScreen(
+                      api: api,
+                      onChangeServer: _forget,
+                    ),
+                  ))
+                  // roots may have changed in settings — refresh on return
+                  .then((_) => _connect(_savedUrl, _savedToken)),
             ),
           ],
           bottom: const TabBar(
