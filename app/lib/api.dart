@@ -110,7 +110,7 @@ class Api {
     }).toString();
   }
 
-  String mediaUrl(String path) => _fileUrl('media', path);
+  String mediaUrl(String path) => _fileUrl('media/file', path);
   String thumbUrl(String path) => _fileUrl('thumbnail', path);
 
   Future<dynamic> _getJson(String path, Map<String, String> query) async {
