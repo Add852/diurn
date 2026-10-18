@@ -134,11 +134,10 @@ class _SettingsFormState extends State<_SettingsForm> {
     });
   }
 
-  TextEditingController _ctrl(String key) =>
-      _fields.putIfAbsent(key, () => TextEditingController(
-            text: '${_profile[key] ?? ''}',
-          ));
-
+  TextEditingController _ctrl(String key) => _fields.putIfAbsent(
+    key,
+    () => TextEditingController(text: '${_profile[key] ?? ''}'),
+  );
 
   String _txt(String key) => _fields[key]?.text ?? '${_profile[key] ?? ''}';
 
@@ -246,8 +245,9 @@ class _SettingsFormState extends State<_SettingsForm> {
       _fields['accountPassword']?.clear();
       // the shell must send the new credentials from now on
       widget.onCredentialsChanged?.call(
-          username.isEmpty ? null : username,
-          password.isEmpty ? null : password);
+        username.isEmpty ? null : username,
+        password.isEmpty ? null : password,
+      );
     } catch (e) {
       if (!mounted) return;
       _fail('$e');
@@ -262,13 +262,15 @@ class _SettingsFormState extends State<_SettingsForm> {
       builder: (context) => AlertDialog(
         title: const Text('Restore defaults?'),
         content: const Text(
-            'This resets every setting (folders, questions, template) and the '
-            'admin account to admin / root. Journal entries and files are '
-            'kept. This cannot be undone.'),
+          'This resets every setting (folders, questions, template) and the '
+          'admin account to admin / root. Journal entries and files are '
+          'kept. This cannot be undone.',
+        ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Cancel')),
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
           FilledButton(
             onPressed: () => Navigator.pop(context, true),
             style: FilledButton.styleFrom(backgroundColor: Colors.red),
@@ -297,18 +299,23 @@ class _SettingsFormState extends State<_SettingsForm> {
     try {
       final data = await widget.api.settings();
       final json = const JsonEncoder.withIndent('  ').convert(data);
-      final location = await getSaveLocation(suggestedName: 'diurn-settings.json');
+      final location = await getSaveLocation(
+        suggestedName: 'diurn-settings.json',
+      );
       if (location == null) return; // cancelled
-      await XFile.fromData(utf8.encode(json), mimeType: 'application/json')
-          .saveTo(location.path);
+      await XFile.fromData(
+        utf8.encode(json),
+        mimeType: 'application/json',
+      ).saveTo(location.path);
       if (!mounted) return;
       _flash('Exported to ${location.path}');
     } catch (e) {
       // picker unsupported (some platforms) -> clipboard fallback
       if (!mounted) return;
       final data = await widget.api.settings();
-      await Clipboard.setData(ClipboardData(
-          text: const JsonEncoder.withIndent('  ').convert(data)));
+      await Clipboard.setData(
+        ClipboardData(text: const JsonEncoder.withIndent('  ').convert(data)),
+      );
       if (!mounted) return;
       _flash('File picker unavailable — JSON copied to clipboard ($e)');
     }
@@ -383,13 +390,18 @@ class _SettingsFormState extends State<_SettingsForm> {
         if (_error != null)
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-            child: Text(_error!, style: const TextStyle(color: Colors.redAccent)),
+            child: Text(
+              _error!,
+              style: const TextStyle(color: Colors.redAccent),
+            ),
           ),
         if (_savedFlash != null)
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-            child: Text(_savedFlash!,
-                style: const TextStyle(color: Colors.greenAccent)),
+            child: Text(
+              _savedFlash!,
+              style: const TextStyle(color: Colors.greenAccent),
+            ),
           ),
         Expanded(
           child: DefaultTabController(
@@ -426,8 +438,7 @@ class _SettingsFormState extends State<_SettingsForm> {
         const SizedBox(height: 16),
         _section('General'),
         _tzField('Timezone', 'timezone'),
-        _textField('Day offset hours (0-24)', 'day_offset_hours',
-            number: true),
+        _textField('Day offset hours (0-24)', 'day_offset_hours', number: true),
         const SizedBox(height: 16),
         _section('Appearance'),
         _themeModeField(),
@@ -445,17 +456,20 @@ class _SettingsFormState extends State<_SettingsForm> {
       child: SegmentedButton<String>(
         segments: const [
           ButtonSegment(
-              value: 'system',
-              label: Text('System'),
-              icon: Icon(Icons.brightness_auto_outlined)),
+            value: 'system',
+            label: Text('System'),
+            icon: Icon(Icons.brightness_auto_outlined),
+          ),
           ButtonSegment(
-              value: 'dark',
-              label: Text('Dark'),
-              icon: Icon(Icons.dark_mode_outlined)),
+            value: 'dark',
+            label: Text('Dark'),
+            icon: Icon(Icons.dark_mode_outlined),
+          ),
           ButtonSegment(
-              value: 'light',
-              label: Text('Light'),
-              icon: Icon(Icons.light_mode_outlined)),
+            value: 'light',
+            label: Text('Light'),
+            icon: Icon(Icons.light_mode_outlined),
+          ),
         ],
         selected: {mode},
         onSelectionChanged: (s) =>
@@ -477,8 +491,8 @@ class _SettingsFormState extends State<_SettingsForm> {
   };
 
   Widget _accentField() {
-    final current =
-        ((_profile['accent_color'] as String?) ?? '#22c55e').toLowerCase();
+    final current = ((_profile['accent_color'] as String?) ?? '#22c55e')
+        .toLowerCase();
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
       child: Wrap(
@@ -516,10 +530,12 @@ class _SettingsFormState extends State<_SettingsForm> {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        _section('Journal questions'),
+        _section('Questions'),
         if (_questions.isEmpty)
-          const Text('No questions yet — add one below.',
-              style: TextStyle(fontSize: 12, fontStyle: FontStyle.italic)),
+          const Text(
+            'No questions yet — add one below.',
+            style: TextStyle(fontSize: 12, fontStyle: FontStyle.italic),
+          ),
         ReorderableListView.builder(
           shrinkWrap: true,
           physics: const NeverScrollableScrollPhysics(),
@@ -536,7 +552,8 @@ class _SettingsFormState extends State<_SettingsForm> {
           },
           itemBuilder: (context, i) => Card(
             key: ValueKey(
-                'q-${_questions[i]['id'] ?? 'new-${_questions[i]['identifier']}'}'),
+              'q-${_questions[i]['id'] ?? 'new-${_questions[i]['identifier']}'}',
+            ),
             color: Theme.of(context).colorScheme.surfaceContainerHighest,
             child: ListTile(
               title: Text(_questions[i]['question'] as String? ?? ''),
@@ -558,20 +575,20 @@ class _SettingsFormState extends State<_SettingsForm> {
           label: const Text('Add question'),
         ),
         const SizedBox(height: 20),
-        _section('Note template'),
-        _pathField('Template note (.md)', 'template_note_path',
-            pickFile: true),
+        _section('Entry template'),
+        _pathField('Template note (.md)', 'template_note_path', pickFile: true),
         if (_txt('template_note_path').isNotEmpty) ...[
           Row(
             children: [
               Expanded(
-                child: Text('Template content',
-                    style: TextStyle(
-                        fontSize: 13,
-                        color: Theme.of(context)
-                            .colorScheme
-                            .onSurface
-                            .withValues(alpha: 0.7))),
+                child: Text(
+                  'Template content',
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: Theme.of(context).colorScheme.onSurface
+                        .withValues(alpha: 0.7),
+                  ),
+                ),
               ),
               IconButton(
                 icon: const Icon(Icons.refresh, size: 20),
@@ -597,52 +614,59 @@ class _SettingsFormState extends State<_SettingsForm> {
             child: ExpansionTile(
               tilePadding: EdgeInsets.zero,
               childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-              title: const Text('Template guide',
-                  style:
-                      TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+              title: const Text(
+                'Template guide',
+                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+              ),
               children: [
                 Align(
-                    alignment: Alignment.centerLeft,
-                    child:
-                        Text('Question placeholders', style: _guideHeading)),
-                _guideRow('{Q1.answer}',
-                    'the answer to question Q1 (empty when unanswered)'),
+                  alignment: Alignment.centerLeft,
+                  child: Text('Question placeholders', style: _guideHeading),
+                ),
                 _guideRow(
-                    '{Q1.question}', 'the question text itself'),
-                _guideRow('{Q1.asked}',
-                    'true / false — whether it was asked in the form'),
-                _guideRow('{Q1.prompt}',
-                    'the AI refinement prompt (blank for now)'),
+                  '{Q1.answer}',
+                  'the answer to question Q1 (empty when unanswered)',
+                ),
+                _guideRow('{Q1.question}', 'the question text itself'),
+                _guideRow(
+                  '{Q1.asked}',
+                  'true / false — whether it was asked in the form',
+                ),
+                // _guideRow(
+                //   '{Q1.prompt}',
+                //   'the AI refinement prompt (blank for now)',
+                // ),
                 const SizedBox(height: 8),
                 Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                        'Use the variable names from the questions above — unknown names stay as literal text.',
-                        style: _guideNote)),
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    'Use the variable names from the questions above — unknown names stay as literal text.',
+                    style: _guideNote,
+                  ),
+                ),
                 const SizedBox(height: 8),
                 Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text('Note date — \$date("format")',
-                        style: _guideHeading)),
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    'Note date — \$date("format")',
+                    style: _guideHeading,
+                  ),
+                ),
                 _guideRow(r'$date("dddd")', 'Friday'),
                 _guideRow(r'$date("MMMM d, yyyy")', 'October 18, 2026'),
                 _guideRow(r'$date("yyyy-MM-dd")', '2026-10-18'),
                 _guideRow(r'$date("d.M.yy")', '18.10.26'),
                 const SizedBox(height: 8),
                 Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                        'Specifiers: d day · ddd weekday short · dddd weekday · '
-                        'M month · MMM short · MMMM full · yy / yyyy year. '
-                        "Repeating a letter pads it (dd → 05). Wrap literal "
-                        "letters in 'quotes', escape with \\.",
-                        style: _guideNote)),
-                const SizedBox(height: 8),
-                Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                        'Frontmatter works too:\ndayOfWeek: \$date("dddd")\nweight: {Q2.answer}',
-                        style: _guideNote)),
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    'Specifiers: d day · ddd weekday short · dddd weekday · '
+                    'M month · MMM short · MMMM full · yy / yyyy year. '
+                    "Repeating a letter pads it (dd → 05). Wrap literal "
+                    "letters in 'quotes', escape with \\.",
+                    style: _guideNote,
+                  ),
+                ),
               ],
             ),
           ),
@@ -650,41 +674,45 @@ class _SettingsFormState extends State<_SettingsForm> {
           Text(
             'Set a template note path above to edit the template.',
             style: TextStyle(
-                fontSize: 12,
-                color: Theme.of(context)
-                    .colorScheme
-                    .onSurface
-                    .withValues(alpha: 0.38)),
+              fontSize: 12,
+              color: Theme.of(context).colorScheme.onSurface
+                  .withValues(alpha: 0.38),
+            ),
           ),
       ],
     );
   }
 
   TextStyle get _guideHeading => TextStyle(
-      fontSize: 12,
-      fontWeight: FontWeight.w700,
-      color: Theme.of(context).colorScheme.primary);
+    fontSize: 12,
+    fontWeight: FontWeight.w700,
+    color: Theme.of(context).colorScheme.primary,
+  );
 
   TextStyle get _guideNote => TextStyle(
-      fontSize: 12,
-      height: 1.4,
-      color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.7));
+    fontSize: 12,
+    height: 1.4,
+    color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.7),
+  );
 
   Widget _guideRow(String token, String meaning) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 2),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(token,
-                style: const TextStyle(
-                    fontFamily: 'monospace',
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600)),
-            const SizedBox(width: 10),
-            Expanded(child: Text(meaning, style: _guideNote)),
-          ],
+    padding: const EdgeInsets.symmetric(vertical: 2),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          token,
+          style: const TextStyle(
+            fontFamily: 'monospace',
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+          ),
         ),
-      );
+        const SizedBox(width: 10),
+        Expanded(child: Text(meaning, style: _guideNote)),
+      ],
+    ),
+  );
 
   Widget _adminTab() {
     return ListView(
@@ -702,8 +730,11 @@ class _SettingsFormState extends State<_SettingsForm> {
             ),
           ),
         ),
-        _textField('New password (min 4, empty = keep)', 'accountPassword',
-            obscure: true),
+        _textField(
+          'New password (min 4, empty = keep)',
+          'accountPassword',
+          obscure: true,
+        ),
         const SizedBox(height: 8),
         OutlinedButton.icon(
           onPressed: _saving ? null : _saveAccount,
@@ -729,15 +760,19 @@ class _SettingsFormState extends State<_SettingsForm> {
         ListTile(
           leading: const Icon(Icons.copy_outlined),
           title: const Text('Export settings'),
-          subtitle: const Text('Copies all settings as JSON to the clipboard',
-              style: TextStyle(fontSize: 12)),
+          subtitle: const Text(
+            'Copies all settings as JSON to the clipboard',
+            style: TextStyle(fontSize: 12),
+          ),
           onTap: _exportSettings,
         ),
         ListTile(
           leading: const Icon(Icons.file_open_outlined),
           title: const Text('Import from file'),
-          subtitle: const Text('Pick a previously exported settings JSON',
-              style: TextStyle(fontSize: 12)),
+          subtitle: const Text(
+            'Pick a previously exported settings JSON',
+            style: TextStyle(fontSize: 12),
+          ),
           onTap: _importSettings,
         ),
       ],
@@ -745,21 +780,23 @@ class _SettingsFormState extends State<_SettingsForm> {
   }
 
   Widget _section(String title) => Padding(
-        padding: const EdgeInsets.only(bottom: 8),
-        child: Text(
-          title,
-          style: TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.w700,
-              color: Theme.of(context)
-                  .colorScheme
-                  .onSurface
-                  .withValues(alpha: 0.7)),
-        ),
-      );
+    padding: const EdgeInsets.only(bottom: 8),
+    child: Text(
+      title,
+      style: TextStyle(
+        fontSize: 16,
+        fontWeight: FontWeight.w700,
+        color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.7),
+      ),
+    ),
+  );
 
-  Widget _textField(String label, String key,
-      {bool obscure = false, bool number = false}) {
+  Widget _textField(
+    String label,
+    String key, {
+    bool obscure = false,
+    bool number = false,
+  }) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: TextFormField(
@@ -793,7 +830,8 @@ class _SettingsFormState extends State<_SettingsForm> {
           ),
           IconButton(
             icon: Icon(
-                pickFile ? Icons.description_outlined : Icons.folder_open),
+              pickFile ? Icons.description_outlined : Icons.folder_open,
+            ),
             tooltip: pickFile ? 'Browse server files' : 'Browse server folders',
             onPressed: () => _pickPath(key, pickFile: pickFile),
           ),
@@ -811,9 +849,11 @@ class _SettingsFormState extends State<_SettingsForm> {
   Future<void> _questionDialog({int? index}) async {
     final existing = index == null ? null : _questions[index];
     final idCtrl = TextEditingController(
-        text: existing?['identifier'] as String? ?? '');
-    final qCtrl =
-        TextEditingController(text: existing?['question'] as String? ?? '');
+      text: existing?['identifier'] as String? ?? '',
+    );
+    final qCtrl = TextEditingController(
+      text: existing?['question'] as String? ?? '',
+    );
     bool asked = existing?['asked'] != false;
     final result = await showDialog<Map<String, dynamic>>(
       context: context,
@@ -822,15 +862,16 @@ class _SettingsFormState extends State<_SettingsForm> {
           title: Row(
             children: [
               Expanded(
-                  child:
-                      Text(existing == null ? 'Add question' : 'Edit question')),
+                child: Text(
+                  existing == null ? 'Add question' : 'Edit question',
+                ),
+              ),
               if (existing != null)
                 IconButton(
                   icon: const Icon(Icons.delete_outline),
                   color: Colors.redAccent,
                   tooltip: 'Delete question',
-                  onPressed: () =>
-                      Navigator.pop(context, {'__delete': true}),
+                  onPressed: () => Navigator.pop(context, {'__delete': true}),
                 ),
             ],
           ),
@@ -867,8 +908,7 @@ class _SettingsFormState extends State<_SettingsForm> {
               onPressed: () => Navigator.pop(context),
               child: const Text('Cancel'),
             ),
-            if (existing != null)
-              const SizedBox(width: 8),
+            if (existing != null) const SizedBox(width: 8),
             FilledButton(
               onPressed: () => Navigator.pop(context, {
                 ...?existing,
@@ -890,11 +930,13 @@ class _SettingsFormState extends State<_SettingsForm> {
         builder: (context) => AlertDialog(
           title: const Text('Remove question?'),
           content: Text(
-              'This removes ${existing?['identifier']} from the form. Saved answers of past entries are kept.'),
+            'This removes ${existing?['identifier']} from the form. Saved answers of past entries are kept.',
+          ),
           actions: [
             TextButton(
-                onPressed: () => Navigator.pop(context, false),
-                child: const Text('Cancel')),
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel'),
+            ),
             FilledButton(
               onPressed: () => Navigator.pop(context, true),
               style: FilledButton.styleFrom(backgroundColor: Colors.red),
@@ -938,8 +980,7 @@ class ServerPathPickerDialog extends StatefulWidget {
   });
 
   @override
-  State<ServerPathPickerDialog> createState() =>
-      _ServerPathPickerDialogState();
+  State<ServerPathPickerDialog> createState() => _ServerPathPickerDialogState();
 }
 
 class _ServerPathPickerDialogState extends State<ServerPathPickerDialog> {
@@ -950,9 +991,9 @@ class _ServerPathPickerDialogState extends State<ServerPathPickerDialog> {
   @override
   void initState() {
     super.initState();
-    _dir = widget.initial.isEmpty ? '' : (widget.pickFile
-        ? _parentOf(widget.initial)
-        : widget.initial);
+    _dir = widget.initial.isEmpty
+        ? ''
+        : (widget.pickFile ? _parentOf(widget.initial) : widget.initial);
     _load();
   }
 
@@ -1024,10 +1065,12 @@ class _ServerPathPickerDialogState extends State<ServerPathPickerDialog> {
                   final dirs = entries.where((e) => e.isDir).toList();
                   final files = widget.pickFile
                       ? entries
-                          .where((e) =>
-                              !e.isDir &&
-                              e.path.toLowerCase().endsWith('.md'))
-                          .toList()
+                            .where(
+                              (e) =>
+                                  !e.isDir &&
+                                  e.path.toLowerCase().endsWith('.md'),
+                            )
+                            .toList()
                       : const <FsEntry>[];
                   if (dirs.isEmpty && files.isEmpty) {
                     return const Center(child: Text('Empty'));
@@ -1068,8 +1111,8 @@ class _ServerPathPickerDialogState extends State<ServerPathPickerDialog> {
         FilledButton(
           onPressed: widget.pickFile
               ? (_selectedFile == null
-                  ? null
-                  : () => Navigator.pop(context, _selectedFile))
+                    ? null
+                    : () => Navigator.pop(context, _selectedFile))
               : () => Navigator.pop(context, _dir),
           child: Text(widget.pickFile ? 'Use file' : 'Use folder'),
         ),
