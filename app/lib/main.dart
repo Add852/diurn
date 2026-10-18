@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'api.dart';
+import 'form.dart';
 import 'journal.dart';
 import 'lightbox.dart';
 import 'viewer.dart';
@@ -131,11 +132,12 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ],
           bottom: const TabBar(
-            tabs: [Tab(text: 'Journal'), Tab(text: 'Media'), Tab(text: 'Browse')],
+            tabs: [Tab(text: 'Today'), Tab(text: 'Journal'), Tab(text: 'Media'), Tab(text: 'Browse')],
           ),
         ),
         body: TabBarView(
           children: [
+            FormScreen(api: api),
             JournalScreen(api: api),
             MediaScreen(api: api),
             BrowserScreen(api: api, initialDir: _roots.first),

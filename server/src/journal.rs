@@ -1,7 +1,9 @@
 //! GET /api/entries — port of src/app/api/entries/route.ts GET (read side):
 //! entries table merged with fs-only {date}.md files from daily_note_folder.
 
-use std::path::Path;
+use std::{
+    path::{Path, PathBuf},
+};
 
 use serde::Serialize;
 
@@ -121,4 +123,309 @@ fn date_from_filename(name: &str) -> Option<String> {
     } else {
         None
     }
+}
+
+// --- form + write path (no-AI port of /api/form + entries POST/PUT/DELETE) ---
+
+pub fn is_valid_date(s: &str) -> bool {
+    s.len() == 10
+        && s.as_bytes()[4] == b'-'
+        && s.as_bytes()[7] == b'-'
+        && chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").is_ok()
+}
+
+/// Port of timezone.ts localDate: shift by day_offset, format in profile tz
+/// (UTC fallback when the tz name is unknown).
+pub fn local_date(now_ms: i64, tz: &str, offset_hours: i64) -> String {
+    use chrono::TimeZone;
+    let shifted = now_ms - offset_hours * 3_600_000;
+    let utc = chrono::Utc.timestamp_millis_opt(shifted).single();
+    let in_tz = tz
+        .parse::<chrono_tz::Tz>()
+        .ok()
+        .zip(utc)
+        .map(|(tz, u)| u.with_timezone(&tz).format("%Y-%m-%d").to_string());
+    in_tz.unwrap_or_else(|| {
+        utc.map(|u| u.format("%Y-%m-%d").to_string())
+            .unwrap_or_default()
+    })
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub struct FormQuestion {
+    pub identifier: String,
+    pub question: String,
+    pub answer_prompt: String,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub struct FormInfo {
+    pub date: String,
+    pub questions: Vec<FormQuestion>,
+    pub ask_mode: String,
+    pub form_output: String,
+}
+
+/// GET /api/form — no-AI subset: date + asked questions + mode flags.
+pub fn form(conn: &rusqlite::Connection, profile: &Profile, now_ms: i64) -> Option<FormInfo> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT identifier, question, answer_prompt FROM profile_questions
+             WHERE profile_id = ?1 AND asked = 1 ORDER BY sort_order",
+        )
+        .ok()?;
+    let questions = stmt
+        .query_map(rusqlite::params![profile.id], |r| {
+            Ok(FormQuestion {
+                identifier: r.get(0)?,
+                question: r.get(1)?,
+                answer_prompt: r.get(2)?,
+            })
+        })
+        .ok()?
+        .flatten()
+        .collect::<Vec<_>>();
+    if questions.is_empty() {
+        return None;
+    }
+    Some(FormInfo {
+        date: local_date(now_ms, &profile.timezone, profile.day_offset_hours),
+        questions,
+        ask_mode: "separate".into(),
+        form_output: "raw".into(),
+    })
+}
+
+/// Atomic tmp+rename write of {date}.md (port of writeNote).
+pub fn write_note(dir: &Path, date: &str, content: &str) -> std::io::Result<PathBuf> {
+    std::fs::create_dir_all(dir)?;
+    let file_path = dir.join(format!("{date}.md"));
+    let tmp = file_path.with_extension("md.tmp");
+    std::fs::write(&tmp, content)?;
+    std::fs::rename(&tmp, &file_path)?;
+    Ok(file_path)
+}
+
+pub enum CreateError {
+    InvalidDate,
+    Exists,
+    Db(String),
+}
+
+pub struct Created {
+    pub entry_id: i64,
+    pub file_path: Option<String>,
+    pub rendered: String,
+}
+
+/// POST /api/entries (form, no-AI): verbatim answers -> template -> file+rows.
+pub fn create_entry(
+    conn: &mut rusqlite::Connection,
+    profile: &Profile,
+    date: &str,
+    overwrite: bool,
+    answers_in: &std::collections::HashMap<String, String>,
+) -> Result<Created, CreateError> {
+    if !is_valid_date(date) {
+        return Err(CreateError::InvalidDate);
+    }
+    let existing: Option<i64> = conn
+        .query_row(
+            "SELECT id FROM entries WHERE profile_id = ?1 AND date = ?2",
+            rusqlite::params![profile.id, date],
+            |r| r.get(0),
+        )
+        .ok();
+    if existing.is_some() && !overwrite {
+        return Err(CreateError::Exists);
+    }
+    if let Some(id) = existing {
+        let _ = conn.execute("DELETE FROM entries WHERE id = ?1", rusqlite::params![id]);
+    }
+
+    let template = if !profile.template_note_path.is_empty()
+        && Path::new(&profile.template_note_path).is_file()
+    {
+        std::fs::read_to_string(&profile.template_note_path).unwrap_or_default()
+    } else {
+        crate::template::default_template().to_string()
+    };
+
+    // All questions get slots (empty when unanswered) so the rendered note
+    // never shows literal {X.answer} tokens. ponytail: old app leaves literal
+    // tokens for unanswered questions when AI is off — this is friendlier.
+    let mut vars = std::collections::HashMap::new();
+    {
+        let mut stmt = conn
+            .prepare(
+                "SELECT identifier, question, answer_prompt, asked FROM profile_questions
+                 WHERE profile_id = ?1 ORDER BY sort_order",
+            )
+            .map_err(|e| CreateError::Db(e.to_string()))?;
+        let rows = stmt
+            .query_map(rusqlite::params![profile.id], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, i64>(3)?,
+                ))
+            })
+            .map_err(|e| CreateError::Db(e.to_string()))?;
+        for (identifier, question, prompt, asked) in rows.flatten() {
+            let answer = answers_in.get(&identifier).map(|s| s.trim()).unwrap_or("");
+            vars.insert(
+                identifier,
+                crate::template::TemplateVar {
+                    question,
+                    answer: answer.to_string(),
+                    asked: asked != 0,
+                    prompt,
+                },
+            );
+        }
+    }
+
+    let rendered = crate::template::render_template(&template, &vars, chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d").unwrap());
+
+    let file_path = if !profile.daily_note_folder.is_empty() {
+        write_note(Path::new(&profile.daily_note_folder), date, &rendered)
+            .map(|p| p.to_string_lossy().into_owned())
+            .ok()
+    } else {
+        None
+    };
+
+    let tx = conn.transaction().map_err(|e| CreateError::Db(e.to_string()))?;
+    tx.execute(
+        "INSERT INTO entries (profile_id, date, rendered_markdown, file_path) VALUES (?1, ?2, ?3, ?4)",
+        rusqlite::params![profile.id, date, rendered, file_path],
+    )
+    .map_err(|e| CreateError::Db(e.to_string()))?;
+    let entry_id = tx.last_insert_rowid();
+    {
+        let mut stmt = tx
+            .prepare("SELECT id, identifier FROM profile_questions WHERE profile_id = ?1")
+            .map_err(|e| CreateError::Db(e.to_string()))?;
+        let rows = stmt
+            .query_map(rusqlite::params![profile.id], |r| {
+                Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
+            })
+            .map_err(|e| CreateError::Db(e.to_string()))?;
+        for (qid, identifier) in rows.flatten() {
+            if let Some(a) = answers_in.get(&identifier) {
+                if !a.trim().is_empty() {
+                    let _ = tx.execute(
+                        "INSERT INTO entry_answers (entry_id, question_id, answer_text) VALUES (?1, ?2, ?3)",
+                        rusqlite::params![entry_id, qid, a.trim()],
+                    );
+                }
+            }
+        }
+    }
+    tx.commit().map_err(|e| CreateError::Db(e.to_string()))?;
+
+    Ok(Created { entry_id, file_path, rendered })
+}
+
+pub enum UpdateError {
+    InvalidDate,
+    NotFound,
+    Db(String),
+}
+
+/// PUT /api/entries: rewrite the note file (adopting fs-only entries) + DB row.
+pub fn update_entry(
+    conn: &rusqlite::Connection,
+    profile: &Profile,
+    date: &str,
+    markdown: &str,
+) -> Result<(i64, Option<String>), UpdateError> {
+    if !is_valid_date(date) {
+        return Err(UpdateError::InvalidDate);
+    }
+    if markdown.trim().is_empty() {
+        return Err(UpdateError::NotFound);
+    }
+    let existing: Option<(i64, Option<String>)> = conn
+        .query_row(
+            "SELECT id, file_path FROM entries WHERE profile_id = ?1 AND date = ?2",
+            rusqlite::params![profile.id, date],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .ok();
+    let note_path = if profile.daily_note_folder.is_empty() {
+        None
+    } else {
+        Some(Path::new(&profile.daily_note_folder).join(format!("{date}.md")))
+    };
+    let fs_only = existing.is_none() && note_path.as_ref().is_some_and(|p| p.is_file());
+    if existing.is_none() && !fs_only {
+        return Err(UpdateError::NotFound);
+    }
+
+    let file_path = note_path
+        .as_ref()
+        .and_then(|p| write_note(p.parent().unwrap(), date, markdown).ok())
+        .map(|p| p.to_string_lossy().into_owned());
+
+    if let Some((id, _)) = existing {
+        conn.execute(
+            "UPDATE entries SET rendered_markdown = ?1, file_path = ?2 WHERE id = ?3",
+            rusqlite::params![markdown, file_path, id],
+        )
+        .map_err(|e| UpdateError::Db(e.to_string()))?;
+        Ok((id, file_path))
+    } else {
+        conn.execute(
+            "INSERT INTO entries (profile_id, date, rendered_markdown, file_path) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![profile.id, date, markdown, file_path],
+        )
+        .map_err(|e| UpdateError::Db(e.to_string()))?;
+        Ok((conn.last_insert_rowid(), file_path))
+    }
+}
+
+/// DELETE /api/entries?date= — drop the DB row; remove the note file only
+/// when it lives under the configured notes folder.
+pub fn delete_entry(
+    conn: &rusqlite::Connection,
+    profile: &Profile,
+    date: &str,
+) -> Result<bool, UpdateError> {
+    if !is_valid_date(date) {
+        return Err(UpdateError::InvalidDate);
+    }
+    let existing: Option<(i64, Option<String>)> = conn
+        .query_row(
+            "SELECT id, file_path FROM entries WHERE profile_id = ?1 AND date = ?2",
+            rusqlite::params![profile.id, date],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .ok();
+    let note_path = if profile.daily_note_folder.is_empty() {
+        None
+    } else {
+        Some(Path::new(&profile.daily_note_folder).join(format!("{date}.md")))
+    };
+    let fs_only = existing.is_none() && note_path.as_ref().is_some_and(|p| p.is_file());
+    if existing.is_none() && !fs_only {
+        return Ok(false);
+    }
+    if let Some((id, _)) = existing {
+        conn.execute("DELETE FROM entries WHERE id = ?1", rusqlite::params![id])
+            .map_err(|e| UpdateError::Db(e.to_string()))?;
+    }
+    let base = profile.daily_note_folder.trim_end_matches('/');
+    let fp = existing
+        .and_then(|(_, fp)| fp)
+        .or_else(|| note_path.map(|p| p.to_string_lossy().into_owned()));
+    if let Some(fp) = fp {
+        if !base.is_empty() && fp.starts_with(&format!("{base}/")) {
+            let _ = std::fs::remove_file(&fp);
+        }
+    }
+    Ok(true)
 }

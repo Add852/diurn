@@ -43,6 +43,11 @@ class ApiException implements Exception {
   String toString() => message;
 }
 
+/// POST /api/entries answered 409 — a note already exists for that date.
+class EntryExistsException extends ApiException {
+  EntryExistsException() : super('Entry already exists for this date');
+}
+
 /// One journal day: DB entry or fs-only {date}.md (id < 0).
 class Entry {
   final int id;
@@ -122,13 +127,46 @@ class Api {
     } catch (e) {
       throw ApiException('Cannot reach server: $e');
     }
-    if (res.statusCode == 401) {
+    return _decodeBody(res.statusCode, res.body);
+  }
+
+  Future<dynamic> _send(
+    String method,
+    String path,
+    Map<String, String> query,
+    Map<String, dynamic>? body,
+  ) async {
+    final uri = Uri.parse('$baseUrl$path').replace(queryParameters: query);
+    final req = http.Request(method, uri)
+      ..headers['Content-Type'] = 'application/json';
+    if (token != null) req.headers['Authorization'] = 'Bearer $token';
+    if (body != null) req.body = jsonEncode(body);
+    final http.StreamedResponse res;
+    try {
+      res = await _client.send(req).timeout(const Duration(seconds: 30));
+    } on TimeoutException {
+      throw ApiException('Request timed out');
+    } catch (e) {
+      throw ApiException('Cannot reach server: $e');
+    }
+    final text = await res.stream.bytesToString();
+    return _decodeBody(res.statusCode, text);
+  }
+
+  dynamic _decodeBody(int status, String text) {
+    if (status == 401) {
       throw ApiException('Unauthorized — check the token in settings');
     }
-    if (res.statusCode != 200) {
-      throw ApiException('HTTP ${res.statusCode}: ${res.body}');
+    final decoded = text.isEmpty ? null : jsonDecode(text);
+    if (status == 409 && decoded is Map && decoded['exists'] == true) {
+      throw EntryExistsException();
     }
-    return jsonDecode(res.body);
+    if (status >= 400) {
+      final reason =
+          decoded is Map && decoded['error'] != null ? decoded['error'] : text;
+      throw ApiException('HTTP $status: $reason');
+    }
+    return decoded;
   }
 
   final http.Client _client = http.Client();
@@ -175,4 +213,64 @@ class Api {
     final list = (v['files'] as List).cast<Map<String, dynamic>>();
     return list.map(MediaFile.fromJson).toList();
   }
+
+  /// GET /api/form
+  Future<FormInfo> form() async {
+    final v = await _getJson('/api/form', {});
+    return FormInfo.fromJson(v as Map<String, dynamic>);
+  }
+
+  /// POST /api/entries — throws EntryExistsException on 409.
+  Future<String> createEntry(
+    String date,
+    Map<String, String> answers, {
+    bool overwrite = false,
+  }) async {
+    final v = await _send('POST', '/api/entries', {}, {
+      'date': date,
+      if (overwrite) 'overwrite': true,
+      'answers': answers,
+    });
+    return (v['rendered'] as String?) ?? '';
+  }
+
+  /// PUT /api/entries
+  Future<void> updateEntry(String date, String markdown) async {
+    await _send('PUT', '/api/entries', {}, {
+      'date': date,
+      'markdown': markdown,
+    });
+  }
+
+  /// DELETE /api/entries?date=
+  Future<void> deleteEntry(String date) async {
+    await _send('DELETE', '/api/entries', {'date': date}, null);
+  }
+}
+
+/// One question of the active profile's form.
+class FormQuestion {
+  final String identifier;
+  final String question;
+  const FormQuestion({required this.identifier, required this.question});
+
+  factory FormQuestion.fromJson(Map<String, dynamic> j) => FormQuestion(
+        identifier: j['identifier'] as String,
+        question: j['question'] as String,
+      );
+}
+
+/// GET /api/form — today's date + asked questions.
+class FormInfo {
+  final String date;
+  final List<FormQuestion> questions;
+  const FormInfo({required this.date, required this.questions});
+
+  factory FormInfo.fromJson(Map<String, dynamic> j) => FormInfo(
+        date: j['date'] as String,
+        questions: (j['questions'] as List)
+            .cast<Map<String, dynamic>>()
+            .map(FormQuestion.fromJson)
+            .toList(),
+      );
 }

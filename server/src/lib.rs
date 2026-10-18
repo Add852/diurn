@@ -31,6 +31,7 @@ use tower_http::cors::CorsLayer;
 pub mod db;
 pub mod journal;
 pub mod media;
+pub mod template;
 
 use db::Db;
 
@@ -57,7 +58,8 @@ pub fn build_router(roots: Vec<PathBuf>, token: Option<String>, db: Arc<Db>) -> 
     Router::new()
         .route("/api/config", get(config))
         .route("/api/fs", get(fs))
-        .route("/api/entries", get(entries))
+        .route("/api/form", get(form))
+        .route("/api/entries", get(entries).post(entries_create).put(entries_update).delete(entries_delete))
         .route("/api/media", get(media_list))
         .route("/api/media/file", get(media))
         .route("/api/thumbnail", get(thumbnail))
@@ -218,6 +220,95 @@ async fn entries(state: State<AppState>, Query(q): Query<EntriesQuery>) -> Respo
     let conn = state.db.0.lock().unwrap();
     Json(journal::list_entries(&conn, &profile, year_month.as_deref(), q.date.as_deref()))
         .into_response()
+}
+
+/// GET /api/form — today's date + asked questions (no-AI form interface).
+async fn form(state: State<AppState>) -> Response {
+    let Some(profile) = state.db.active_profile() else {
+        return (StatusCode::BAD_REQUEST, "No active profile").into_response();
+    };
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+    let conn = state.db.0.lock().unwrap();
+    match journal::form(&conn, &profile, now_ms) {
+        Some(info) => Json(info).into_response(),
+        None => (StatusCode::BAD_REQUEST, "No questions configured").into_response(),
+    }
+}
+
+/// POST /api/entries — form submission: {date, overwrite?, answers:{id:text}}.
+#[derive(Deserialize)]
+struct CreateBody {
+    date: String,
+    overwrite: Option<bool>,
+    answers: std::collections::HashMap<String, String>,
+}
+
+async fn entries_create(state: State<AppState>, Json(body): Json<CreateBody>) -> Response {
+    let Some(profile) = state.db.active_profile() else {
+        return (StatusCode::BAD_REQUEST, "No active profile").into_response();
+    };
+    let mut conn = state.db.0.lock().unwrap();
+    match journal::create_entry(&mut conn, &profile, &body.date, body.overwrite.unwrap_or(false), &body.answers)
+    {
+        Ok(c) => Json(json!({
+            "entry_id": c.entry_id,
+            "file_path": c.file_path,
+            "rendered": c.rendered,
+            "extraction_warning": null,
+        }))
+        .into_response(),
+        Err(journal::CreateError::Exists) => (
+            StatusCode::CONFLICT,
+            Json(json!({
+                "exists": true,
+                "error": "Entry already exists for this date"
+            })),
+        )
+            .into_response(),
+        Err(journal::CreateError::InvalidDate) => {
+            (StatusCode::BAD_REQUEST, "Invalid date").into_response()
+        }
+        Err(journal::CreateError::Db(e)) => {
+            (StatusCode::INTERNAL_SERVER_ERROR, e).into_response()
+        }
+    }
+}
+
+/// PUT /api/entries — {date, markdown}.
+#[derive(Deserialize)]
+struct UpdateBody {
+    date: String,
+    markdown: String,
+}
+
+async fn entries_update(state: State<AppState>, Json(body): Json<UpdateBody>) -> Response {
+    let Some(profile) = state.db.active_profile() else {
+        return (StatusCode::BAD_REQUEST, "No active profile").into_response();
+    };
+    let conn = state.db.0.lock().unwrap();
+    match journal::update_entry(&conn, &profile, &body.date, &body.markdown) {
+        Ok((id, file_path)) => Json(json!({ "ok": true, "id": id, "file_path": file_path })).into_response(),
+        Err(journal::UpdateError::InvalidDate) => (StatusCode::BAD_REQUEST, "Invalid date").into_response(),
+        Err(journal::UpdateError::NotFound) => (StatusCode::NOT_FOUND, "Entry not found").into_response(),
+        Err(journal::UpdateError::Db(e)) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
+    }
+}
+
+async fn entries_delete(state: State<AppState>, Query(q): Query<EntriesQuery>) -> Response {
+    let Some(profile) = state.db.active_profile() else {
+        return (StatusCode::BAD_REQUEST, "No active profile").into_response();
+    };
+    let conn = state.db.0.lock().unwrap();
+    match journal::delete_entry(&conn, &profile, q.date.as_deref().unwrap_or("")) {
+        Ok(true) => Json(json!({ "ok": true })).into_response(),
+        Ok(false) => (StatusCode::NOT_FOUND, "Entry not found").into_response(),
+        Err(journal::UpdateError::InvalidDate) => (StatusCode::BAD_REQUEST, "Invalid date").into_response(),
+        Err(journal::UpdateError::NotFound) => (StatusCode::NOT_FOUND, "Entry not found").into_response(),
+        Err(journal::UpdateError::Db(e)) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
+    }
 }
 
 /// GET /api/media?year=&month=&date= — {files:[{name,path,date,hasThumb,type}]}.

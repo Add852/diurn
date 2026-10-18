@@ -37,10 +37,16 @@ flutter run --dart-define=DIURN_URL=http://192.168.1.20:8080
 
 | Endpoint | Meaning |
 |---|---|
-| `GET /api/config` | `{"roots": [...]}` — where the UI may browse |
+| `GET /api/config` | `{"roots": [...]}` — active profile's note/media folders |
 | `GET /api/fs?dir=<abs>&filter=<media>` | `{"entries":[{name,path,isDir}]}` |
 | `GET /api/fs?check=<abs>&kind=<media>` | `{"ok":bool,"reason"?}` |
-| `GET /api/media?path=<abs>` | file stream; `Range` supported (206/416) |
+| `GET /api/form` | today's date + asked questions (no-AI form) |
+| `GET /api/entries?year=&month=&date=` | journal days; DB rows merged with fs-only `{date}.md` |
+| `POST /api/entries` | form answers → template → atomic `{date}.md` + rows (409 if exists) |
+| `PUT /api/entries` | `{date, markdown}` edit (file + row, adopts fs-only) |
+| `DELETE /api/entries?date=` | remove row + file (only under notes folder) |
+| `GET /api/media?year=&month=&date=` | `{files:[…]}`; triggers incremental EXIF scan |
+| `GET /api/media/file?path=<abs>` | file stream; `Range` supported (206/416) |
 | `GET /api/thumbnail?path=<abs>&size=` | JPEG thumb (longest edge, default 400), disk-cached |
 
 Auth: when `DIURN_TOKEN` is set, every route needs `Authorization: Bearer

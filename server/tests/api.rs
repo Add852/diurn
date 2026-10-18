@@ -392,3 +392,119 @@ async fn media_scan_lists_and_thumbs() {
         .unwrap();
     assert_eq!(res.status(), StatusCode::OK);
 }
+
+#[tokio::test]
+async fn form_create_update_delete_roundtrip() {
+    let root = tmp_root("form");
+    let router = app(&root);
+    seed_profile(&root);
+    let notes = root.join("notes");
+    std::fs::create_dir_all(&notes).unwrap();
+
+    // questions: Q1 asked, Q2 hidden
+    let dbfile = std::env::temp_dir()
+        .join(format!("diurn-db-{}", root.file_name().unwrap().to_string_lossy()));
+    let conn = rusqlite::Connection::open(&dbfile).unwrap();
+    for (ident, q, asked) in [
+        ("Q1", "What happened?", 1),
+        ("Q2", "Hidden question", 0),
+    ] {
+        conn.execute(
+            "INSERT INTO profile_questions (profile_id, identifier, question, answer_prompt, asked, sort_order)
+             VALUES (1, ?1, ?2, '', ?3, 0)",
+            rusqlite::params![ident, q, asked],
+        )
+        .unwrap();
+    }
+
+    // form: date + asked questions only
+    let res = router
+        .clone()
+        .oneshot(Request::get("/api/form").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = res.into_body().collect().await.unwrap().to_bytes();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["questions"].as_array().unwrap().len(), 1);
+    assert_eq!(v["questions"][0]["identifier"], "Q1");
+    assert!(v["date"].as_str().is_some());
+
+    // create
+    let res = router
+        .clone()
+        .oneshot(
+            Request::post("/api/entries")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"date":"2026-10-17","answers":{"Q1":"wrote Rust code"}}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = res.into_body().collect().await.unwrap().to_bytes();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let rendered = v["rendered"].as_str().unwrap();
+    assert!(rendered.contains("wrote Rust code"));
+    assert!(rendered.contains("dayOfWeek:"));
+    // unanswered question renders empty, not literal tokens
+    assert!(!rendered.contains("{Q2.answer}"));
+
+    // file written atomically under notes folder
+    let note = notes.join("2026-10-17.md");
+    assert!(note.is_file());
+    let on_disk = std::fs::read_to_string(&note).unwrap();
+    assert_eq!(on_disk, rendered);
+
+    // DB rows: entry + answer
+    let n: i64 = conn.query_row("SELECT COUNT(*) FROM entries", [], |r| r.get(0)).unwrap();
+    assert_eq!(n, 1);
+    let n: i64 = conn.query_row("SELECT COUNT(*) FROM entry_answers", [], |r| r.get(0)).unwrap();
+    assert_eq!(n, 1);
+
+    // duplicate -> 409 with exists flag
+    let res = router
+        .clone()
+        .oneshot(
+            Request::post("/api/entries")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"date":"2026-10-17","answers":{}}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::CONFLICT);
+    let body = res.into_body().collect().await.unwrap().to_bytes();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["exists"], serde_json::json!(true));
+
+    // PUT edit adopts and updates
+    let res = router
+        .clone()
+        .oneshot(
+            Request::put("/api/entries")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"date":"2026-10-17","markdown":"---\nweight: 1\n---\nedited"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(std::fs::read_to_string(&note).unwrap(), "---\nweight: 1\n---\nedited");
+
+    // DELETE removes row + file
+    let res = router
+        .oneshot(
+            Request::delete("/api/entries?date=2026-10-17")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    assert!(!note.exists());
+    let n: i64 = conn.query_row("SELECT COUNT(*) FROM entries", [], |r| r.get(0)).unwrap();
+    assert_eq!(n, 0);
+}

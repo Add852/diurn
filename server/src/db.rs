@@ -22,17 +22,18 @@ impl Db {
     pub fn active_profile(&self) -> Option<Profile> {
         let conn = self.0.lock().ok()?;
         conn.query_row(
-            "SELECT id, daily_note_folder, media_enabled, media_folder, timezone, day_offset_hours
+            "SELECT id, daily_note_folder, template_note_path, media_enabled, media_folder, timezone, day_offset_hours
              FROM profiles WHERE is_active = 1 LIMIT 1",
             [],
             |r| {
                 Ok(Profile {
                     id: r.get(0)?,
                     daily_note_folder: r.get(1)?,
-                    media_enabled: r.get::<_, i64>(2)? != 0,
-                    media_folder: r.get(3)?,
-                    timezone: r.get(4)?,
-                    day_offset_hours: r.get(5)?,
+                    template_note_path: r.get(2)?,
+                    media_enabled: r.get::<_, i64>(3)? != 0,
+                    media_folder: r.get(4)?,
+                    timezone: r.get(5)?,
+                    day_offset_hours: r.get(6)?,
                 })
             },
         )
@@ -44,6 +45,7 @@ impl Db {
 pub struct Profile {
     pub id: i64,
     pub daily_note_folder: String,
+    pub template_note_path: String,
     pub media_enabled: bool,
     pub media_folder: String,
     pub timezone: String,
