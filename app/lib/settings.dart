@@ -517,10 +517,32 @@ class _SettingsFormState extends State<_SettingsForm> {
       padding: const EdgeInsets.all(16),
       children: [
         _section('Journal questions'),
-        for (var i = 0; i < _questions.length; i++)
-          Card(
+        if (_questions.isEmpty)
+          const Text('No questions yet — add one below.',
+              style: TextStyle(fontSize: 12, fontStyle: FontStyle.italic)),
+        ReorderableListView.builder(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          buildDefaultDragHandles: false,
+          itemCount: _questions.length,
+          onReorderItem: (oldI, newI) {
+            setState(() {
+              final q = _questions.removeAt(oldI);
+              _questions.insert(newI, q);
+              for (var i = 0; i < _questions.length; i++) {
+                _questions[i]['sort_order'] = i;
+              }
+            });
+          },
+          itemBuilder: (context, i) => Card(
+            key: ValueKey(
+                'q-${_questions[i]['id'] ?? 'new-${_questions[i]['identifier']}'}'),
             color: Theme.of(context).colorScheme.surfaceContainerHighest,
             child: ListTile(
+              leading: ReorderableDragStartListener(
+                index: i,
+                child: const Icon(Icons.drag_indicator),
+              ),
               title: Text(_questions[i]['question'] as String? ?? ''),
               subtitle: Text(
                 '${_questions[i]['identifier']} · ${_questions[i]['asked'] == true ? 'asked' : 'hidden (AI-only)'}',
@@ -530,11 +552,12 @@ class _SettingsFormState extends State<_SettingsForm> {
                 icon: const Icon(Icons.delete_outline),
                 onPressed: () => setState(() => _questions.removeAt(i)),
               ),
-              onTap: () => _editQuestion(i),
+              onTap: () => _questionDialog(index: i),
             ),
           ),
+        ),
         OutlinedButton.icon(
-          onPressed: _addQuestion,
+          onPressed: _questionDialog,
           icon: const Icon(Icons.add),
           label: const Text('Add question'),
         ),
@@ -572,6 +595,61 @@ class _SettingsFormState extends State<_SettingsForm> {
               hintText: 'Markdown template — {Q1.answer}, \$date("dddd") …',
             ),
           ),
+          const SizedBox(height: 8),
+          Theme(
+            data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+            child: ExpansionTile(
+              tilePadding: EdgeInsets.zero,
+              childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+              title: const Text('Template guide',
+                  style:
+                      TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+              children: [
+                Align(
+                    alignment: Alignment.centerLeft,
+                    child:
+                        Text('Question placeholders', style: _guideHeading)),
+                _guideRow('{Q1.answer}',
+                    'the answer to question Q1 (empty when unanswered)'),
+                _guideRow(
+                    '{Q1.question}', 'the question text itself'),
+                _guideRow('{Q1.asked}',
+                    'true / false — whether it was asked in the form'),
+                _guideRow('{Q1.prompt}',
+                    'the AI refinement prompt (blank for now)'),
+                const SizedBox(height: 8),
+                Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                        'Use the variable names from the questions above — unknown names stay as literal text.',
+                        style: _guideNote)),
+                const SizedBox(height: 8),
+                Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text('Note date — \$date("format")',
+                        style: _guideHeading)),
+                _guideRow(r'$date("dddd")', 'Friday'),
+                _guideRow(r'$date("MMMM d, yyyy")', 'October 18, 2026'),
+                _guideRow(r'$date("yyyy-MM-dd")', '2026-10-18'),
+                _guideRow(r'$date("d.M.yy")', '18.10.26'),
+                const SizedBox(height: 8),
+                Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                        'Specifiers: d day · ddd weekday short · dddd weekday · '
+                        'M month · MMM short · MMMM full · yy / yyyy year. '
+                        "Repeating a letter pads it (dd → 05). Wrap literal "
+                        "letters in 'quotes', escape with \\.",
+                        style: _guideNote)),
+                const SizedBox(height: 8),
+                Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                        'Frontmatter works too:\ndayOfWeek: \$date("dddd")\nweight: {Q2.answer}',
+                        style: _guideNote)),
+              ],
+            ),
+          ),
         ] else
           Text(
             'Set a template note path above to edit the template.',
@@ -585,6 +663,32 @@ class _SettingsFormState extends State<_SettingsForm> {
       ],
     );
   }
+
+  TextStyle get _guideHeading => TextStyle(
+      fontSize: 12,
+      fontWeight: FontWeight.w700,
+      color: Theme.of(context).colorScheme.primary);
+
+  TextStyle get _guideNote => TextStyle(
+      fontSize: 12,
+      height: 1.4,
+      color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.7));
+
+  Widget _guideRow(String token, String meaning) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 2),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(token,
+                style: const TextStyle(
+                    fontFamily: 'monospace',
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600)),
+            const SizedBox(width: 10),
+            Expanded(child: Text(meaning, style: _guideNote)),
+          ],
+        ),
+      );
 
   Widget _adminTab() {
     return ListView(
@@ -706,18 +810,32 @@ class _SettingsFormState extends State<_SettingsForm> {
     return TimezoneField(controller: _ctrl(key), label: label);
   }
 
-  Future<void> _editQuestion(int i) async {
-    final q = Map<String, dynamic>.from(_questions[i]);
-    final qCtrl = TextEditingController(text: q['question'] as String? ?? '');
-    bool asked = q['asked'] == true;
+  /// One dialog for both adding and editing a question. Editing keeps the
+  /// row id (entry_answers FKs survive); the identifier stays editable.
+  Future<void> _questionDialog({int? index}) async {
+    final existing = index == null ? null : _questions[index];
+    final idCtrl = TextEditingController(
+        text: existing?['identifier'] as String? ?? '');
+    final qCtrl =
+        TextEditingController(text: existing?['question'] as String? ?? '');
+    bool asked = existing?['asked'] != false;
     final result = await showDialog<Map<String, dynamic>>(
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialog) => AlertDialog(
-          title: Text('Edit ${q['identifier']}'),
+          title: Text(existing == null ? 'Add question' : 'Edit question'),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              TextField(
+                controller: idCtrl,
+                autocorrect: false,
+                decoration: const InputDecoration(
+                  labelText: 'Variable name',
+                  hintText: 'Q3 — used as {Q3.answer} in the template',
+                ),
+              ),
+              const SizedBox(height: 8),
               TextField(
                 controller: qCtrl,
                 decoration: const InputDecoration(labelText: 'Question text'),
@@ -741,73 +859,36 @@ class _SettingsFormState extends State<_SettingsForm> {
             ),
             FilledButton(
               onPressed: () => Navigator.pop(context, {
-                ...q,
+                ...?existing,
+                'identifier': idCtrl.text.trim(),
                 'question': qCtrl.text.trim(),
                 'asked': asked,
               }),
-              child: const Text('Done'),
+              child: Text(existing == null ? 'Add' : 'Done'),
             ),
           ],
         ),
       ),
     );
-    if (result != null) setState(() => _questions[i] = result);
-  }
-
-  Future<void> _addQuestion() async {
-    final idCtrl = TextEditingController();
-    final qCtrl = TextEditingController();
-    final result = await showDialog<Map<String, dynamic>>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Add question'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: idCtrl,
-              autocorrect: false,
-              decoration: const InputDecoration(
-                labelText: 'Variable name',
-                hintText: 'Q3 — used as {Q3.answer} in the template',
-              ),
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: qCtrl,
-              decoration: const InputDecoration(labelText: 'Question text'),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, {
-              'identifier': idCtrl.text.trim(),
-              'question': qCtrl.text.trim(),
-              'asked': true,
-              'answer_prompt': '',
-              'sort_order': _questions.length,
-            }),
-            child: const Text('Add'),
-          ),
-        ],
-      ),
-    );
-    if (result != null &&
-        (result['identifier'] as String).isNotEmpty &&
-        (result['question'] as String).isNotEmpty) {
-      setState(() => _questions.add(result));
+    if (result == null) return;
+    if ((result['identifier'] as String).isEmpty ||
+        (result['question'] as String).isEmpty) {
+      return;
     }
+    setState(() {
+      if (index == null) {
+        _questions.add({
+          ...result,
+          'answer_prompt': '',
+          'sort_order': _questions.length,
+        });
+      } else {
+        _questions[index] = result;
+      }
+    });
   }
 }
 
-/// Server-side path picker over /api/fs. Native OS pickers browse the phone's
-/// storage — these folders live on the server, so browse server dirs instead
-/// (same approach as the old settings autocomplete).
 class ServerPathPickerDialog extends StatefulWidget {
   final Api api;
   final bool pickFile;
