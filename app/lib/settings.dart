@@ -819,7 +819,21 @@ class _SettingsFormState extends State<_SettingsForm> {
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialog) => AlertDialog(
-          title: Text(existing == null ? 'Add question' : 'Edit question'),
+          title: Row(
+            children: [
+              Expanded(
+                  child:
+                      Text(existing == null ? 'Add question' : 'Edit question')),
+              if (existing != null)
+                IconButton(
+                  icon: const Icon(Icons.delete_outline),
+                  color: Colors.redAccent,
+                  tooltip: 'Delete question',
+                  onPressed: () =>
+                      Navigator.pop(context, {'__delete': true}),
+                ),
+            ],
+          ),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -854,12 +868,7 @@ class _SettingsFormState extends State<_SettingsForm> {
               child: const Text('Cancel'),
             ),
             if (existing != null)
-              TextButton(
-                style: TextButton.styleFrom(foregroundColor: Colors.redAccent),
-                onPressed: () =>
-                    Navigator.pop(context, {'__delete': true}),
-                child: const Text('Delete'),
-              ),
+              const SizedBox(width: 8),
             FilledButton(
               onPressed: () => Navigator.pop(context, {
                 ...?existing,
