@@ -100,21 +100,15 @@ class _JournalScreenState extends State<JournalScreen> {
                     itemCount: groups[month]!.length,
                     itemBuilder: (context, i) {
                       final e = groups[month]![i];
-                      final body = parseFrontmatter(e.markdown).$2;
-                      final preview = body
-                          .split('\n')
-                          .map((l) => l
-                              .replaceFirst(RegExp(r'^#+\s*'), '')
-                              .replaceFirst(RegExp(r'^[-*]\s*'), '')
-                              .trim())
-                          .where((l) => l.isNotEmpty)
-                          .take(3)
-                          .join('\n');
+                      final fm = parseFrontmatter(e.markdown).$1;
+                      final metadata = fm.entries
+                          .map((kv) => '${kv.key}: ${kv.value}')
+                          .join('  ·  ');
                       return _EntryCard(
                         api: widget.api,
                         entry: e,
                         background: mediaByDate[e.date],
-                        preview: preview,
+                        metadata: metadata,
                         onChanged: _reload,
                       );
                     },
@@ -135,13 +129,13 @@ class _EntryCard extends StatelessWidget {
   final Api api;
   final Entry entry;
   final MediaFile? background;
-  final String preview;
+  final String metadata;
   final VoidCallback onChanged;
   const _EntryCard({
     required this.api,
     required this.entry,
     required this.background,
-    required this.preview,
+    required this.metadata,
     required this.onChanged,
   });
 
@@ -154,7 +148,8 @@ class _EntryCard extends StatelessWidget {
       color: const Color(0xff18181b),
       child: InkWell(
         onTap: () => Navigator.of(context).push(MaterialPageRoute(
-          builder: (_) => EntryScreen(api: api, entry: entry),
+          builder: (_) =>
+              EntryScreen(api: api, entry: entry, onChanged: onChanged),
         )),
         child: SizedBox(
           height: 140,
@@ -188,15 +183,22 @@ class _EntryCard extends StatelessWidget {
                       ],
                     ),
                     const SizedBox(height: 4),
-                    Text(
-                      preview,
-                      maxLines: 3,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                          fontSize: 13,
-                          height: 1.25,
-                          color: Colors.white.withValues(alpha: 0.75)),
-                    ),
+                    if (metadata.isNotEmpty)
+                      Text(
+                        metadata,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                            fontSize: 12,
+                            height: 1.25,
+                            color: Colors.white.withValues(alpha: 0.7)),
+                      )
+                    else
+                      Text('No metadata',
+                          style: TextStyle(
+                              fontSize: 12,
+                              fontStyle: FontStyle.italic,
+                              color: Colors.white24)),
                   ],
                 ),
               ),
