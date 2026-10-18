@@ -44,6 +44,7 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
+  int _index = 0;
   Api? _api;
   String _savedUrl = kDefaultUrl;
   String? _savedToken;
@@ -131,51 +132,106 @@ class _HomeScreenState extends State<HomeScreen> {
     final api = _api;
     if (api == null) {
       return Scaffold(
-        appBar: AppBar(title: const Text('diurn')),
-        body: ConnectForm(
-          initial: _savedUrl,
-          initialToken: _savedToken,
-          mode: _authMode,
-          onConnected: _onConnected,
+        body: SafeArea(
+          child: ConnectForm(
+            initial: _savedUrl,
+            initialToken: _savedToken,
+            mode: _authMode,
+            onConnected: _onConnected,
+          ),
         ),
       );
     }
-    return DefaultTabController(
-      // keep in sync with the TabBar tabs / TabBarView children below
-      length: 3,
-      child: Scaffold(
-        appBar: AppBar(
-          title: const Text('diurn'),
-          actions: [
-            IconButton(
-              icon: const Icon(Icons.settings_outlined),
-              tooltip: 'Settings',
-              onPressed: () => Navigator.of(context)
-                  .push(MaterialPageRoute(
-                    builder: (_) => SettingsScreen(
-                      api: api,
-                      onChangeServer: _forget,
-                    ),
-                  ))
-                  // refresh roots on return — but not after "change server",
-                  // which intentionally disconnects (_api == null)
-                  .then((_) {
-                if (mounted && _api != null) {
-                  _connect(_savedUrl, _savedToken);
-                  _refreshTick.value++; // tabs refetch after settings changes
-                }
-              }),
-            ),
-          ],
-          bottom: const TabBar(
-            tabs: [Tab(text: 'Today'), Tab(text: 'Journal'), Tab(text: 'Media')],
-          ),
-        ),
-        body: TabBarView(
+    return Scaffold(
+      body: SafeArea(
+        child: IndexedStack(
+          index: _index,
           children: [
             FormScreen(api: api),
             JournalScreen(api: api, refreshSignal: _refreshTick),
-            MediaScreen(api: api, refreshSignal: _refreshTick),
+            MediaScreen(
+              api: api,
+              refreshSignal: _refreshTick,
+              onOpenSettings: () => setState(() => _index = 3),
+            ),
+            SettingsScreen(
+              api: api,
+              onChangeServer: _forget,
+              onSaved: () => _refreshTick.value++,
+            ),
+          ],
+        ),
+      ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: () => setState(() => _index = 0),
+        tooltip: 'Add entry',
+        child: const Icon(Icons.add),
+      ),
+      floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
+      bottomNavigationBar: BottomAppBar(
+        shape: const CircularNotchedRectangle(),
+        notchMargin: 6,
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceAround,
+          children: [
+            _NavItem(
+              icon: Icons.edit_note_outlined,
+              label: 'Today',
+              selected: _index == 0,
+              onTap: () => setState(() => _index = 0),
+            ),
+            _NavItem(
+              icon: Icons.book_outlined,
+              label: 'Journal',
+              selected: _index == 1,
+              onTap: () => setState(() => _index = 1),
+            ),
+            const SizedBox(width: 48), // notch gap for the FAB
+            _NavItem(
+              icon: Icons.photo_library_outlined,
+              label: 'Media',
+              selected: _index == 2,
+              onTap: () => setState(() => _index = 2),
+            ),
+            _NavItem(
+              icon: Icons.settings_outlined,
+              label: 'Settings',
+              selected: _index == 3,
+              onTap: () => setState(() => _index = 3),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// One destination in the bottom bar.
+class _NavItem extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+  const _NavItem({
+    required this.icon,
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final color = selected ? Colors.white : Colors.white38;
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, color: color, size: 22),
+            const SizedBox(height: 2),
+            Text(label, style: TextStyle(fontSize: 10, color: color)),
           ],
         ),
       ),
@@ -370,7 +426,13 @@ class _ConnectFormState extends State<ConnectForm> {
 class MediaScreen extends StatefulWidget {
   final Api api;
   final ValueListenable<int>? refreshSignal;
-  const MediaScreen({super.key, required this.api, this.refreshSignal});
+  final VoidCallback? onOpenSettings;
+  const MediaScreen({
+    super.key,
+    required this.api,
+    this.refreshSignal,
+    this.onOpenSettings,
+  });
 
   @override
   State<MediaScreen> createState() => _MediaScreenState();
@@ -438,11 +500,7 @@ class _MediaScreenState extends State<MediaScreen> {
                       if (!enabled || folder.isEmpty) ...[
                         const SizedBox(height: 12),
                         FilledButton.icon(
-                          onPressed: () => Navigator.of(context).push(
-                            MaterialPageRoute(
-                                builder: (_) =>
-                                    SettingsScreen(api: widget.api)),
-                          ),
+                          onPressed: widget.onOpenSettings,
                           icon: const Icon(Icons.settings_outlined),
                           label: const Text('Open settings'),
                         ),
