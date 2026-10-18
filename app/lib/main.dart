@@ -477,7 +477,9 @@ class _MediaScreenState extends State<MediaScreen> {
   }
 
   Future<void> _reload() async {
-    setState(() => _files = widget.api.mediaFiles());
+    setState(() {
+      _files = widget.api.mediaFiles();
+    });
     final (files, folder) = await _files;
     // Server scans in the background: an empty library usually means the
     // scan is still running — retry a few times automatically.
