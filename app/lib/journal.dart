@@ -121,14 +121,11 @@ class _JournalScreenState extends State<JournalScreen> {
                       itemBuilder: (context, i) {
                         final e = groups[month]![i];
                         final fm = parseFrontmatter(e.markdown).$1;
-                        final metadata = fm.entries
-                            .map((kv) => '${kv.key}: ${kv.value}')
-                            .join('  ·  ');
                         return _EntryCard(
                           api: widget.api,
                           entry: e,
                           dayMedia: mediaByDate[e.date] ?? const [],
-                          metadata: metadata,
+                          fm: fm,
                           onChanged: _reload,
                         );
                       },
@@ -149,13 +146,13 @@ class _EntryCard extends StatelessWidget {
   final Api api;
   final Entry entry;
   final List<MediaFile> dayMedia;
-  final String metadata;
+  final Map<String, String> fm;
   final VoidCallback onChanged;
   const _EntryCard({
     required this.api,
     required this.entry,
     required this.dayMedia,
-    required this.metadata,
+    required this.fm,
     required this.onChanged,
   });
 
@@ -207,16 +204,14 @@ class _EntryCard extends StatelessWidget {
                       ],
                     ),
                     const SizedBox(height: 4),
-                    if (metadata.isNotEmpty)
-                      Text(
-                        metadata,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                            fontSize: 12,
-                            height: 1.25,
-                            color: Colors.white.withValues(alpha: 0.85),
-                            shadows: const [_photoTextShadow]),
+                    if (fm.isNotEmpty)
+                      Wrap(
+                        spacing: 6,
+                        runSpacing: 4,
+                        children: [
+                          for (final kv in fm.entries.take(6))
+                            _fmChip(context, kv.key, kv.value, onPhoto: true),
+                        ],
                       )
                     else
                       Text('No metadata',
@@ -414,15 +409,25 @@ class _EntryScreenState extends State<EntryScreen> {
   }
 }
 
-Widget _fmChip(BuildContext context, String key, String value) {
+Widget _fmChip(BuildContext context, String key, String value,
+    {bool onPhoto = false}) {
   // ponytail: media-file FM values (old /api/media refs) render as text;
   // upgrade to thumbnail chips when entries embed them.
   return Container(
-    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+    padding: EdgeInsets.symmetric(
+        horizontal: onPhoto ? 8 : 10, vertical: onPhoto ? 4 : 6),
     decoration: BoxDecoration(
-      color: Theme.of(context).colorScheme.surfaceContainerHighest,
-      borderRadius: BorderRadius.circular(8),
+      color: onPhoto
+          ? Colors.black.withValues(alpha: 0.45)
+          : Theme.of(context).colorScheme.surfaceContainerHighest,
+      borderRadius: BorderRadius.circular(999),
+      border: onPhoto ? Border.all(color: Colors.white24) : null,
     ),
-    child: Text('$key: $value', style: const TextStyle(fontSize: 12)),
+    child: Text(
+      '$key: $value',
+      style: TextStyle(
+          fontSize: onPhoto ? 11 : 12,
+          color: onPhoto ? Colors.white : null),
+    ),
   );
 }
