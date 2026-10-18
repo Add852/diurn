@@ -425,7 +425,7 @@ struct TplQuery {
     path: String,
 }
 
-async fn template_content(state: State<AppState>, Query(q): Query<TplQuery>) -> Response {
+async fn template_content(_state: State<AppState>, Query(q): Query<TplQuery>) -> Response {
     let p = Path::new(&q.path);
     let ext = p.extension().map(|e| e.to_string_lossy().to_lowercase());
     if ext.as_deref() != Some("md") {
