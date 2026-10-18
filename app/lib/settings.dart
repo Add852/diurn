@@ -539,18 +539,14 @@ class _SettingsFormState extends State<_SettingsForm> {
                 'q-${_questions[i]['id'] ?? 'new-${_questions[i]['identifier']}'}'),
             color: Theme.of(context).colorScheme.surfaceContainerHighest,
             child: ListTile(
-              leading: ReorderableDragStartListener(
-                index: i,
-                child: const Icon(Icons.drag_indicator),
-              ),
               title: Text(_questions[i]['question'] as String? ?? ''),
               subtitle: Text(
                 '${_questions[i]['identifier']} · ${_questions[i]['asked'] == true ? 'asked' : 'hidden (AI-only)'}',
                 style: const TextStyle(fontSize: 12),
               ),
-              trailing: IconButton(
-                icon: const Icon(Icons.delete_outline),
-                onPressed: () => setState(() => _questions.removeAt(i)),
+              trailing: ReorderableDragStartListener(
+                index: i,
+                child: const Icon(Icons.drag_indicator),
               ),
               onTap: () => _questionDialog(index: i),
             ),
@@ -857,6 +853,13 @@ class _SettingsFormState extends State<_SettingsForm> {
               onPressed: () => Navigator.pop(context),
               child: const Text('Cancel'),
             ),
+            if (existing != null)
+              TextButton(
+                style: TextButton.styleFrom(foregroundColor: Colors.redAccent),
+                onPressed: () =>
+                    Navigator.pop(context, {'__delete': true}),
+                child: const Text('Delete'),
+              ),
             FilledButton(
               onPressed: () => Navigator.pop(context, {
                 ...?existing,
@@ -871,6 +874,30 @@ class _SettingsFormState extends State<_SettingsForm> {
       ),
     );
     if (result == null) return;
+    if (result['__delete'] == true) {
+      final yes = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Remove question?'),
+          content: Text(
+              'This removes ${existing?['identifier']} from the form. Saved answers of past entries are kept.'),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Cancel')),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              style: FilledButton.styleFrom(backgroundColor: Colors.red),
+              child: const Text('Remove'),
+            ),
+          ],
+        ),
+      );
+      if (yes == true && mounted) {
+        setState(() => _questions.removeAt(index!));
+      }
+      return;
+    }
     if ((result['identifier'] as String).isEmpty ||
         (result['question'] as String).isEmpty) {
       return;
