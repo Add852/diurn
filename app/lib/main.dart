@@ -55,9 +55,13 @@ class _HomeScreenState extends State<HomeScreen> {
   /// refetch — TabBarView keeps tab state alive across navigations.
   final ValueNotifier<int> _refreshTick = ValueNotifier(0);
 
+  /// Bumped when the FAB asks the Settings tab to save itself.
+  final ValueNotifier<int> _saveTrigger = ValueNotifier(0);
+
   @override
   void dispose() {
     _refreshTick.dispose();
+    _saveTrigger.dispose();
     super.dispose();
   }
 
@@ -158,15 +162,24 @@ class _HomeScreenState extends State<HomeScreen> {
               api: api,
               onChangeServer: _forget,
               onSaved: () => _refreshTick.value++,
+              saveTrigger: _saveTrigger,
             ),
           ],
         ),
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () => setState(() => _index = 0),
-        tooltip: 'Add entry',
-        child: const Icon(Icons.add),
-      ),
+      floatingActionButton: _index == 3
+          ? FloatingActionButton(
+              shape: const CircleBorder(),
+              onPressed: () => _saveTrigger.value++,
+              tooltip: 'Save settings',
+              child: const Icon(Icons.save_outlined),
+            )
+          : FloatingActionButton(
+              shape: const CircleBorder(),
+              onPressed: () => setState(() => _index = 0),
+              tooltip: 'Add entry',
+              child: const Icon(Icons.add),
+            ),
       floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
       bottomNavigationBar: BottomAppBar(
         shape: const CircularNotchedRectangle(),

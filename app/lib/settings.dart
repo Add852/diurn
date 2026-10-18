@@ -1,24 +1,25 @@
+import 'dart:convert';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'api.dart';
 
-/// Settings screen: the no-AI slice of the old settings page — folders,
-/// general (tz/day offset), and journal questions. Server validates paths
-/// and preserves question ids across saves (entry_answers FKs).
+/// Settings: three tabs (General / Notes / Account). One form state covers
+/// all tabs; the shell's FAB triggers save via [saveTrigger].
 class SettingsScreen extends StatefulWidget {
   final Api api;
-
-  /// Escape hatch: forget this server (reopens the connect form).
   final VoidCallback? onChangeServer;
-
-  /// Called after a successful save so the shell can refresh cached roots.
   final VoidCallback? onSaved;
+  final ValueListenable<int>? saveTrigger;
 
   const SettingsScreen({
     super.key,
     required this.api,
     this.onChangeServer,
     this.onSaved,
+    this.saveTrigger,
   });
 
   @override
@@ -45,7 +46,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
               icon: const Icon(Icons.dns_outlined),
               tooltip: 'Change server',
               onPressed: () {
-                // pop first so the connect form is actually visible
                 Navigator.of(context).pop();
                 widget.onChangeServer!();
               },
@@ -63,6 +63,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
             api: widget.api,
             data: snap.data!,
             onSaved: widget.onSaved,
+            onChangeServer: widget.onChangeServer,
+            saveTrigger: widget.saveTrigger,
           );
         },
       ),
@@ -74,20 +76,28 @@ class _SettingsForm extends StatefulWidget {
   final Api api;
   final Map<String, dynamic> data;
   final VoidCallback? onSaved;
-  const _SettingsForm({required this.api, required this.data, this.onSaved});
+  final VoidCallback? onChangeServer;
+  final ValueListenable<int>? saveTrigger;
+  const _SettingsForm({
+    required this.api,
+    required this.data,
+    this.onSaved,
+    this.onChangeServer,
+    this.saveTrigger,
+  });
 
   @override
   State<_SettingsForm> createState() => _SettingsFormState();
 }
 
 class _SettingsFormState extends State<_SettingsForm> {
-  // Server sends snake_case; keep those keys verbatim to avoid round-trip bugs.
   late final Map<String, dynamic> _profile;
   late List<Map<String, dynamic>> _questions;
   final _fields = <String, TextEditingController>{};
   final _tzFocus = FocusNode();
-  late final TextEditingController _templateCtrl =
-      TextEditingController(text: widget.data['template_content'] as String? ?? '');
+  late final TextEditingController _templateCtrl = TextEditingController(
+    text: widget.data['template_content'] as String? ?? '',
+  );
   bool _saving = false;
   String? _error;
   String? _savedFlash;
@@ -107,6 +117,7 @@ class _SettingsFormState extends State<_SettingsForm> {
         .cast<Map<String, dynamic>>()
         .map(Map<String, dynamic>.from)
         .toList();
+    widget.saveTrigger?.addListener(_save);
   }
 
   @override
@@ -116,10 +127,12 @@ class _SettingsFormState extends State<_SettingsForm> {
     }
     _tzFocus.dispose();
     _templateCtrl.dispose();
+    widget.saveTrigger?.removeListener(_save);
     super.dispose();
   }
 
   Future<void> _save() async {
+    if (_saving) return;
     setState(() {
       _saving = true;
       _error = null;
@@ -141,7 +154,7 @@ class _SettingsFormState extends State<_SettingsForm> {
         templateContent: _templateCtrl.text,
       );
       if (!mounted) return;
-      setState(() => _savedFlash = 'Saved');
+      setState(() => _savedFlash = 'Settings saved');
       widget.onSaved?.call();
     } catch (e) {
       if (!mounted) return;
@@ -158,7 +171,8 @@ class _SettingsFormState extends State<_SettingsForm> {
     final username = _txt('accountUsername');
     final password = _txt('accountPassword');
     if (username.isEmpty && password.isEmpty) {
-      setState(() => _error = 'Nothing to update — enter a username or new password');
+      setState(() =>
+          _error = 'Nothing to update — enter a username or new password');
       return;
     }
     setState(() {
@@ -182,6 +196,92 @@ class _SettingsFormState extends State<_SettingsForm> {
     } finally {
       if (mounted) setState(() => _saving = false);
     }
+  }
+
+  Future<void> _exportSettings() async {
+    try {
+      final data = await widget.api.settings();
+      await Clipboard.setData(ClipboardData(text: const JsonEncoder.withIndent('  ').convert(data)));
+      if (!mounted) return;
+      setState(() => _savedFlash = 'Settings JSON copied to clipboard');
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _error = '$e');
+    }
+  }
+
+  Future<void> _importSettings() async {
+    final text = await showDialog<String>(
+      context: context,
+      builder: (context) {
+        final ctrl = TextEditingController();
+        return AlertDialog(
+          title: const Text('Import settings'),
+          content: TextField(
+            controller: ctrl,
+            maxLines: 8,
+            autocorrect: false,
+            decoration: const InputDecoration(
+              border: OutlineInputBorder(),
+              hintText: 'Paste the exported settings JSON',
+            ),
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Cancel')),
+            FilledButton(
+                onPressed: () => Navigator.pop(context, ctrl.text),
+                child: const Text('Import')),
+          ],
+        );
+      },
+    );
+    if (text == null || text.trim().isEmpty) return;
+    Map<String, dynamic> incoming;
+    try {
+      incoming = jsonDecode(text) as Map<String, dynamic>;
+    } catch (e) {
+      setState(() => _error = 'Invalid JSON: $e');
+      return;
+    }
+    try {
+      final profile = (incoming['profile'] as Map?)?.cast<String, dynamic>();
+      final questions = (incoming['questions'] as List?)
+          ?.cast<Map<String, dynamic>>()
+          .map(Map<String, dynamic>.from)
+          .toList();
+      await widget.api.saveSettings(
+        profile ?? {},
+        questions ?? [],
+        templateContent: incoming['template_content'] as String?,
+      );
+      if (!mounted) return;
+      setState(() => _savedFlash = 'Imported — fields refreshed');
+      await _reloadFromServer();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _error = '$e');
+    }
+  }
+
+  /// Re-fetch settings and rebuild the draft (used after import).
+  Future<void> _reloadFromServer() async {
+    final fresh = await widget.api.settings();
+    if (!mounted) return;
+    setState(() {
+      _profile.clear();
+      _profile.addAll(fresh['profile'] as Map<String, dynamic>);
+      _questions = (fresh['questions'] as List)
+          .cast<Map<String, dynamic>>()
+          .map(Map<String, dynamic>.from)
+          .toList();
+      _templateCtrl.text = fresh['template_content'] as String? ?? '';
+      for (final c in _fields.values) {
+        c.clear();
+      }
+      widget.onSaved?.call();
+    });
   }
 
   Future<void> _pickPath(String key, {required bool pickFile}) async {
@@ -212,6 +312,45 @@ class _SettingsFormState extends State<_SettingsForm> {
 
   @override
   Widget build(BuildContext context) {
+    return Column(
+      children: [
+        if (_error != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+            child: Text(_error!, style: const TextStyle(color: Colors.redAccent)),
+          ),
+        if (_savedFlash != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+            child: Text(_savedFlash!,
+                style: const TextStyle(color: Colors.greenAccent)),
+          ),
+        Expanded(
+          child: DefaultTabController(
+            length: 3,
+            child: Column(
+              children: [
+                const TabBar(
+                  tabs: [
+                    Tab(text: 'General'),
+                    Tab(text: 'Notes'),
+                    Tab(text: 'Account'),
+                  ],
+                ),
+                Expanded(
+                  child: TabBarView(
+                    children: [_generalTab(), _notesTab(), _accountTab()],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _generalTab() {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
@@ -228,55 +367,19 @@ class _SettingsFormState extends State<_SettingsForm> {
         ),
         if (_profile['media_enabled'] == true)
           _pathField('Media folder', 'media_folder', pickFile: false),
-        _pathField('Template note (.md)', 'template_note_path', pickFile: true),
-        if ((_txt('template_note_path')).isNotEmpty) ...[
-          Row(
-            children: [
-              const Expanded(
-                child: Text('Template content',
-                    style: TextStyle(fontSize: 13, color: Colors.white70)),
-              ),
-              IconButton(
-                icon: const Icon(Icons.refresh, size: 20),
-                tooltip: 'Reload from file',
-                onPressed: () =>
-                    _loadTemplate(_txt('template_note_path')),
-              ),
-            ],
-          ),
-          const SizedBox(height: 6),
-          TextFormField(
-            controller: _templateCtrl,
-            minLines: 6,
-            maxLines: 16,
-            style: const TextStyle(
-                fontSize: 12, fontFamily: 'monospace'),
-            decoration: const InputDecoration(
-              border: OutlineInputBorder(),
-              hintText: 'Markdown template — {Q1.answer}, \$date("dddd") …',
-            ),
-          ),
-        ] else
-          const Text(
-            'Set a template note path above to edit the template.',
-            style: TextStyle(fontSize: 12, color: Colors.white38),
-          ),
         const SizedBox(height: 16),
         _section('General'),
         _tzField('Timezone', 'timezone'),
-        Padding(
-          padding: const EdgeInsets.only(bottom: 12),
-          child: TextFormField(
-            controller: _ctrl('day_offset_hours'),
-            keyboardType: TextInputType.number,
-            decoration: const InputDecoration(
-              border: OutlineInputBorder(),
-              labelText: 'Day offset hours (0-24)',
-              isDense: true,
-            ),
-          ),
-        ),
-        const SizedBox(height: 16),
+        _textField('Day offset hours (0-24)', 'day_offset_hours',
+            number: true),
+      ],
+    );
+  }
+
+  Widget _notesTab() {
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
         _section('Journal questions'),
         for (var i = 0; i < _questions.length; i++)
           Card(
@@ -299,32 +402,83 @@ class _SettingsFormState extends State<_SettingsForm> {
           icon: const Icon(Icons.add),
           label: const Text('Add question'),
         ),
-        const SizedBox(height: 16),
-        _section('Account'),
+        const SizedBox(height: 20),
+        _section('Note template'),
+        _pathField('Template note (.md)', 'template_note_path',
+            pickFile: true),
+        if (_txt('template_note_path').isNotEmpty) ...[
+          Row(
+            children: [
+              const Expanded(
+                child: Text('Template content',
+                    style:
+                        TextStyle(fontSize: 13, color: Colors.white70)),
+              ),
+              IconButton(
+                icon: const Icon(Icons.refresh, size: 20),
+                tooltip: 'Reload from file',
+                onPressed: () => _loadTemplate(_txt('template_note_path')),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          TextFormField(
+            controller: _templateCtrl,
+            minLines: 6,
+            maxLines: 16,
+            style: const TextStyle(fontSize: 12, fontFamily: 'monospace'),
+            decoration: const InputDecoration(
+              border: OutlineInputBorder(),
+              hintText: 'Markdown template — {Q1.answer}, \$date("dddd") …',
+            ),
+          ),
+        ] else
+          const Text(
+            'Set a template note path above to edit the template.',
+            style: TextStyle(fontSize: 12, color: Colors.white38),
+          ),
+      ],
+    );
+  }
+
+  Widget _accountTab() {
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        _section('Admin account'),
         _textField('Username', 'accountUsername'),
-        _textField('New password (min 4, empty = keep)', 'accountPassword'),
+        _textField('New password (min 4, empty = keep)', 'accountPassword',
+            obscure: true),
         const SizedBox(height: 8),
         OutlinedButton.icon(
           onPressed: _saving ? null : _saveAccount,
           icon: const Icon(Icons.key_outlined),
           label: const Text('Update account'),
         ),
-        const SizedBox(height: 24),
-        if (_error != null) ...[
-          Text(_error!, style: const TextStyle(color: Colors.redAccent)),
-          const SizedBox(height: 12),
-        ],
-        if (_savedFlash != null) ...[
-          Text(_savedFlash!, style: const TextStyle(color: Colors.greenAccent)),
-          const SizedBox(height: 12),
-        ],
-        _saving
-            ? const Center(child: CircularProgressIndicator())
-            : FilledButton.icon(
-                onPressed: _save,
-                icon: const Icon(Icons.save_outlined),
-                label: const Text('Save settings'),
-              ),
+        const SizedBox(height: 20),
+        _section('Server'),
+        ListTile(
+          leading: const Icon(Icons.dns_outlined),
+          title: const Text('Change server'),
+          subtitle: Text(kDefaultUrl, style: const TextStyle(fontSize: 12)),
+          onTap: () => widget.onChangeServer?.call(),
+        ),
+        const SizedBox(height: 20),
+        _section('Import / export'),
+        ListTile(
+          leading: const Icon(Icons.copy_outlined),
+          title: const Text('Export settings'),
+          subtitle: const Text('Copies all settings as JSON to the clipboard',
+              style: TextStyle(fontSize: 12)),
+          onTap: _exportSettings,
+        ),
+        ListTile(
+          leading: const Icon(Icons.paste_outlined),
+          title: const Text('Import settings'),
+          subtitle: const Text('Paste previously exported settings JSON',
+              style: TextStyle(fontSize: 12)),
+          onTap: _importSettings,
+        ),
       ],
     );
   }
@@ -338,12 +492,14 @@ class _SettingsFormState extends State<_SettingsForm> {
         ),
       );
 
-  Widget _textField(String label, String key) {
+  Widget _textField(String label, String key,
+      {bool obscure = false, bool number = false}) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: TextFormField(
         controller: _ctrl(key),
-        obscureText: key == 'accountPassword',
+        obscureText: obscure,
+        keyboardType: number ? TextInputType.number : null,
         decoration: InputDecoration(
           border: const OutlineInputBorder(),
           labelText: label,
@@ -370,7 +526,8 @@ class _SettingsFormState extends State<_SettingsForm> {
             ),
           ),
           IconButton(
-            icon: Icon(pickFile ? Icons.description_outlined : Icons.folder_open),
+            icon: Icon(
+                pickFile ? Icons.description_outlined : Icons.folder_open),
             tooltip: pickFile ? 'Browse server files' : 'Browse server folders',
             onPressed: () => _pickPath(key, pickFile: pickFile),
           ),
@@ -379,8 +536,6 @@ class _SettingsFormState extends State<_SettingsForm> {
     );
   }
 
-  /// IANA zone autocomplete — type to filter; curated common list, any value
-  /// accepted (server falls back to UTC date when unknown).
   Widget _tzField(String label, String key) {
     const zones = [
       'UTC', 'Europe/Helsinki', 'Europe/Stockholm', 'Europe/Berlin',
@@ -552,23 +707,21 @@ class ServerPathPickerDialog extends StatefulWidget {
   });
 
   @override
-  State<ServerPathPickerDialog> createState() => _ServerPathPickerDialogState();
+  State<ServerPathPickerDialog> createState() =>
+      _ServerPathPickerDialogState();
 }
 
 class _ServerPathPickerDialogState extends State<ServerPathPickerDialog> {
   late String _dir;
   late Future<List<FsEntry>> _future;
   String? _selectedFile;
-  String? _error;
 
   @override
   void initState() {
     super.initState();
-    _dir = widget.initial.isEmpty
-        ? ''
-        : (widget.pickFile
-            ? _parentOf(widget.initial)
-            : widget.initial);
+    _dir = widget.initial.isEmpty ? '' : (widget.pickFile
+        ? _parentOf(widget.initial)
+        : widget.initial);
     _load();
   }
 
@@ -579,8 +732,6 @@ class _ServerPathPickerDialogState extends State<ServerPathPickerDialog> {
 
   void _load() {
     setState(() {
-      _error = null;
-      _selectedFile = null;
       _future = _loadOrRoot();
     });
   }
@@ -594,7 +745,6 @@ class _ServerPathPickerDialogState extends State<ServerPathPickerDialog> {
       }
       return await widget.api.listDir(_dir);
     } catch (e) {
-      _error = '$e';
       rethrow;
     }
   }
@@ -633,9 +783,6 @@ class _ServerPathPickerDialogState extends State<ServerPathPickerDialog> {
               child: FutureBuilder<List<FsEntry>>(
                 future: _future,
                 builder: (context, snap) {
-                  if (_error != null) {
-                    return Center(child: Text(_error!));
-                  }
                   if (snap.hasError) {
                     return Center(child: Text('${snap.error}'));
                   }
@@ -689,7 +836,9 @@ class _ServerPathPickerDialogState extends State<ServerPathPickerDialog> {
         ),
         FilledButton(
           onPressed: widget.pickFile
-              ? (_selectedFile == null ? null : () => Navigator.pop(context, _selectedFile))
+              ? (_selectedFile == null
+                  ? null
+                  : () => Navigator.pop(context, _selectedFile))
               : () => Navigator.pop(context, _dir),
           child: Text(widget.pickFile ? 'Use file' : 'Use folder'),
         ),
