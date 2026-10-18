@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'api.dart';
+import 'journal.dart';
 import 'lightbox.dart';
 import 'viewer.dart';
 
@@ -130,12 +131,13 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ],
           bottom: const TabBar(
-            tabs: [Tab(text: 'Media'), Tab(text: 'Browse')],
+            tabs: [Tab(text: 'Journal'), Tab(text: 'Media'), Tab(text: 'Browse')],
           ),
         ),
         body: TabBarView(
           children: [
-            MediaGridScreen(api: api, root: _roots.first),
+            JournalScreen(api: api),
+            MediaScreen(api: api),
             BrowserScreen(api: api, initialDir: _roots.first),
           ],
         ),
@@ -253,95 +255,125 @@ class _ConnectFormState extends State<ConnectForm> {
   }
 }
 
-class MediaGridScreen extends StatefulWidget {
+/// Media tab: media_cache rows grouped by capture day (parity with the old
+/// media-view: newest day on top, day headers, thumbs from the scan).
+class MediaScreen extends StatefulWidget {
   final Api api;
-  final String root;
-  const MediaGridScreen({super.key, required this.api, required this.root});
+  const MediaScreen({super.key, required this.api});
 
   @override
-  State<MediaGridScreen> createState() => _MediaGridScreenState();
+  State<MediaScreen> createState() => _MediaScreenState();
 }
 
-class _MediaGridScreenState extends State<MediaGridScreen> {
-  late final Future<List<FsEntry>> _files;
+class _MediaScreenState extends State<MediaScreen> {
+  late final Future<List<MediaFile>> _files;
 
   @override
   void initState() {
     super.initState();
-    _files = widget.api
-        .listDir(widget.root, filter: 'media')
-        .then((e) => e.where((f) => !f.isDir && isMedia(f.path)).toList());
+    _files = widget.api.mediaFiles();
   }
 
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder<List<FsEntry>>(
+    return FutureBuilder<List<MediaFile>>(
       future: _files,
       builder: (context, snap) {
-        if (snap.hasError) {
-          return Center(child: Text('${snap.error}'));
-        }
+        if (snap.hasError) return Center(child: Text('${snap.error}'));
         if (!snap.hasData) {
           return const Center(child: CircularProgressIndicator());
         }
         final files = snap.data!;
         if (files.isEmpty) {
-          return const Center(child: Text('No media found in root'));
+          return const Center(child: Text('No media in the library yet'));
         }
-        return GridView.builder(
-          padding: const EdgeInsets.all(8),
-          gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-            maxCrossAxisExtent: 180,
-            mainAxisSpacing: 8,
-            crossAxisSpacing: 8,
-          ),
-          itemCount: files.length,
-          itemBuilder: (context, i) {
-            final f = files[i];
-            return InkWell(
-              onTap: () => Navigator.of(context).push(MaterialPageRoute(
-                builder: (_) => MediaViewerScreen(
-                  api: widget.api,
-                  files: files,
-                  initialIndex: i,
-                ),
-              )),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(10),
-                child: Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    if (isImage(f.path))
-                      Image.network(
-                        widget.api.thumbUrl(f.path),
-                        fit: BoxFit.cover,
-                        // thumbnail decode failed (e.g. unsupported format)
-                        // -> fall back to the full-size image
-                        errorBuilder: (_, _, _) =>
-                            Image.network(widget.api.mediaUrl(f.path), fit: BoxFit.cover),
-                      )
-                    else
-                      const ColoredBox(
-                        color: Color(0xff27272a),
-                        child: Icon(Icons.movie_outlined, size: 40),
-                      ),
-                    Positioned(
-                      left: 6,
-                      right: 6,
-                      bottom: 6,
+        // group by day, keep API order (newest day first)
+        final groups = <String, List<int>>{};
+        for (var i = 0; i < files.length; i++) {
+          (groups.putIfAbsent(files[i].date ?? 'Undated', () => [])).add(i);
+        }
+        return CustomScrollView(
+          slivers: [
+            for (final day in groups.keys)
+              SliverMainAxisGroup(
+                slivers: [
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
                       child: Text(
-                        f.name,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+                        day,
                         style: const TextStyle(
-                            fontSize: 11, shadows: [Shadow(blurRadius: 4)]),
+                          fontWeight: FontWeight.w700,
+                          fontSize: 16,
+                          color: Colors.white70,
+                        ),
                       ),
                     ),
-                  ],
-                ),
+                  ),
+                  SliverGrid.builder(
+                    itemCount: groups[day]!.length,
+                    gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+                      maxCrossAxisExtent: 180,
+                      mainAxisSpacing: 8,
+                      crossAxisSpacing: 8,
+                      childAspectRatio: 1,
+                    ),
+                    itemBuilder: (context, i) {
+                      final idx = groups[day]![i];
+                      final f = files[idx];
+                      return InkWell(
+                        onTap: () =>
+                            Navigator.of(context).push(MaterialPageRoute(
+                          builder: (_) => MediaViewerScreen(
+                            api: widget.api,
+                            files: files,
+                            initialIndex: idx,
+                          ),
+                        )),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(10),
+                          child: Stack(
+                            fit: StackFit.expand,
+                            children: [
+                              if (f.isImage)
+                                Image.network(
+                                  f.hasThumb
+                                      ? widget.api.thumbUrl(f.path)
+                                      : widget.api.mediaUrl(f.path),
+                                  fit: BoxFit.cover,
+                                  // thumb missing/undecodable -> full image
+                                  errorBuilder: (_, _, _) => Image.network(
+                                      widget.api.mediaUrl(f.path),
+                                      fit: BoxFit.cover),
+                                )
+                              else
+                                const ColoredBox(
+                                  color: Color(0xff27272a),
+                                  child:
+                                      Icon(Icons.movie_outlined, size: 40),
+                                ),
+                              Positioned(
+                                left: 6,
+                                right: 6,
+                                bottom: 6,
+                                child: Text(
+                                  f.name,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                      fontSize: 11,
+                                      shadows: [Shadow(blurRadius: 4)]),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ],
               ),
-            );
-          },
+          ],
         );
       },
     );
@@ -422,7 +454,10 @@ class _BrowserScreenState extends State<BrowserScreen> {
                     : media
                         ? () => Navigator.of(context).push(MaterialPageRoute(
                               builder: (_) => ViewerScreen(
-                                  api: widget.api, entry: e),
+                                url: widget.api.mediaUrl(e.path),
+                                name: e.name,
+                                video: isVideo(e.path),
+                              ),
                             ))
                         : null,
               );

@@ -3,12 +3,12 @@ import 'package:flutter/material.dart';
 import 'api.dart';
 import 'viewer.dart';
 
-/// Lightbox over the media list of one directory: swipe left/right to move
-/// between items (parity with the old media-lightbox.tsx).
-/// ponytail: no date captions yet — needs the journal entry naming scheme.
+/// Lightbox over a media list: swipe left/right between items (parity with
+/// the old media-lightbox.tsx). Index caption shows day + name when dated.
+/// ponytail: no ±1 neighbor prefetch yet; add when scrolling feels slow.
 class MediaViewerScreen extends StatefulWidget {
   final Api api;
-  final List<FsEntry> files;
+  final List<MediaFile> files;
   final int initialIndex;
   const MediaViewerScreen({
     super.key,
@@ -35,13 +35,18 @@ class _MediaViewerScreenState extends State<MediaViewerScreen> {
   @override
   Widget build(BuildContext context) {
     final files = widget.files;
+    final f = files[_index];
+    final caption = [
+      if (f.date != null) f.date,
+      f.name,
+    ].join(' · ');
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
         backgroundColor: Colors.black,
         foregroundColor: Colors.white,
         title: Text(
-          '${_index + 1}/${files.length} · ${files[_index].name}',
+          '${_index + 1}/${files.length} · $caption',
           style: const TextStyle(fontSize: 15),
         ),
       ),
@@ -49,11 +54,15 @@ class _MediaViewerScreenState extends State<MediaViewerScreen> {
         controller: _controller,
         itemCount: files.length,
         onPageChanged: (i) => setState(() => _index = i),
-        itemBuilder: (context, i) => ViewerScreen(
-          api: widget.api,
-          entry: files[i],
-          embedded: true,
-        ),
+        itemBuilder: (context, i) {
+          final f = files[i];
+          return ViewerScreen(
+            url: widget.api.mediaUrl(f.path),
+            name: f.name,
+            video: f.isVideo,
+            embedded: true,
+          );
+        },
       ),
     );
   }

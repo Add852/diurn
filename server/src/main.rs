@@ -8,6 +8,13 @@ fn main() {
     for r in &roots {
         println!("allowed root: {}", r.display());
     }
+    let db_path = std::env::var("DIURN_DB")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| dirs_home().join(".diurn").join("data.db"));
+    let db = std::sync::Arc::new(
+        diurn_server::db::Db::open(&db_path).expect("open sqlite db"),
+    );
+    println!("db: {}", db_path.display());
     let port: u16 = std::env::var("DIURN_PORT")
         .ok()
         .and_then(|p| p.parse().ok())
@@ -19,7 +26,7 @@ fn main() {
         if token.is_some() {
             println!("auth: enabled (DIURN_TOKEN)");
         }
-        let app = build_router(roots, token);
+        let app = build_router(roots, token, db);
         let listener = tokio::net::TcpListener::bind(("0.0.0.0", port))
             .await
             .expect("bind 0.0.0.0");

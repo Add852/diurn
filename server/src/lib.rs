@@ -28,6 +28,12 @@ use serde_json::json;
 use tokio_util::io::ReaderStream;
 use tower_http::cors::CorsLayer;
 
+pub mod db;
+pub mod journal;
+pub mod media;
+
+use db::Db;
+
 const MEDIA_EXTS: &[&str] = &[
     "mp4", "mkv", "webm", "mov", "avi", "jpg", "jpeg", "png", "gif", "webp", "bmp", "avif",
 ];
@@ -36,17 +42,24 @@ const MEDIA_EXTS: &[&str] = &[
 pub struct AppState {
     roots: Arc<Vec<PathBuf>>,
     token: Option<Arc<String>>,
+    db: Arc<Db>,
 }
 
-pub fn build_router(roots: Vec<PathBuf>, token: Option<String>) -> Router {
-    let state = AppState { roots: Arc::new(roots), token: token.map(Arc::new) };
+pub fn build_router(roots: Vec<PathBuf>, token: Option<String>, db: Arc<Db>) -> Router {
+    let state = AppState {
+        roots: Arc::new(roots),
+        token: token.map(Arc::new),
+        db,
+    };
     // ponytail: permissive CORS is fine pre-auth for LAN dev, but it lets any
     // webpage you visit read the API (files on this box) — restrict to known
     // origins at the same time as the auth middleware lands.
     Router::new()
         .route("/api/config", get(config))
         .route("/api/fs", get(fs))
-        .route("/api/media", get(media))
+        .route("/api/entries", get(entries))
+        .route("/api/media", get(media_list))
+        .route("/api/media/file", get(media))
         .route("/api/thumbnail", get(thumbnail))
         .layer(axum::middleware::from_fn_with_state(state.clone(), auth))
         .layer(CorsLayer::permissive())
@@ -91,13 +104,21 @@ struct Config {
 }
 
 async fn config(state: State<AppState>) -> Json<Config> {
-    Json(Config {
-        roots: state
-            .roots
-            .iter()
-            .map(|p| p.to_string_lossy().into_owned())
-            .collect(),
-    })
+    // Roots come from the active profile when the DB has one (shared with the
+    // old app); env roots remain the fallback for profile-less setups.
+    let roots = state
+        .db
+        .active_profile()
+        .map(|p| {
+            [p.daily_note_folder, p.media_folder]
+                .into_iter()
+                .filter(|s| !s.is_empty())
+                .map(PathBuf::from)
+                .collect::<Vec<_>>()
+        })
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| state.roots.iter().cloned().collect());
+    Json(Config { roots: roots.iter().map(|p| p.to_string_lossy().into_owned()).collect() })
 }
 
 #[derive(Deserialize)]
@@ -176,6 +197,61 @@ fn is_media_file(name: &str) -> bool {
 #[derive(Deserialize)]
 struct MediaQuery {
     path: String,
+}
+
+/// GET /api/entries?year=&month=&date= — old JSON shape (array, fs-only ids negative).
+#[derive(Deserialize)]
+struct EntriesQuery {
+    year: Option<String>,
+    month: Option<String>,
+    date: Option<String>,
+}
+
+async fn entries(state: State<AppState>, Query(q): Query<EntriesQuery>) -> Response {
+    let Some(profile) = state.db.active_profile() else {
+        return Json::<Vec<journal::Entry>>(vec![]).into_response();
+    };
+    let year_month = match (q.year.as_deref(), q.month.as_deref()) {
+        (Some(y), Some(m)) => Some(format!("{y}-{:0>2}", m)),
+        _ => None,
+    };
+    let conn = state.db.0.lock().unwrap();
+    Json(journal::list_entries(&conn, &profile, year_month.as_deref(), q.date.as_deref()))
+        .into_response()
+}
+
+/// GET /api/media?year=&month=&date= — {files:[{name,path,date,hasThumb,type}]}.
+#[derive(Deserialize)]
+struct MediaListQuery {
+    year: Option<String>,
+    month: Option<String>,
+    date: Option<String>,
+}
+
+async fn media_list(state: State<AppState>, Query(q): Query<MediaListQuery>) -> Response {
+    let Some(profile) = state.db.active_profile() else {
+        return Json(json!({ "files": [] })).into_response();
+    };
+    if profile.media_enabled && !profile.media_folder.is_empty() {
+        let folder = PathBuf::from(&profile.media_folder);
+        if folder.is_dir() {
+            let db = state.db.clone();
+            let p = profile.clone();
+            // scan is CPU/IO-bound; keep it off the async runtime
+            let _ = tokio::task::spawn_blocking(move || {
+                let mut conn = db.0.lock().unwrap();
+                media::scan(&mut conn, &p, &folder)
+            })
+            .await;
+        }
+    }
+    let year_month = match (q.year.as_deref(), q.month.as_deref()) {
+        (Some(y), Some(m)) => Some(format!("{y}-{:0>2}", m)),
+        _ => None,
+    };
+    let conn = state.db.0.lock().unwrap();
+    let files = media::list_files(&conn, profile.id, q.date.as_deref(), year_month.as_deref());
+    Json(json!({ "files": files })).into_response()
 }
 
 async fn media(state: State<AppState>, Query(q): Query<MediaQuery>, headers: HeaderMap) -> Response {

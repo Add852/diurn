@@ -1,0 +1,307 @@
+//! Media list + folder scan — port of src/lib/media-cache.ts + /api/media.
+//! Rows live in the shared media_cache table; thumbs in ~/.diurn/thumbs/<profileId>/.
+
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+};
+
+use rusqlite::Connection;
+
+use crate::db::Profile;
+
+const MEDIA_EXTS: &[&str] = &[
+    "jpg", "jpeg", "png", "gif", "webp", "svg", "mp4", "webm", "mov", "mkv", "avi", "heic",
+    "heif",
+];
+const VIDEO_EXTS: &[&str] = &["mp4", "webm", "mov", "mkv", "avi"];
+const IMAGE_EXTS: &[&str] = &["jpg", "jpeg", "png", "heic", "heif", "webp"];
+
+fn ext_of(path: &Path) -> String {
+    path.extension()
+        .map(|e| e.to_string_lossy().to_lowercase())
+        .unwrap_or_default()
+}
+
+pub fn is_video(path: &Path) -> bool {
+    VIDEO_EXTS.contains(&ext_of(path).as_str())
+}
+
+pub fn is_image_ext(path: &Path) -> bool {
+    IMAGE_EXTS.contains(&ext_of(path).as_str())
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MediaFile {
+    pub name: String,
+    pub path: String,
+    pub date: Option<String>,
+    pub has_thumb: bool,
+    #[serde(rename = "type")]
+    pub kind: String,
+}
+
+/// GET /api/media rows, old ordering: newest day first, oldest capture first
+/// within a day, path as tiebreaker.
+pub fn list_files(
+    conn: &Connection,
+    profile_id: i64,
+    date: Option<&str>,
+    year_month: Option<&str>,
+) -> Vec<MediaFile> {
+    let mut sql = String::from(
+        "SELECT path, date, thumb, type FROM media_cache WHERE profile_id = ?1",
+    );
+    if date.is_some() {
+        sql.push_str(" AND date = ?2");
+    }
+    if year_month.is_some() {
+        sql.push_str(&format!(
+            " AND date LIKE ?{}",
+            if date.is_some() { "3" } else { "2" }
+        ));
+    }
+    sql.push_str(" ORDER BY date DESC, captured_at ASC, path ASC");
+
+    let mut stmt = match conn.prepare(&sql) {
+        Ok(s) => s,
+        Err(_) => return Vec::new(),
+    };
+    let map_row = |r: &rusqlite::Row| -> rusqlite::Result<(String, Option<String>, Option<String>, String)> {
+        Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+    };
+    let rows = match (date, year_month) {
+        (Some(d), Some(ym)) => stmt.query_map(rusqlite::params![profile_id, d, format!("{ym}%")], map_row),
+        (Some(d), None) => stmt.query_map(rusqlite::params![profile_id, d], map_row),
+        (None, Some(ym)) => stmt.query_map(rusqlite::params![profile_id, format!("{ym}%")], map_row),
+        (None, None) => stmt.query_map(rusqlite::params![profile_id], map_row),
+    };
+    let mut out = Vec::new();
+    if let Ok(rows) = rows {
+        for r in rows.flatten() {
+            let (path, date, thumb, kind) = r;
+            let p = Path::new(&path);
+            out.push(MediaFile {
+                name: p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
+                path,
+                date,
+                has_thumb: thumb.is_some(),
+                kind,
+            });
+        }
+    }
+    out
+}
+
+/// Incremental scan: walk folder, re-resolve only changed paths, prune gone
+/// ones, generate thumbs for new rows. ponytail: full walk per /api/media
+/// request; add fs.watch + background scan when libraries get huge.
+pub fn scan(conn: &mut Connection, profile: &Profile, folder: &Path) -> usize {
+    let mut cached: HashMap<String, (i64, Option<String>)> = HashMap::new();
+    {
+        let mut stmt = match conn.prepare("SELECT path, mtime, thumb FROM media_cache WHERE profile_id = ?1") {
+            Ok(s) => s,
+            Err(_) => return 0,
+        };
+        let rows = stmt.query_map(rusqlite::params![profile.id], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, Option<String>>(2)?))
+        });
+        if let Ok(rows) = rows {
+            for r in rows.flatten() {
+                cached.insert(r.0, (r.1, r.2));
+            }
+        }
+    }
+
+    let mut seen: Vec<String> = Vec::new();
+    let mut updates: Vec<(String, Option<String>, i64, i64, Option<String>, String)> = Vec::new(); // path,date,captured_at,mtime,thumb,type
+    walk(folder, &mut |p, mtime_ms| {
+        let path_str = p.to_string_lossy().into_owned();
+        seen.push(path_str.clone());
+        let ext = ext_of(p);
+        if !MEDIA_EXTS.contains(&ext.as_str()) {
+            return;
+        }
+        let kind = if VIDEO_EXTS.contains(&ext.as_str()) { "video" } else { "image" };
+        if let Some((_, old_mtime, _)) = cached.get(&path_str).map(|(m, t)| ((), *m, t)) {
+            if old_mtime == mtime_ms {
+                return; // unchanged
+            }
+        }
+        let (date, captured_at) = resolve_date(p, mtime_ms);
+        let thumb = generate_thumb(profile.id, p).map(|t| t.to_string_lossy().into_owned());
+        updates.push((path_str, date, captured_at, mtime_ms, thumb, kind.to_string()));
+    });
+
+    let tx = match conn.transaction() {
+        Ok(t) => t,
+        Err(_) => return 0,
+    };
+    for (path, date, captured_at, mtime, thumb, kind) in &updates {
+        let _ = tx.execute(
+            "INSERT INTO media_cache (path, profile_id, date, captured_at, type, mtime, thumb, scanned_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, datetime('now'))
+             ON CONFLICT(path, profile_id) DO UPDATE SET date=?3, captured_at=?4, type=?5, mtime=?6, thumb=?7, scanned_at=datetime('now')",
+            rusqlite::params![path, profile.id, date, captured_at, kind, mtime, thumb],
+        );
+    }
+    for path in cached.keys() {
+        if !seen.contains(path) {
+            let _ = tx.execute(
+                "DELETE FROM media_cache WHERE path = ?1 AND profile_id = ?2",
+                rusqlite::params![path, profile.id],
+            );
+        }
+    }
+    let _ = tx.commit();
+    updates.len()
+}
+
+fn walk(dir: &Path, f: &mut impl FnMut(&Path, i64)) {
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    let mut dirs = Vec::new();
+    for e in entries.flatten() {
+        let p = e.path();
+        let name = e.file_name().to_string_lossy().into_owned();
+        match e.file_type() {
+            Ok(t) if t.is_dir() => {
+                if !name.starts_with('.') {
+                    dirs.push(p);
+                }
+            }
+            Ok(t) if t.is_file() => {
+                let mtime_ms = e
+                    .metadata()
+                    .ok()
+                    .and_then(|m| m.modified().ok())
+                    .and_then(|m| m.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_millis() as i64)
+                    .unwrap_or(0);
+                f(&p, mtime_ms);
+            }
+            _ => {}
+        }
+    }
+    for d in dirs {
+        walk(&d, f);
+    }
+}
+
+/// EXIF DateTimeOriginal -> (date, epoch ms); fallback: FS mtime local date.
+/// ponytail: profile timezone/day_offset ignored for now (default 0/UTC-ish);
+/// EXIF naive datetime treated as-is — add jiff + tz conversion when needed.
+fn resolve_date(path: &Path, mtime_ms: i64) -> (Option<String>, i64) {
+    use chrono::TimeZone;
+    if let Some((date, ms)) = exif_date(path) {
+        return (Some(date), ms);
+    }
+    let date = chrono::Local
+        .timestamp_millis_opt(mtime_ms)
+        .single()
+        .map(|d| d.format("%Y-%m-%d").to_string());
+    (date, mtime_ms)
+}
+
+fn exif_date(path: &Path) -> Option<(String, i64)> {
+    if !is_image_ext(path) {
+        return None;
+    }
+    let file = std::fs::File::open(path).ok()?;
+    let reader = exif::Reader::new()
+        .read_from_container(&mut std::io::BufReader::new(file))
+        .ok()?;
+    let field = reader
+        .get_field(exif::Tag::DateTimeOriginal, exif::In::PRIMARY)?;
+    let raw = match &field.value {
+        exif::Value::Ascii(vecs) => vecs
+            .first()
+            .map(|b| String::from_utf8_lossy(b).into_owned())?,
+        _ => return None,
+    };
+    // "2024:01:31 18:22:33" -> "2024-01-31" + naive ms (stable within-day order)
+    let (d, t) = raw.trim().split_once(' ')?;
+    let date = d.replace(':', "-");
+    let parts: Vec<u64> = t.split(':').filter_map(|x| x.trim().parse().ok()).collect();
+    if parts.len() < 3 {
+        return Some((date, 0));
+    }
+    let midnight = chrono::NaiveDate::from_ymd_opt(
+        date.get(0..4)?.parse().ok()?,
+        date.get(5..7)?.parse().ok()?,
+        date.get(8..10)?.parse().ok()?,
+    )?
+    .and_hms_opt(0, 0, 0)?
+    .and_utc()
+    .timestamp_millis();
+    Some((
+        date,
+        midnight + (parts[0] * 3_600_000 + parts[1] * 60_000 + parts[2] * 1000) as i64,
+    ))
+}
+
+/// Old thumb layout: ~/.diurn/thumbs/<profileId>/<sha1(path)[..24]>.webp —
+/// shared with the old app's cache.
+pub fn thumb_path(profile_id: i64, file: &Path) -> PathBuf {
+    use sha1::{Digest, Sha1};
+    let mut h = Sha1::new();
+    h.update(file.to_string_lossy().as_bytes());
+    let digest = format!("{:x}", h.finalize());
+    dirs_thumbs()
+        .join(profile_id.to_string())
+        .join(format!("{}.webp", &digest[..24]))
+}
+
+fn dirs_thumbs() -> PathBuf {
+    std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .map(|h| PathBuf::from(h).join(".diurn").join("thumbs"))
+        .unwrap_or_else(|_| std::env::temp_dir().join("diurn-thumbs"))
+}
+
+/// 400px WebP, EXIF-orientation applied, no enlargement, atomic write.
+/// ponytail: image crate only does lossless WebP encode — larger files than
+/// sharp's lossy; swap in libwebp-sys when size matters.
+pub fn generate_thumb(profile_id: i64, file: &Path) -> Option<PathBuf> {
+    if !is_image_ext(file) {
+        return None;
+    }
+    let target = thumb_path(profile_id, file);
+    if target.exists() {
+        return Some(target);
+    }
+    let img = image::open(file).ok()?;
+    let oriented = apply_exif_orientation(file, img);
+    let thumb = if oriented.width() > 400 {
+        oriented.thumbnail(400, 400)
+    } else {
+        oriented
+    };
+    let tmp = target.with_extension("webp.tmp");
+    std::fs::create_dir_all(target.parent()?).ok()?;
+    image::DynamicImage::ImageRgb8(thumb.to_rgb8())
+        .save_with_format(&tmp, image::ImageFormat::WebP)
+        .ok()?;
+    std::fs::rename(&tmp, &target).ok()?;
+    Some(target)
+}
+
+fn apply_exif_orientation(file: &Path, img: image::DynamicImage) -> image::DynamicImage {
+    let orientation = std::fs::File::open(file).ok().and_then(|f| {
+        exif::Reader::new()
+            .read_from_container(&mut std::io::BufReader::new(f))
+            .ok()?
+            .get_field(exif::Tag::Orientation, exif::In::PRIMARY)
+            .and_then(|f| f.value.get_uint(0))
+    });
+    match orientation {
+        Some(2) => img.fliph(),
+        Some(3) => img.rotate180(),
+        Some(4) => img.flipv(),
+        Some(5) => img.fliph().rotate270(),
+        Some(6) => img.rotate90(),
+        Some(7) => img.fliph().rotate90(),
+        Some(8) => img.rotate270(),
+        _ => img,
+    }
+}

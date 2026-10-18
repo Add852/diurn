@@ -7,11 +7,39 @@ use http_body_util::BodyExt;
 use tower::ServiceExt;
 
 fn app(root: &PathBuf) -> axum::Router {
-    diurn_server::build_router(vec![root.clone()], None)
+    router_with_db(root, None)
+}
+
+fn router_with_db(root: &PathBuf, token: Option<String>) -> axum::Router {
+    // keep the DB outside the served root so fs/media listings stay clean
+    let dbfile = std::env::temp_dir()
+        .join(format!("diurn-db-{}", root.file_name().unwrap().to_string_lossy()));
+    let _ = std::fs::remove_file(&dbfile);
+    let db = std::sync::Arc::new(diurn_server::db::Db::open(&dbfile).unwrap());
+    diurn_server::build_router(vec![root.clone()], token, db)
+}
+
+/// Insert an active profile whose folders point at `root`.
+fn seed_profile(root: &PathBuf) {
+    let dbfile = std::env::temp_dir()
+        .join(format!("diurn-db-{}", root.file_name().unwrap().to_string_lossy()));
+    let conn = rusqlite::Connection::open(&dbfile).unwrap();
+    conn.execute_batch(diurn_server::db::SCHEMA).unwrap();
+    conn.execute(
+        "INSERT INTO users (id, username, password_hash, salt) VALUES (1, 'test', 'x', 'y')",
+        [],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO profiles (id, user_id, name, is_active, is_default, daily_note_folder, media_enabled, media_folder)
+         VALUES (1, 1, 'test', 1, 1, ?1, 1, ?2)",
+        rusqlite::params![root.join("notes").to_string_lossy(), root.to_string_lossy()],
+    )
+    .unwrap();
 }
 
 fn app_with_token(root: &PathBuf, token: &str) -> axum::Router {
-    diurn_server::build_router(vec![root.clone()], Some(token.to_string()))
+    router_with_db(root, Some(token.to_string()))
 }
 
 fn tmp_root(tag: &str) -> PathBuf {
@@ -110,7 +138,7 @@ async fn media_streams_with_range() {
     let root = tmp_root("media");
     let content: Vec<u8> = (0u8..=99).collect(); // bytes 0..=99
     std::fs::write(root.join("clip.bin"), &content).unwrap();
-    let url = format!("/api/media?path={}", root.join("clip.bin").display());
+    let url = format!("/api/media/file?path={}", root.join("clip.bin").display());
     let app = app(&root);
 
     // full request -> 200
@@ -157,7 +185,7 @@ async fn media_rejects_outside_root() {
     std::fs::write(&outside, b"secret").unwrap();
     let res = app
         .oneshot(
-            Request::get(format!("/api/media?path={}", outside.display()))
+            Request::get(format!("/api/media/file?path={}", outside.display()))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -206,7 +234,7 @@ async fn auth_gate_and_media_token_query_fallback() {
     let root = tmp_root("auth");
     let content: Vec<u8> = (0u8..=9).collect();
     std::fs::write(root.join("clip.bin"), &content).unwrap();
-    let media_url = format!("/api/media?path={}", root.join("clip.bin").display());
+    let media_url = format!("/api/media/file?path={}", root.join("clip.bin").display());
     let app = app_with_token(&root, "sekrit");
 
     // no credentials -> 401 on JSON route
@@ -258,4 +286,109 @@ async fn auth_gate_and_media_token_query_fallback() {
         .await
         .unwrap();
     assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn entries_merge_db_and_fs_only_notes() {
+    let root = tmp_root("entries");
+    let router = app(&root); // creates schema
+    seed_profile(&root);
+    let notes = root.join("notes");
+    std::fs::create_dir_all(&notes).unwrap();
+
+    // DB entry for 2026-01-10, fs-only note for 2026-01-12, junk files skipped
+    let dbfile = std::env::temp_dir()
+        .join(format!("diurn-db-{}", root.file_name().unwrap().to_string_lossy()));
+    let conn = rusqlite::Connection::open(&dbfile).unwrap();
+    conn.execute(
+        "INSERT INTO entries (profile_id, date, rendered_markdown, file_path) VALUES (1, '2026-01-10', 'db note', NULL)",
+        [],
+    )
+    .unwrap();
+    std::fs::write(notes.join("2026-01-12.md"), "fs note").unwrap();
+    std::fs::write(notes.join("random.md"), "no date in name").unwrap();
+    std::fs::write(notes.join("2026-01-05.txt"), "not markdown").unwrap();
+
+    let res = router.clone()
+        .oneshot(Request::get("/api/entries").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = res.into_body().collect().await.unwrap().to_bytes();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let arr = v.as_array().unwrap();
+    assert_eq!(arr.len(), 2);
+    assert_eq!(arr[0]["date"], "2026-01-12"); // fs-only, newest first
+    assert_eq!(arr[0]["_fs_only"], serde_json::json!(true));
+    assert!(arr[0]["id"].as_i64().unwrap() < 0);
+    assert_eq!(arr[1]["date"], "2026-01-10");
+    assert_eq!(arr[1]["rendered_markdown"], "db note");
+
+    // month filter
+    let res = router.clone()
+        .oneshot(
+            Request::get("/api/entries?year=2026&month=02")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = res.into_body().collect().await.unwrap().to_bytes();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v.as_array().unwrap().len(), 0);
+}
+
+#[tokio::test]
+async fn media_scan_lists_and_thumbs() {
+    let root = tmp_root("mediascan");
+    let router = app(&root); // creates schema
+    seed_profile(&root);
+    let img = image::RgbaImage::from_pixel(800, 400, image::Rgba([10u8, 20, 30, 255]));
+    image::DynamicImage::ImageRgb8(
+        image::DynamicImage::ImageRgba8(img).to_rgb8(),
+    )
+    .save(root.join("pic.jpg"))
+    .unwrap();
+    // unrelated file + dot-dir must be ignored
+    std::fs::write(root.join("song.txt"), b"x").unwrap();
+    std::fs::create_dir_all(root.join(".hidden")).unwrap();
+
+    let res = router.clone()
+        .oneshot(Request::get("/api/media").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = res.into_body().collect().await.unwrap().to_bytes();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let files = v["files"].as_array().unwrap();
+    assert_eq!(files.len(), 1);
+    assert_eq!(files[0]["name"], "pic.jpg");
+    assert_eq!(files[0]["type"], "image");
+    assert_eq!(files[0]["hasThumb"], serde_json::json!(true));
+    assert!(files[0]["date"].as_str().is_some());
+
+    // thumb exists in the shared ~/.diurn/thumbs layout; row cached ->
+    // second request serves from cache without rescan churn
+    let dbfile = std::env::temp_dir()
+        .join(format!("diurn-db-{}", root.file_name().unwrap().to_string_lossy()));
+    let conn = rusqlite::Connection::open(&dbfile).unwrap();
+    let n: i64 = conn
+        .query_row("SELECT COUNT(*) FROM media_cache", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(n, 1);
+
+    // /api/media/file still streams the original
+    let res = router.clone()
+        .clone()
+        .oneshot(
+            Request::get(format!(
+                "/api/media/file?path={}",
+                root.join("pic.jpg").display()
+            ))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
 }

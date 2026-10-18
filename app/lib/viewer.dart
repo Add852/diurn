@@ -1,51 +1,35 @@
 import 'package:flutter/material.dart';
 
-import 'api.dart';
 import 'video/video_file.dart';
 
-/// Fullscreen viewer for one media file. Images get pinch/pan via
-/// InteractiveViewer; videos play through media_kit (works on all 5 platforms).
-class ViewerScreen extends StatefulWidget {
-  final Api api;
-  final FsEntry entry;
+/// Fullscreen viewer for one media URL. Images get pinch/pan via
+/// InteractiveViewer; video plays through the platform player facade
+/// (media_kit native / video_player web).
+class ViewerScreen extends StatelessWidget {
+  final String url;
+  final String name;
+  final bool video;
 
   /// Embedded in the lightbox: no AppBar of its own, fills the page.
   final bool embedded;
   const ViewerScreen({
     super.key,
-    required this.api,
-    required this.entry,
+    required this.url,
+    required this.name,
+    required this.video,
     this.embedded = false,
   });
 
   @override
-  State<ViewerScreen> createState() => _ViewerScreenState();
-}
-
-class _ViewerScreenState extends State<ViewerScreen> {
-  @override
-  void initState() {
-    super.initState();
-  }
-
-  @override
-  void dispose() {
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
-    final e = widget.entry;
     final body = Center(
-      child: isVideo(e.path)
-          ? VideoFileWidget(url: widget.api.mediaUrl(e.path))
+      child: video
+          ? VideoFileWidget(url: url)
           : InteractiveViewer(
               maxScale: 8,
               child: Image.network(
-                widget.api.mediaUrl(e.path),
+                url,
                 fit: BoxFit.contain,
-                // thumbnail decode failed (e.g. unsupported format)
-                // -> show broken image icon
                 errorBuilder: (_, _, _) => const Icon(
                   Icons.broken_image_outlined,
                   color: Colors.white38,
@@ -54,13 +38,13 @@ class _ViewerScreenState extends State<ViewerScreen> {
               ),
             ),
     );
-    if (widget.embedded) return body;
+    if (embedded) return body;
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
         backgroundColor: Colors.black,
         foregroundColor: Colors.white,
-        title: Text(e.name),
+        title: Text(name),
       ),
       body: body,
     );

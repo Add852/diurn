@@ -43,6 +43,54 @@ class ApiException implements Exception {
   String toString() => message;
 }
 
+/// One journal day: DB entry or fs-only {date}.md (id < 0).
+class Entry {
+  final int id;
+  final String date;
+  final String markdown;
+  final bool fsOnly;
+  const Entry({
+    required this.id,
+    required this.date,
+    required this.markdown,
+    required this.fsOnly,
+  });
+
+  factory Entry.fromJson(Map<String, dynamic> j) => Entry(
+        id: j['id'] as int,
+        date: j['date'] as String,
+        markdown: j['rendered_markdown'] as String? ?? '',
+        fsOnly: j['_fs_only'] as bool? ?? false,
+      );
+}
+
+/// One row of the media cache (path, capture date, thumb availability).
+class MediaFile {
+  final String name;
+  final String path;
+  final String? date;
+  final String type; // image | video
+  final bool hasThumb;
+  const MediaFile({
+    required this.name,
+    required this.path,
+    required this.date,
+    required this.type,
+    required this.hasThumb,
+  });
+
+  factory MediaFile.fromJson(Map<String, dynamic> j) => MediaFile(
+        name: j['name'] as String,
+        path: j['path'] as String,
+        date: j['date'] as String?,
+        type: j['type'] as String,
+        hasThumb: j['hasThumb'] as bool? ?? false,
+      );
+
+  bool get isVideo => type == 'video';
+  bool get isImage => type == 'image';
+}
+
 class Api {
   final String baseUrl;
   final String? token;
@@ -108,5 +156,23 @@ class Api {
       'kind': ?kind,
     });
     return (v['ok'] as bool, v['reason'] as String?);
+  }
+
+  /// GET /api/entries?year=&month=&date= — journal days, newest first.
+  Future<List<Entry>> entries({String? year, String? month, String? date}) async {
+    final v = await _getJson('/api/entries', {
+      'year': ?year,
+      'month': ?month,
+      'date': ?date,
+    });
+    final list = (v as List).cast<Map<String, dynamic>>();
+    return list.map(Entry.fromJson).toList();
+  }
+
+  /// GET /api/media — media cache rows (triggers an incremental scan).
+  Future<List<MediaFile>> mediaFiles() async {
+    final v = await _getJson('/api/media', {});
+    final list = (v['files'] as List).cast<Map<String, dynamic>>();
+    return list.map(MediaFile.fromJson).toList();
   }
 }
