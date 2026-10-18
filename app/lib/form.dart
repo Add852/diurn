@@ -9,7 +9,15 @@ import 'lightbox.dart';
 class FormScreen extends StatefulWidget {
   final Api api;
   final ValueListenable<int>? refreshSignal;
-  const FormScreen({super.key, required this.api, this.refreshSignal});
+
+  /// FAB Write on the Today tab — triggers the form save.
+  final ValueListenable<int>? saveTrigger;
+  const FormScreen({
+    super.key,
+    required this.api,
+    this.refreshSignal,
+    this.saveTrigger,
+  });
 
   @override
   State<FormScreen> createState() => _FormScreenState();
@@ -22,6 +30,9 @@ class _FormScreenState extends State<FormScreen> {
   String? _error;
   String? _savedDate;
 
+  /// Latest loaded form — the FAB save trigger needs the current date.
+  FormInfo? _info;
+
   /// Chosen entry day (null = the server's "today" from GET /api/form).
   String? _date;
   List<MediaFile> _allMedia = const [];
@@ -32,6 +43,13 @@ class _FormScreenState extends State<FormScreen> {
     _future = widget.api.form();
     _loadMedia();
     widget.refreshSignal?.addListener(_reload);
+    widget.saveTrigger?.addListener(_onSaveTrigger);
+  }
+
+  void _onSaveTrigger() {
+    final info = _info;
+    if (info == null || _saving || _savedDate != null) return;
+    _save(_date ?? info.date);
   }
 
   void _reload() {
@@ -77,6 +95,7 @@ class _FormScreenState extends State<FormScreen> {
   @override
   void dispose() {
     widget.refreshSignal?.removeListener(_reload);
+    widget.saveTrigger?.removeListener(_onSaveTrigger);
     for (final c in _answers.values) {
       c.dispose();
     }
@@ -139,6 +158,7 @@ class _FormScreenState extends State<FormScreen> {
           return const Center(child: CircularProgressIndicator());
         }
         final info = snap.data!;
+        _info = info;
         final selected = _date ?? info.date;
         final dayMedia = _allMedia.where((f) => f.date == selected).toList();
         if (_savedDate == selected) {

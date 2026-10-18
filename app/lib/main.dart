@@ -103,10 +103,14 @@ class _HomeScreenState extends State<HomeScreen> {
   /// Bumped when the FAB asks the Settings tab to save itself.
   final ValueNotifier<int> _saveTrigger = ValueNotifier(0);
 
+  /// Today tab: the FAB becomes Write — triggers the form save.
+  final ValueNotifier<int> _writeTrigger = ValueNotifier(0);
+
   @override
   void dispose() {
     _refreshTick.dispose();
     _saveTrigger.dispose();
+    _writeTrigger.dispose();
     super.dispose();
   }
 
@@ -253,7 +257,11 @@ class _HomeScreenState extends State<HomeScreen> {
         child: IndexedStack(
           index: _index,
           children: [
-            FormScreen(api: api, refreshSignal: _refreshTick),
+            FormScreen(
+              api: api,
+              refreshSignal: _refreshTick,
+              saveTrigger: _writeTrigger,
+            ),
             JournalScreen(api: api, refreshSignal: _refreshTick),
             MediaScreen(
               api: api,
@@ -279,12 +287,19 @@ class _HomeScreenState extends State<HomeScreen> {
               tooltip: 'Save settings',
               child: const Icon(Icons.save_outlined),
             )
-          : FloatingActionButton(
-              shape: const CircleBorder(),
-              onPressed: () => _select(0),
-              tooltip: 'Add entry',
-              child: const Icon(Icons.add),
-            ),
+          : _index == 0
+              ? FloatingActionButton(
+                  shape: const CircleBorder(),
+                  onPressed: () => _writeTrigger.value++,
+                  tooltip: 'Write note',
+                  child: const Icon(Icons.edit_note_outlined),
+                )
+              : FloatingActionButton(
+                  shape: const CircleBorder(),
+                  onPressed: () => _select(0),
+                  tooltip: 'Add entry',
+                  child: const Icon(Icons.add),
+                ),
       floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
       bottomNavigationBar: BottomAppBar(
         shape: const CircularNotchedRectangle(),
