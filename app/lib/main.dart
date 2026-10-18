@@ -559,13 +559,13 @@ class MediaScreen extends StatefulWidget {
 }
 
 class _MediaScreenState extends State<MediaScreen> {
-  late Future<(List<MediaFile>, String)> _files;
+  late Future<(List<MediaFile>, String, List<Entry>)> _files;
   int _retries = 0;
 
   @override
   void initState() {
     super.initState();
-    _files = widget.api.mediaFiles();
+    _files = _load();
     widget.refreshSignal?.addListener(_reload);
   }
 
@@ -575,11 +575,18 @@ class _MediaScreenState extends State<MediaScreen> {
     super.dispose();
   }
 
+  Future<(List<MediaFile>, String, List<Entry>)> _load() async {
+    final (files, folder) = await widget.api.mediaFiles();
+    // entries feed the per-day "view entry" button
+    final entries = await widget.api.entries();
+    return (files, folder, entries);
+  }
+
   Future<void> _reload() async {
     setState(() {
-      _files = widget.api.mediaFiles();
+      _files = _load();
     });
-    final (files, folder) = await _files;
+    final (files, folder, _) = await _files;
     // Server scans in the background: an empty library usually means the
     // scan is still running — retry a few times automatically.
     if (files.isEmpty && folder.isNotEmpty && _retries < 3 && mounted) {
@@ -595,7 +602,7 @@ class _MediaScreenState extends State<MediaScreen> {
   Widget build(BuildContext context) {
     return RefreshIndicator(
       onRefresh: _reload,
-      child: FutureBuilder<(List<MediaFile>, String)>(
+      child: FutureBuilder<(List<MediaFile>, String, List<Entry>)>(
         future: _files,
         builder: (context, snap) {
           if (snap.hasError) {
@@ -607,7 +614,8 @@ class _MediaScreenState extends State<MediaScreen> {
           if (!snap.hasData) {
             return const Center(child: CircularProgressIndicator());
           }
-          final (files, folder) = snap.data!;
+          final (files, folder, entries) = snap.data!;
+          final entryByDate = {for (final e in entries) e.date: e};
           if (files.isEmpty) {
             final message = folder.isEmpty
                 ? 'Media library folder is not configured'
@@ -646,20 +654,45 @@ class _MediaScreenState extends State<MediaScreen> {
                   SliverToBoxAdapter(
                     child: Padding(
                       padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-                      child: Text(
-                        day,
-                        style: TextStyle(
-                          fontWeight: FontWeight.w700,
-                          fontSize: 16,
-                          color: Theme.of(context)
-                              .colorScheme
-                              .onSurface
-                              .withValues(alpha: 0.7),
-                        ),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              day,
+                              style: TextStyle(
+                                fontWeight: FontWeight.w700,
+                                fontSize: 16,
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .onSurface
+                                    .withValues(alpha: 0.7),
+                              ),
+                            ),
+                          ),
+                          if (entryByDate[day] != null)
+                            IconButton(
+                              icon: const Icon(Icons.description_outlined),
+                              tooltip: 'View entry for $day',
+                              visualDensity: VisualDensity.compact,
+                              onPressed: () =>
+                                  Navigator.of(context).push(MaterialPageRoute(
+                                builder: (_) => EntryScreen(
+                                  api: widget.api,
+                                  entry: entryByDate[day]!,
+                                  media: files
+                                      .where((f) => f.date == day)
+                                      .toList(),
+                                  onChanged: _reload,
+                                ),
+                              )),
+                            ),
+                        ],
                       ),
                     ),
                   ),
-                  SliverGrid.builder(
+                  SliverPadding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+                    sliver: SliverGrid.builder(
                     itemCount: groups[day]!.length,
                     gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
                       maxCrossAxisExtent: 180,
@@ -727,6 +760,7 @@ class _MediaScreenState extends State<MediaScreen> {
                         ),
                       );
                     },
+                  ),
                   ),
                 ],
               ),
