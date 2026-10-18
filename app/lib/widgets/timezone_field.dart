@@ -64,7 +64,7 @@ class _TimezoneFieldState extends State<TimezoneField> {
           alignment: Alignment.topLeft,
           child: Material(
             elevation: 4,
-            color: const Color(0xff27272a),
+            color: Theme.of(context).colorScheme.surfaceContainer,
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxHeight: 240, maxWidth: 340),
               child: ListView(

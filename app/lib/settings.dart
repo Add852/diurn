@@ -496,7 +496,9 @@ class _SettingsFormState extends State<_SettingsForm> {
                   color: e.value,
                   shape: BoxShape.circle,
                   border: Border.all(
-                    color: current == e.key ? Colors.white : Colors.transparent,
+                    color: current == e.key
+                        ? Theme.of(context).colorScheme.onSurface
+                        : Colors.transparent,
                     width: 2,
                   ),
                 ),
@@ -517,7 +519,7 @@ class _SettingsFormState extends State<_SettingsForm> {
         _section('Journal questions'),
         for (var i = 0; i < _questions.length; i++)
           Card(
-            color: const Color(0xff18181b),
+            color: Theme.of(context).colorScheme.surfaceContainerHighest,
             child: ListTile(
               title: Text(_questions[i]['question'] as String? ?? ''),
               subtitle: Text(
@@ -543,10 +545,14 @@ class _SettingsFormState extends State<_SettingsForm> {
         if (_txt('template_note_path').isNotEmpty) ...[
           Row(
             children: [
-              const Expanded(
+              Expanded(
                 child: Text('Template content',
-                    style:
-                        TextStyle(fontSize: 13, color: Colors.white70)),
+                    style: TextStyle(
+                        fontSize: 13,
+                        color: Theme.of(context)
+                            .colorScheme
+                            .onSurface
+                            .withValues(alpha: 0.7))),
               ),
               IconButton(
                 icon: const Icon(Icons.refresh, size: 20),
@@ -567,9 +573,14 @@ class _SettingsFormState extends State<_SettingsForm> {
             ),
           ),
         ] else
-          const Text(
+          Text(
             'Set a template note path above to edit the template.',
-            style: TextStyle(fontSize: 12, color: Colors.white38),
+            style: TextStyle(
+                fontSize: 12,
+                color: Theme.of(context)
+                    .colorScheme
+                    .onSurface
+                    .withValues(alpha: 0.38)),
           ),
       ],
     );
@@ -637,8 +648,13 @@ class _SettingsFormState extends State<_SettingsForm> {
         padding: const EdgeInsets.only(bottom: 8),
         child: Text(
           title,
-          style: const TextStyle(
-              fontSize: 16, fontWeight: FontWeight.w700, color: Colors.white70),
+          style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w700,
+              color: Theme.of(context)
+                  .colorScheme
+                  .onSurface
+                  .withValues(alpha: 0.7)),
         ),
       );
 

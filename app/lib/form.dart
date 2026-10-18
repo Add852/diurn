@@ -131,8 +131,13 @@ class _FormScreenState extends State<FormScreen> {
           children: [
             Text(
               info.date,
-              style: const TextStyle(
-                  fontSize: 20, fontWeight: FontWeight.w700, color: Colors.white70),
+              style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w700,
+                  color: Theme.of(context)
+                      .colorScheme
+                      .onSurface
+                      .withValues(alpha: 0.7)),
             ),
             const SizedBox(height: 16),
             for (final q in info.questions) ...[

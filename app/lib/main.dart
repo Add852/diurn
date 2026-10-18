@@ -339,7 +339,8 @@ class _NavItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = selected ? Colors.white : Colors.white38;
+    final cs = Theme.of(context).colorScheme;
+    final color = selected ? cs.primary : cs.onSurface.withValues(alpha: 0.45);
     return InkWell(
       onTap: onTap,
       child: Padding(
@@ -455,7 +456,11 @@ class _ConnectFormState extends State<ConnectForm> {
           const SizedBox(height: 4),
           Text(
             'The address of the machine running the Rust server.',
-            style: TextStyle(color: Colors.white.withValues(alpha: 0.6)),
+            style: TextStyle(
+                color: Theme.of(context)
+                    .colorScheme
+                    .onSurface
+                    .withValues(alpha: 0.6)),
           ),
           const SizedBox(height: 16),
           TextField(
@@ -628,10 +633,13 @@ class _MediaScreenState extends State<MediaScreen> {
                       padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
                       child: Text(
                         day,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontWeight: FontWeight.w700,
                           fontSize: 16,
-                          color: Colors.white70,
+                          color: Theme.of(context)
+                              .colorScheme
+                              .onSurface
+                              .withValues(alpha: 0.7),
                         ),
                       ),
                     ),
@@ -673,10 +681,12 @@ class _MediaScreenState extends State<MediaScreen> {
                                       fit: BoxFit.cover),
                                 )
                               else
-                                const ColoredBox(
-                                  color: Color(0xff27272a),
-                                  child:
-                                      Icon(Icons.movie_outlined, size: 40),
+                                ColoredBox(
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .surfaceContainerHighest,
+                                  child: const Icon(Icons.movie_outlined,
+                                      size: 40),
                                 ),
                               Positioned(
                                 left: 6,

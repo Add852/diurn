@@ -89,10 +89,13 @@ class _JournalScreenState extends State<JournalScreen> {
                       padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
                       child: Text(
                         month,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontWeight: FontWeight.w700,
                           fontSize: 16,
-                          color: Colors.white70,
+                          color: Theme.of(context)
+                              .colorScheme
+                              .onSurface
+                              .withValues(alpha: 0.7),
                         ),
                       ),
                     ),
@@ -376,7 +379,9 @@ class _EntryScreenState extends State<EntryScreen> {
               Wrap(
                 spacing: 8,
                 runSpacing: 8,
-                children: [for (final kv in fm.entries) _fmChip(kv.key, kv.value)],
+                children: [
+                  for (final kv in fm.entries) _fmChip(context, kv.key, kv.value)
+                ],
               ),
             const SizedBox(height: 16),
             MarkdownBody(
@@ -437,13 +442,13 @@ class _EntryScreenState extends State<EntryScreen> {
   }
 }
 
-Widget _fmChip(String key, String value) {
+Widget _fmChip(BuildContext context, String key, String value) {
   // ponytail: media-file FM values (old /api/media refs) render as text;
   // upgrade to thumbnail chips when entries embed them.
   return Container(
     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
     decoration: BoxDecoration(
-      color: const Color(0xff27272a),
+      color: Theme.of(context).colorScheme.surfaceContainerHighest,
       borderRadius: BorderRadius.circular(8),
     ),
     child: Text('$key: $value', style: const TextStyle(fontSize: 12)),
