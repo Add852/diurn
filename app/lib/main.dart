@@ -698,7 +698,13 @@ class _MediaScreenState extends State<MediaScreen> {
                                   overflow: TextOverflow.ellipsis,
                                   style: const TextStyle(
                                       fontSize: 11,
-                                      shadows: [Shadow(blurRadius: 4)]),
+                                      color: Colors.white,
+                                      shadows: [
+                                        Shadow(
+                                            color: Color(0xd9000000),
+                                            blurRadius: 5,
+                                            offset: Offset(0, 1))
+                                      ]),
                                 ),
                               ),
                             ],

@@ -5,6 +5,13 @@ import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'api.dart';
 import 'lightbox.dart';
 
+/// Shadow for text sitting on photo backgrounds (journal cards, media tiles).
+const _photoTextShadow = Shadow(
+  color: Color(0xd9000000), // ~85% black
+  blurRadius: 5,
+  offset: Offset(0, 1),
+);
+
 /// Port of src/lib/frontmatter.ts: `---\nkey: value\n---\nbody` split.
 (Map<String, String>, String) parseFrontmatter(String content) {
   final m = RegExp(r'^---\n([\s\S]*?)\n---\n?([\s\S]*)$').firstMatch(content);
@@ -179,18 +186,23 @@ class _EntryCard extends StatelessWidget {
                 padding: const EdgeInsets.all(14),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisAlignment: MainAxisAlignment.center,
+                  mainAxisAlignment: MainAxisAlignment.end,
                   children: [
                     Row(
                       children: [
                         Text(entry.date,
                             style: const TextStyle(
-                                fontWeight: FontWeight.w700, fontSize: 15)),
+                                fontWeight: FontWeight.w700,
+                                fontSize: 15,
+                                color: Colors.white,
+                                shadows: [_photoTextShadow])),
                         if (entry.fsOnly)
                           Padding(
                             padding: const EdgeInsets.only(left: 6),
                             child: Icon(Icons.description_outlined,
-                                size: 14, color: Colors.white38),
+                                size: 14,
+                                color: Colors.white70,
+                                shadows: const [_photoTextShadow]),
                           ),
                       ],
                     ),
@@ -203,14 +215,16 @@ class _EntryCard extends StatelessWidget {
                         style: TextStyle(
                             fontSize: 12,
                             height: 1.25,
-                            color: Colors.white.withValues(alpha: 0.7)),
+                            color: Colors.white.withValues(alpha: 0.85),
+                            shadows: const [_photoTextShadow]),
                       )
                     else
                       Text('No metadata',
                           style: TextStyle(
                               fontSize: 12,
                               fontStyle: FontStyle.italic,
-                              color: Colors.white24)),
+                              color: Colors.white54,
+                              shadows: const [_photoTextShadow])),
                   ],
                 ),
               ),
