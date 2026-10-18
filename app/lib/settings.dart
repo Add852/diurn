@@ -874,6 +874,7 @@ class _SettingsFormState extends State<_SettingsForm> {
       ),
     );
     if (result == null) return;
+    if (!mounted) return; // the first dialog's async gap
     if (result['__delete'] == true) {
       final yes = await showDialog<bool>(
         context: context,
