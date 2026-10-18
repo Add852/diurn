@@ -108,8 +108,10 @@ class Api {
       ? null
       : base64.encode(utf8.encode('${username!}:${password!}'));
 
+  String? debugAuthParam() => _authParam;
+
   Map<String, String> get _authHeaders => {
-        if (_authParam != null) 'Authorization': 'Basic $_authParam!',
+        if (_authParam != null) 'Authorization': 'Basic ${_authParam!}',
       };
 
   /// Media/thumbnail URLs carry ?auth= because <img>/<video> tags cannot
