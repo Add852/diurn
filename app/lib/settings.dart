@@ -359,24 +359,85 @@ class _SettingsFormState extends State<_SettingsForm> {
       _fail('Invalid JSON: $e');
       return;
     }
+    final profile =
+        (incoming['profile'] as Map?)?.cast<String, dynamic>() ?? {};
+    final questions = (incoming['questions'] as List?)
+            ?.cast<Map<String, dynamic>>()
+            .map(Map<String, dynamic>.from)
+            .toList() ??
+        [];
+    final templateContent = incoming['template_content'] as String?;
+    final templatePath = profile['template_note_path'] as String? ?? '';
+
+    // Staged import: path-independent fields always apply; folders and the
+    // template are best-effort because they may not exist on this server.
+    final applied = <String>[];
+    final skipped = <String>[];
+
+    // 1. questions + safe profile fields (no paths involved)
     try {
-      final profile = (incoming['profile'] as Map?)?.cast<String, dynamic>();
-      final questions = (incoming['questions'] as List?)
-          ?.cast<Map<String, dynamic>>()
-          .map(Map<String, dynamic>.from)
-          .toList();
-      await widget.api.saveSettings(
-        profile ?? {},
-        questions ?? [],
-        templateContent: incoming['template_content'] as String?,
-      );
-      if (!mounted) return;
-      _flash('Imported — fields refreshed');
-      await _discardDraft();
+      final safe = <String, dynamic>{
+        if (profile['name'] != null) 'name': profile['name'],
+        if (profile['timezone'] != null) 'timezone': profile['timezone'],
+        if (profile['day_offset_hours'] != null)
+          'day_offset_hours': profile['day_offset_hours'],
+        if (profile['theme_mode'] != null) 'theme_mode': profile['theme_mode'],
+        if (profile['accent_color'] != null)
+          'accent_color': profile['accent_color'],
+      };
+      await widget.api.saveSettings(safe, questions);
+      applied.addAll([
+        'questions',
+        for (final k in [
+          'name',
+          'timezone',
+          'day_offset_hours',
+          'theme_mode',
+          'accent_color',
+        ])
+          if (safe[k] != null) k,
+      ]);
     } catch (e) {
       if (!mounted) return;
-      _fail('$e');
+      _fail('Import failed: $e');
+      return;
     }
+
+    // 2. folders (daily note + media) — kept out of stage 1 so a missing
+    // folder can't block the fields above
+    if ((profile['daily_note_folder'] as String? ?? '').isNotEmpty ||
+        (profile['media_folder'] as String? ?? '').isNotEmpty) {
+      try {
+        await widget.api.saveSettings({
+          ...profile,
+          'template_note_path': '',
+        }, questions);
+        applied.add('folders');
+      } catch (e) {
+        skipped.add('folders — $e');
+      }
+    }
+
+    // 3. template path + content in one save (the server creates the file
+    // when the parent folder exists)
+    if (templatePath.isNotEmpty ||
+        (templateContent != null && templateContent.isNotEmpty)) {
+      try {
+        await widget.api.saveSettings(
+          {...profile, 'template_note_path': templatePath},
+          questions,
+          templateContent: templateContent,
+        );
+        applied.add('template');
+      } catch (e) {
+        skipped.add('template — $e');
+      }
+    }
+
+    if (!mounted) return;
+    _flash('Imported: ${applied.join(', ')}'
+        '${skipped.isEmpty ? '' : '\nSkipped: ${skipped.join(' | ')}'}');
+    await _discardDraft();
   }
 
   Future<void> _pickPath(String key, {required bool pickFile}) async {

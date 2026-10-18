@@ -168,13 +168,21 @@ class Api {
     if (status == 401) {
       throw ApiException('Unauthorized — check username/password in settings');
     }
-    final decoded = text.isEmpty ? null : jsonDecode(text);
+    dynamic decoded;
+    if (text.isNotEmpty) {
+      try {
+        decoded = jsonDecode(text);
+      } catch (_) {
+        decoded = null; // plain-text error bodies surface verbatim below
+      }
+    }
     if (status == 409 && decoded is Map && decoded['exists'] == true) {
       throw EntryExistsException();
     }
     if (status >= 400) {
-      final reason =
-          decoded is Map && decoded['error'] != null ? decoded['error'] : text;
+      final reason = decoded is Map && decoded['error'] != null
+          ? '${decoded['error']}'
+          : text.trim();
       throw ApiException('HTTP $status: $reason');
     }
     return decoded;
