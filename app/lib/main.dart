@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'api.dart';
+import 'lightbox.dart';
 import 'viewer.dart';
 
 const _kPrefUrl = 'server_url';
@@ -299,7 +300,11 @@ class _MediaGridScreenState extends State<MediaGridScreen> {
             final f = files[i];
             return InkWell(
               onTap: () => Navigator.of(context).push(MaterialPageRoute(
-                builder: (_) => ViewerScreen(api: widget.api, entry: f),
+                builder: (_) => MediaViewerScreen(
+                  api: widget.api,
+                  files: files,
+                  initialIndex: i,
+                ),
               )),
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(10),

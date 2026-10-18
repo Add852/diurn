@@ -8,7 +8,15 @@ import 'video/video_file.dart';
 class ViewerScreen extends StatefulWidget {
   final Api api;
   final FsEntry entry;
-  const ViewerScreen({super.key, required this.api, required this.entry});
+
+  /// Embedded in the lightbox: no AppBar of its own, fills the page.
+  final bool embedded;
+  const ViewerScreen({
+    super.key,
+    required this.api,
+    required this.entry,
+    this.embedded = false,
+  });
 
   @override
   State<ViewerScreen> createState() => _ViewerScreenState();
@@ -28,6 +36,25 @@ class _ViewerScreenState extends State<ViewerScreen> {
   @override
   Widget build(BuildContext context) {
     final e = widget.entry;
+    final body = Center(
+      child: isVideo(e.path)
+          ? VideoFileWidget(url: widget.api.mediaUrl(e.path))
+          : InteractiveViewer(
+              maxScale: 8,
+              child: Image.network(
+                widget.api.mediaUrl(e.path),
+                fit: BoxFit.contain,
+                // thumbnail decode failed (e.g. unsupported format)
+                // -> show broken image icon
+                errorBuilder: (_, _, _) => const Icon(
+                  Icons.broken_image_outlined,
+                  color: Colors.white38,
+                  size: 64,
+                ),
+              ),
+            ),
+    );
+    if (widget.embedded) return body;
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
@@ -35,22 +62,7 @@ class _ViewerScreenState extends State<ViewerScreen> {
         foregroundColor: Colors.white,
         title: Text(e.name),
       ),
-      body: Center(
-        child: isVideo(e.path)
-            ? VideoFileWidget(url: widget.api.mediaUrl(e.path))
-            : InteractiveViewer(
-                maxScale: 8,
-                child: Image.network(
-                  widget.api.mediaUrl(e.path),
-                  fit: BoxFit.contain,
-                  errorBuilder: (_, _, _) => const Icon(
-                    Icons.broken_image_outlined,
-                    color: Colors.white38,
-                    size: 64,
-                  ),
-                ),
-              ),
-      ),
+      body: body,
     );
   }
 }
