@@ -143,8 +143,11 @@ class _HomeScreenState extends State<HomeScreen> {
                       onChangeServer: _forget,
                     ),
                   ))
-                  // roots may have changed in settings — refresh on return
-                  .then((_) => _connect(_savedUrl, _savedToken)),
+                  // refresh roots on return — but not after "change server",
+                  // which intentionally disconnects (_api == null)
+                  .then((_) {
+                if (mounted && _api != null) _connect(_savedUrl, _savedToken);
+              }),
             ),
           ],
           bottom: const TabBar(
@@ -356,7 +359,7 @@ class MediaScreen extends StatefulWidget {
 }
 
 class _MediaScreenState extends State<MediaScreen> {
-  late final Future<(List<MediaFile>, bool, String)> _files;
+  late Future<(List<MediaFile>, bool, String)> _files;
 
   @override
   void initState() {
@@ -364,38 +367,57 @@ class _MediaScreenState extends State<MediaScreen> {
     _files = widget.api.mediaFiles();
   }
 
+  Future<void> _reload() async {
+    setState(() => _files = widget.api.mediaFiles());
+    await _files;
+  }
+
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder<(List<MediaFile>, bool, String)>(
-      future: _files,
-      builder: (context, snap) {
-        if (snap.hasError) return Center(child: Text('${snap.error}'));
-        if (!snap.hasData) {
-          return const Center(child: CircularProgressIndicator());
-        }
-        final (files, enabled, folder) = snap.data!;
-        if (files.isEmpty) {
-          if (!enabled || folder.isEmpty) {
-            return Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Text('Media library is not configured'),
-                  const SizedBox(height: 12),
-                  FilledButton.icon(
-                    onPressed: () => Navigator.of(context).push(
-                      MaterialPageRoute(
-                          builder: (_) => SettingsScreen(api: widget.api)),
-                    ),
-                    icon: const Icon(Icons.settings_outlined),
-                    label: const Text('Open settings'),
+    return RefreshIndicator(
+      onRefresh: _reload,
+      child: FutureBuilder<(List<MediaFile>, bool, String)>(
+        future: _files,
+        builder: (context, snap) {
+          if (snap.hasError) {
+            return ListView(children: [
+              const SizedBox(height: 80),
+              Center(child: Text('${snap.error}')),
+            ]);
+          }
+          if (!snap.hasData) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          final (files, enabled, folder) = snap.data!;
+          if (files.isEmpty) {
+            final message = !enabled || folder.isEmpty
+                ? 'Media library is not configured'
+                : 'No media found in $folder\n\nPull down to refresh — the server scans in the background';
+            return ListView(
+              children: [
+                const SizedBox(height: 120),
+                Center(
+                  child: Column(
+                    children: [
+                      Text(message, textAlign: TextAlign.center),
+                      if (!enabled || folder.isEmpty) ...[
+                        const SizedBox(height: 12),
+                        FilledButton.icon(
+                          onPressed: () => Navigator.of(context).push(
+                            MaterialPageRoute(
+                                builder: (_) =>
+                                    SettingsScreen(api: widget.api)),
+                          ),
+                          icon: const Icon(Icons.settings_outlined),
+                          label: const Text('Open settings'),
+                        ),
+                      ],
+                    ],
                   ),
-                ],
-              ),
+                ),
+              ],
             );
           }
-          return Center(child: Text('No media found in $folder'));
-        }
         // group by day, keep API order (newest day first)
         final groups = <String, List<int>>{};
         for (var i = 0; i < files.length; i++) {
@@ -485,6 +507,7 @@ class _MediaScreenState extends State<MediaScreen> {
           ],
         );
       },
+      ),
     );
   }
 }

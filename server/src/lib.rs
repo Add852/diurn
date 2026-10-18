@@ -20,7 +20,7 @@ use axum::{
     extract::{Query, State},
     http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
-    routing::{get, post},
+    routing::{get, post, put},
     Json, Router,
 };
 use serde::Deserialize;
@@ -68,6 +68,7 @@ pub fn build_router(roots: Vec<PathBuf>, token: Option<String>, db: Arc<Db>) -> 
         .route("/api/media", get(media_list))
         .route("/api/media/file", get(media))
         .route("/api/thumbnail", get(thumbnail))
+        .route("/api/auth/account", put(auth_account))
         .layer(axum::middleware::from_fn_with_state(state.clone(), auth))
         .with_state(state);
     // ponytail: permissive CORS is fine pre-auth for LAN dev, but it lets any
@@ -138,6 +139,23 @@ struct LoginBody {
 
 fn default_username() -> String {
     "admin".into()
+}
+
+/// PUT /api/auth/account — change admin username/password.
+#[derive(Deserialize)]
+struct AccountBody {
+    #[serde(default)]
+    username: Option<String>,
+    #[serde(default)]
+    password: Option<String>,
+}
+
+async fn auth_account(state: State<AppState>, Json(body): Json<AccountBody>) -> Response {
+    let conn = state.db.0.lock().unwrap();
+    match auth::update_account(&conn, body.username.as_deref(), body.password.as_deref()) {
+        Ok(()) => Json(json!({ "ok": true })).into_response(),
+        Err(e) => (StatusCode::BAD_REQUEST, e).into_response(),
+    }
 }
 
 async fn auth_login(state: State<AppState>, Json(body): Json<LoginBody>) -> Response {
@@ -407,12 +425,13 @@ async fn media_list(state: State<AppState>, Query(q): Query<MediaListQuery>) -> 
         if folder.is_dir() {
             let db = state.db.clone();
             let p = profile.clone();
-            // scan is CPU/IO-bound; keep it off the async runtime
+            // Background scan — never block the response (a big library would
+            // hang the tab for minutes). Cached rows serve now; the next
+            // request (or pull-to-refresh) picks up the scan's results.
             let _ = tokio::task::spawn_blocking(move || {
                 let mut conn = db.0.lock().unwrap();
                 media::scan(&mut conn, &p, &folder)
-            })
-            .await;
+            });
         }
     }
     let year_month = match (q.year.as_deref(), q.month.as_deref()) {

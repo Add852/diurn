@@ -269,6 +269,14 @@ class Api {
     });
   }
 
+  /// PUT /api/auth/account — change admin username/password.
+  Future<void> updateAccount(String? username, String? password) async {
+    await _send('PUT', '/api/auth/account', {}, {
+      'username': ?username,
+      'password': ?password,
+    });
+  }
+
   /// GET /api/auth/status — public.
   Future<Map<String, dynamic>> authStatus() async {
     final v = await _getJson('/api/auth/status', {});

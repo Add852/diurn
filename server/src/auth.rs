@@ -127,6 +127,40 @@ pub fn status(conn: &Connection, env_token_set: bool) -> serde_json::Value {
     }
 }
 
+/// PUT /api/auth/account — change the admin's username and/or password.
+pub fn update_account(
+    conn: &Connection,
+    username: Option<&str>,
+    password: Option<&str>,
+) -> Result<(), String> {
+    let user_id: i64 = conn
+        .query_row("SELECT id FROM users ORDER BY id LIMIT 1", [], |r| r.get(0))
+        .map_err(|_| "No user exists".to_string())?;
+    if let Some(u) = username {
+        let u = u.trim();
+        if u.is_empty() {
+            return Err("Username is required".into());
+        }
+        conn.execute(
+            "UPDATE users SET username = ?1 WHERE id = ?2",
+            rusqlite::params![u, user_id],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    if let Some(p) = password {
+        if p.len() < 4 {
+            return Err("Password must be at least 4 characters".into());
+        }
+        let (hash, salt) = hash_password(p);
+        conn.execute(
+            "UPDATE users SET password_hash = ?1, salt = ?2 WHERE id = ?3",
+            rusqlite::params![hash, salt, user_id],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 /// Guard used by the middleware: env token match OR valid session.
 /// Open before setup (no users, no env token) so a fresh install can bootstrap.
 pub fn is_authorized(db: &Db, env_token: Option<&str>, presented: Option<&str>) -> bool {

@@ -381,6 +381,31 @@ async fn media_scan_lists_and_thumbs() {
     assert_eq!(res.status(), StatusCode::OK);
     let body = res.into_body().collect().await.unwrap().to_bytes();
     let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["enabled"], serde_json::json!(true));
+
+    // scan runs in the background now — poll for the row to land
+    let dbfile = std::env::temp_dir()
+        .join(format!("diurn-db-{}", root.file_name().unwrap().to_string_lossy()));
+    let mut n = 0i64;
+    for _ in 0..100 {
+        let conn = rusqlite::Connection::open(&dbfile).unwrap();
+        n = conn
+            .query_row("SELECT COUNT(*) FROM media_cache", [], |r| r.get(0))
+            .unwrap_or(0);
+        if n == 1 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    assert_eq!(n, 1, "background scan did not index pic.jpg in time");
+
+    // second request serves from cache with thumb metadata
+    let res = router.clone()
+        .oneshot(Request::get("/api/media").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    let body = res.into_body().collect().await.unwrap().to_bytes();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
     let files = v["files"].as_array().unwrap();
     assert_eq!(files.len(), 1);
     assert_eq!(files[0]["name"], "pic.jpg");
@@ -388,19 +413,8 @@ async fn media_scan_lists_and_thumbs() {
     assert_eq!(files[0]["hasThumb"], serde_json::json!(true));
     assert!(files[0]["date"].as_str().is_some());
 
-    // thumb exists in the shared ~/.diurn/thumbs layout; row cached ->
-    // second request serves from cache without rescan churn
-    let dbfile = std::env::temp_dir()
-        .join(format!("diurn-db-{}", root.file_name().unwrap().to_string_lossy()));
-    let conn = rusqlite::Connection::open(&dbfile).unwrap();
-    let n: i64 = conn
-        .query_row("SELECT COUNT(*) FROM media_cache", [], |r| r.get(0))
-        .unwrap();
-    assert_eq!(n, 1);
-
     // /api/media/file still streams the original
-    let res = router.clone()
-        .clone()
+    let res = router
         .oneshot(
             Request::get(format!(
                 "/api/media/file?path={}",
@@ -737,4 +751,74 @@ fn scrypt_hashes_are_cross_compatible_with_node() {
     let (h, s) = diurn_server::auth::hash_password("another pass");
     assert!(diurn_server::auth::verify_password("another pass", &h, &s));
     assert!(!diurn_server::auth::verify_password("nope", &h, &s));
+}
+
+#[tokio::test]
+async fn account_update_changes_credentials() {
+    let root = tmp_root("account");
+    let router = app(&root); // no users -> open
+    // setup
+    router
+        .clone()
+        .oneshot(
+            Request::post("/api/auth/setup")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"password":"old-pass"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    // login with old password, get token
+    let res = router
+        .clone()
+        .oneshot(
+            Request::post("/api/auth/login")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"username":"admin","password":"old-pass"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = res.into_body().collect().await.unwrap().to_bytes();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let token = v["token"].as_str().unwrap();
+
+    // change username + password (authed)
+    let res = router
+        .clone()
+        .oneshot(
+            Request::put("/api/auth/account")
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::from(r#"{"username":"tony","password":"new-pass"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    // old credentials no longer work
+    let res = router
+        .clone()
+        .oneshot(
+            Request::post("/api/auth/login")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"username":"admin","password":"old-pass"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+
+    // new credentials work
+    let res = router
+        .oneshot(
+            Request::post("/api/auth/login")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"username":"tony","password":"new-pass"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
 }

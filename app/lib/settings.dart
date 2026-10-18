@@ -147,6 +147,36 @@ class _SettingsFormState extends State<_SettingsForm> {
     }
   }
 
+  Future<void> _saveAccount() async {
+    final username = _txt('accountUsername');
+    final password = _txt('accountPassword');
+    if (username.isEmpty && password.isEmpty) {
+      setState(() => _error = 'Nothing to update — enter a username or new password');
+      return;
+    }
+    setState(() {
+      _saving = true;
+      _error = null;
+      _savedFlash = null;
+    });
+    try {
+      await widget.api.updateAccount(
+        username.isEmpty ? null : username,
+        password.isEmpty ? null : password,
+      );
+      if (!mounted) return;
+      setState(() {
+        _savedFlash = 'Account updated';
+        _fields['accountPassword']?.clear();
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _error = '$e');
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
   Future<void> _pickPath(String key, {required bool pickFile}) async {
     final current = _txt(key);
     final picked = await showDialog<String>(
@@ -219,6 +249,16 @@ class _SettingsFormState extends State<_SettingsForm> {
           icon: const Icon(Icons.add),
           label: const Text('Add question'),
         ),
+        const SizedBox(height: 16),
+        _section('Account'),
+        _textField('Username', 'accountUsername'),
+        _textField('New password (min 4, empty = keep)', 'accountPassword'),
+        const SizedBox(height: 8),
+        OutlinedButton.icon(
+          onPressed: _saving ? null : _saveAccount,
+          icon: const Icon(Icons.key_outlined),
+          label: const Text('Update account'),
+        ),
         const SizedBox(height: 24),
         if (_error != null) ...[
           Text(_error!, style: const TextStyle(color: Colors.redAccent)),
@@ -247,6 +287,21 @@ class _SettingsFormState extends State<_SettingsForm> {
               fontSize: 16, fontWeight: FontWeight.w700, color: Colors.white70),
         ),
       );
+
+  Widget _textField(String label, String key) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: TextFormField(
+        controller: _ctrl(key),
+        obscureText: key == 'accountPassword',
+        decoration: InputDecoration(
+          border: const OutlineInputBorder(),
+          labelText: label,
+          isDense: true,
+        ),
+      ),
+    );
+  }
 
   Widget _pathField(String label, String key, {required bool pickFile}) {
     return Padding(
