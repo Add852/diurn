@@ -100,20 +100,22 @@ class _JournalScreenState extends State<JournalScreen> {
                     itemCount: groups[month]!.length,
                     itemBuilder: (context, i) {
                       final e = groups[month]![i];
-                      final preview = e.markdown
+                      final body = parseFrontmatter(e.markdown).$2;
+                      final preview = body
                           .split('\n')
-                          .where((l) =>
-                              l.trim().isNotEmpty && !l.startsWith('---'))
                           .map((l) => l
                               .replaceFirst(RegExp(r'^#+\s*'), '')
-                              .replaceFirst(RegExp(r'^-\s*'), '')
+                              .replaceFirst(RegExp(r'^[-*]\s*'), '')
                               .trim())
-                          .first;
+                          .where((l) => l.isNotEmpty)
+                          .take(3)
+                          .join('\n');
                       return _EntryCard(
                         api: widget.api,
                         entry: e,
                         background: mediaByDate[e.date],
                         preview: preview,
+                        onChanged: _reload,
                       );
                     },
                   ),
@@ -134,11 +136,13 @@ class _EntryCard extends StatelessWidget {
   final Entry entry;
   final MediaFile? background;
   final String preview;
+  final VoidCallback onChanged;
   const _EntryCard({
     required this.api,
     required this.entry,
     required this.background,
     required this.preview,
+    required this.onChanged,
   });
 
   @override
@@ -153,7 +157,7 @@ class _EntryCard extends StatelessWidget {
           builder: (_) => EntryScreen(api: api, entry: entry),
         )),
         child: SizedBox(
-          height: 120,
+          height: 140,
           child: Stack(
             fit: StackFit.expand,
             children: [
@@ -186,10 +190,11 @@ class _EntryCard extends StatelessWidget {
                     const SizedBox(height: 4),
                     Text(
                       preview,
-                      maxLines: 2,
+                      maxLines: 3,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                           fontSize: 13,
+                          height: 1.25,
                           color: Colors.white.withValues(alpha: 0.75)),
                     ),
                   ],
@@ -208,7 +213,13 @@ class _EntryCard extends StatelessWidget {
 class EntryScreen extends StatefulWidget {
   final Api api;
   final Entry entry;
-  const EntryScreen({super.key, required this.api, required this.entry});
+  final VoidCallback? onChanged;
+  const EntryScreen({
+    super.key,
+    required this.api,
+    required this.entry,
+    this.onChanged,
+  });
 
   @override
   State<EntryScreen> createState() => _EntryScreenState();
@@ -245,6 +256,7 @@ class _EntryScreenState extends State<EntryScreen> {
       await widget.api.updateEntry(widget.entry.date, _editor.text);
       if (!mounted) return;
       setState(() => _editing = false);
+      widget.onChanged?.call();
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -277,6 +289,7 @@ class _EntryScreenState extends State<EntryScreen> {
     try {
       await widget.api.deleteEntry(widget.entry.date);
       if (!mounted) return;
+      widget.onChanged?.call();
       setState(() => _deleted = true);
       Navigator.of(context).pop();
     } catch (e) {

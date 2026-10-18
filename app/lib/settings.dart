@@ -312,37 +312,6 @@ class _SettingsFormState extends State<_SettingsForm> {
     await _applyImport(text);
   }
 
-  Future<void> _importFromDialog() async {
-    final text = await showDialog<String>(
-      context: context,
-      builder: (context) {
-        final ctrl = TextEditingController();
-        return AlertDialog(
-          title: const Text('Import settings'),
-          content: TextField(
-            controller: ctrl,
-            maxLines: 8,
-            autocorrect: false,
-            decoration: const InputDecoration(
-              border: OutlineInputBorder(),
-              hintText: 'Paste the exported settings JSON',
-            ),
-          ),
-          actions: [
-            TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('Cancel')),
-            FilledButton(
-                onPressed: () => Navigator.pop(context, ctrl.text),
-                child: const Text('Import')),
-          ],
-        );
-      },
-    );
-    if (text == null || text.trim().isEmpty) return;
-    await _applyImport(text);
-  }
-
   Future<void> _applyImport(String text) async {
     Map<String, dynamic> incoming;
     try {
@@ -571,13 +540,6 @@ class _SettingsFormState extends State<_SettingsForm> {
           subtitle: const Text('Pick a previously exported settings JSON',
               style: TextStyle(fontSize: 12)),
           onTap: _importSettings,
-        ),
-        ListTile(
-          leading: const Icon(Icons.paste_outlined),
-          title: const Text('Import pasted JSON'),
-          subtitle: const Text('Paste settings JSON manually',
-              style: TextStyle(fontSize: 12)),
-          onTap: _importFromDialog,
         ),
       ],
     );
