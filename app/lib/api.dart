@@ -246,6 +246,23 @@ class Api {
   Future<void> deleteEntry(String date) async {
     await _send('DELETE', '/api/entries', {'date': date}, null);
   }
+
+  /// GET /api/settings
+  Future<Map<String, dynamic>> settings() async {
+    final v = await _getJson('/api/settings', {});
+    return v as Map<String, dynamic>;
+  }
+
+  /// PUT /api/settings — whitelisted profile fields + question upserts.
+  Future<void> saveSettings(
+    Map<String, dynamic> profile,
+    List<Map<String, dynamic>> questions,
+  ) async {
+    await _send('PUT', '/api/settings', {}, {
+      'profile': profile,
+      'questions': questions,
+    });
+  }
 }
 
 /// One question of the active profile's form.

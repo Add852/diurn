@@ -60,6 +60,7 @@ pub fn build_router(roots: Vec<PathBuf>, token: Option<String>, db: Arc<Db>) -> 
         .route("/api/fs", get(fs))
         .route("/api/form", get(form))
         .route("/api/entries", get(entries).post(entries_create).put(entries_update).delete(entries_delete))
+        .route("/api/settings", get(settings).put(settings_put))
         .route("/api/media", get(media_list))
         .route("/api/media/file", get(media))
         .route("/api/thumbnail", get(thumbnail))
@@ -308,6 +309,36 @@ async fn entries_delete(state: State<AppState>, Query(q): Query<EntriesQuery>) -
         Err(journal::UpdateError::InvalidDate) => (StatusCode::BAD_REQUEST, "Invalid date").into_response(),
         Err(journal::UpdateError::NotFound) => (StatusCode::NOT_FOUND, "Entry not found").into_response(),
         Err(journal::UpdateError::Db(e)) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
+    }
+}
+
+/// GET /api/settings — profile subset + questions + template content.
+async fn settings(state: State<AppState>) -> Response {
+    let Some(profile) = state.db.active_profile() else {
+        return (StatusCode::BAD_REQUEST, "No active profile").into_response();
+    };
+    let conn = state.db.0.lock().unwrap();
+    match journal::get_settings(&conn, &profile) {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+/// PUT /api/settings — whitelisted profile fields + questions upsert.
+#[derive(Deserialize)]
+struct SettingsBody {
+    profile: journal::ProfileIn,
+    questions: Option<Vec<journal::QuestionIn>>,
+}
+
+async fn settings_put(state: State<AppState>, Json(body): Json<SettingsBody>) -> Response {
+    let Some(profile) = state.db.active_profile() else {
+        return (StatusCode::BAD_REQUEST, "No active profile").into_response();
+    };
+    let mut conn = state.db.0.lock().unwrap();
+    match journal::put_settings(&mut conn, profile.id, &body.profile, body.questions.as_ref()) {
+        Ok(()) => Json(json!({ "ok": true })).into_response(),
+        Err(e) => (StatusCode::BAD_REQUEST, e).into_response(),
     }
 }
 

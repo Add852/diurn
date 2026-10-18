@@ -5,6 +5,7 @@ import 'api.dart';
 import 'form.dart';
 import 'journal.dart';
 import 'lightbox.dart';
+import 'settings.dart';
 import 'viewer.dart';
 
 const _kPrefUrl = 'server_url';
@@ -127,8 +128,10 @@ class _HomeScreenState extends State<HomeScreen> {
           actions: [
             IconButton(
               icon: const Icon(Icons.settings_outlined),
-              tooltip: 'Change server',
-              onPressed: _forget,
+              tooltip: 'Settings',
+              onPressed: () => Navigator.of(context).push(MaterialPageRoute(
+                builder: (_) => SettingsScreen(api: api, onChangeServer: _forget),
+              )),
             ),
           ],
           bottom: const TabBar(

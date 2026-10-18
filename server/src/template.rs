@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use chrono::{Datelike, NaiveDate, Timelike};
+use chrono::{Datelike, NaiveDate};
 
 #[derive(Clone, Debug, Default)]
 pub struct TemplateVar {

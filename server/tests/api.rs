@@ -508,3 +508,87 @@ async fn form_create_update_delete_roundtrip() {
     let n: i64 = conn.query_row("SELECT COUNT(*) FROM entries", [], |r| r.get(0)).unwrap();
     assert_eq!(n, 0);
 }
+
+#[tokio::test]
+async fn settings_get_put_roundtrip() {
+    let root = tmp_root("settings");
+    let router = app(&root);
+    seed_profile(&root);
+
+    // GET: profile subset + empty questions
+    let res = router
+        .clone()
+        .oneshot(Request::get("/api/settings").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = res.into_body().collect().await.unwrap().to_bytes();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["profile"]["daily_note_folder"], serde_json::json!(root.join("notes").to_string_lossy()));
+
+    // PUT: update folders + add one question
+    let put = format!(
+        r#"{{"profile": {{"daily_note_folder": "{}", "media_enabled": false, "day_offset_hours": 2}},
+             "questions": [{{"identifier": "Q1", "question": "What happened?", "asked": true, "sort_order": 0}}]}}"#,
+        root.display()
+    );
+    let res = router
+        .clone()
+        .oneshot(
+            Request::put("/api/settings")
+                .header("content-type", "application/json")
+                .body(Body::from(put))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    // questions upserted with ids; second PUT keeps the same id (FK stability)
+    let res = router
+        .clone()
+        .oneshot(Request::get("/api/settings").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    let body = res.into_body().collect().await.unwrap().to_bytes();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["questions"].as_array().unwrap().len(), 1);
+    assert_eq!(v["profile"]["day_offset_hours"], serde_json::json!(2));
+    let qid = v["questions"][0]["id"].as_i64().unwrap();
+
+    let put2 = format!(
+        r#"{{"profile": {{}}, "questions": [{{"id": {qid}, "identifier": "Q1", "question": "Edited?", "asked": true, "sort_order": 0}}]}}"#
+    );
+    let res = router
+        .clone()
+        .oneshot(
+            Request::put("/api/settings")
+                .header("content-type", "application/json")
+                .body(Body::from(put2))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let res = router
+        .clone()
+        .oneshot(Request::get("/api/settings").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    let body = res.into_body().collect().await.unwrap().to_bytes();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["questions"][0]["id"], serde_json::json!(qid));
+    assert_eq!(v["questions"][0]["question"], "Edited?");
+
+    // validation: non-directory daily_note_folder rejected
+    let res = router
+        .oneshot(
+            Request::put("/api/settings")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"profile": {"daily_note_folder": "/definitely/not/here"}}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+}
