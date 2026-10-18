@@ -1,6 +1,8 @@
 //! Auth: single admin user (shared users table with the old app), scrypt
-//! password verification, session tokens for the native clients.
-//! Port of src/lib/auth.ts hashPassword/verifyPassword + setup/login flows.
+//! password verification, HTTP Basic credentials on every request.
+//! Port of src/lib/auth.ts hashPassword/verifyPassword + the setup flow.
+
+use std::collections::HashSet;
 
 use rusqlite::Connection;
 
@@ -44,7 +46,6 @@ pub fn verify_password(password: &str, hash_hex: &str, salt_hex: &str) -> bool {
 }
 
 /// POST /api/auth/setup — first-run: create admin + Default profile.
-/// Mirrors the old setup route's rows so either app can read the DB.
 pub fn setup(conn: &mut Connection, password: &str, timezone: &str) -> Result<(), String> {
     if password.len() < 4 {
         return Err("Password must be at least 4 characters".into());
@@ -79,52 +80,17 @@ pub fn setup(conn: &mut Connection, password: &str, timezone: &str) -> Result<()
     tx.commit().map_err(|e| e.to_string())
 }
 
-/// POST /api/auth/login — verify credentials, mint a session token.
-pub fn login(conn: &Connection, username: &str, password: &str) -> Result<String, String> {
-    let row: Option<(i64, String, String)> = conn
+/// POST /api/auth/verify — are these credentials valid? (the login check)
+pub fn verify_credentials(conn: &Connection, username: &str, password: &str) -> bool {
+    let row: Option<(String, String)> = conn
         .query_row(
-            "SELECT id, password_hash, salt FROM users WHERE username = ?1",
+            "SELECT password_hash, salt FROM users WHERE username = ?1",
             rusqlite::params![username],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .ok();
-    let Some((user_id, hash, salt)) = row else {
-        return Err("Invalid username or password".into());
-    };
-    if !verify_password(password, &hash, &salt) {
-        return Err("Invalid username or password".into());
-    }
-    let token = random_hex(32);
-    conn.execute(
-        "INSERT INTO api_sessions (token, user_id) VALUES (?1, ?2)",
-        rusqlite::params![token, user_id],
-    )
-    .map_err(|e| e.to_string())?;
-    Ok(token)
-}
-
-/// Is this token an active session?
-pub fn session_valid(conn: &Connection, token: &str) -> bool {
-    conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM api_sessions WHERE token = ?1)",
-        rusqlite::params![token],
-        |r| r.get::<_, i64>(0),
-    )
-    .map(|n| n != 0)
-    .unwrap_or(false)
-}
-
-/// Auth mode for the client's connect screen: 'setup' (first run),
-/// 'password' (username/password), or 'token' (env token only / open).
-pub fn status(conn: &Connection, env_token_set: bool) -> serde_json::Value {
-    if !has_users(conn) {
-        serde_json::json!({ "needs_setup": true, "mode": "setup" })
-    } else {
-        serde_json::json!({
-            "needs_setup": false,
-            "mode": if env_token_set { "password_or_token" } else { "password" }
-        })
-    }
+    let Some((hash, salt)) = row else { return false };
+    verify_password(password, &hash, &salt)
 }
 
 /// PUT /api/auth/account — change the admin's username and/or password.
@@ -161,17 +127,67 @@ pub fn update_account(
     Ok(())
 }
 
-/// Guard used by the middleware: env token match OR valid session.
-/// Open before setup (no users, no env token) so a fresh install can bootstrap.
-pub fn is_authorized(db: &Db, env_token: Option<&str>, presented: Option<&str>) -> bool {
-    if let (Some(env), Some(p)) = (env_token, presented) {
-        if p == env {
-            return true;
-        }
-    }
-    let conn = db.0.lock().unwrap();
-    if !has_users(&conn) && env_token.is_none() {
+/// POST /api/auth/reset — restore everything to factory defaults:
+/// profile fields, questions, media cache, and the admin account (admin/root).
+/// Journal entries and the markdown files on disk are NOT touched.
+pub fn reset_defaults(conn: &mut Connection) -> Result<(), String> {
+    let (hash, salt) = hash_password("root");
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    tx.execute(
+        "UPDATE users SET username = 'admin', password_hash = ?1, salt = ?2",
+        rusqlite::params![hash, salt],
+    )
+    .map_err(|e| e.to_string())?;
+    tx.execute(
+        "UPDATE profiles SET name = 'Default', daily_note_folder = '',
+         template_note_path = '', media_folder = '', timezone = 'UTC', day_offset_hours = 0",
+        [],
+    )
+    .map_err(|e| e.to_string())?;
+    tx.execute("DELETE FROM profile_questions", [])
+        .map_err(|e| e.to_string())?;
+    tx.execute("DELETE FROM media_cache", [])
+        .map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())
+}
+
+/// Auth check for the middleware. `presented` is the base64(user:pass)
+/// credential string (from the Basic header or the ?auth= media fallback).
+/// `verified` is the process-wide memo cache — scrypt runs once per credential.
+pub fn is_authorized(
+    conn: &Connection,
+    verified: &mut HashSet<String>,
+    presented: Option<&str>,
+) -> bool {
+    let Some(cred) = presented else {
+        // Open before setup so a fresh install can bootstrap.
+        return !has_users(conn);
+    };
+    if verified.contains(cred) {
         return true;
     }
-    presented.is_some_and(|t| session_valid(&conn, t))
+    use base64::Engine as _;
+    let decoded = match base64::engine::general_purpose::STANDARD.decode(cred) {
+        Ok(d) => String::from_utf8(d).unwrap_or_default(),
+        Err(_) => return false,
+    };
+    let Some((username, password)) = decoded.split_once(':') else {
+        return false;
+    };
+    if verify_credentials(conn, username, password) {
+        verified.insert(cred.to_string());
+        true
+    } else {
+        false
+    }
+}
+
+
+/// Auth mode for the client's connect screen.
+pub fn status(conn: &Connection) -> serde_json::Value {
+    if !has_users(conn) {
+        serde_json::json!({ "needs_setup": true, "mode": "setup" })
+    } else {
+        serde_json::json!({ "needs_setup": false, "mode": "password" })
+    }
 }

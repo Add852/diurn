@@ -9,7 +9,8 @@ import 'lightbox.dart';
 import 'settings.dart';
 
 const _kPrefUrl = 'server_url';
-const _kPrefToken = 'server_token';
+const _kPrefUser = 'server_user';
+const _kPrefPass = 'server_pass';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -47,8 +48,9 @@ class _HomeScreenState extends State<HomeScreen> {
   int _index = 0;
   Api? _api;
   String _savedUrl = kDefaultUrl;
-  String? _savedToken;
-  String? _authMode; // 'setup' | 'password' | 'token' | null
+  String? _savedUser;
+  String? _savedPass;
+  String? _authMode; // 'setup' | 'password' | null
   bool _booting = true;
 
   /// Bumped when profile settings may have changed (folders, etc.) so tabs
@@ -83,19 +85,20 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() => _booting = true);
     final prefs = await SharedPreferences.getInstance();
     _savedUrl = prefs.getString(_kPrefUrl) ?? kDefaultUrl;
-    _savedToken = prefs.getString(_kPrefToken);
+    _savedUser = prefs.getString(_kPrefUser);
+    _savedPass = prefs.getString(_kPrefPass);
     if (!mounted) return;
     setState(() => _booting = false);
-    await _connect(_savedUrl, _savedToken);
+    await _connect(_savedUrl, _savedUser, _savedPass);
   }
 
-  Future<void> _connect(String base, String? token) async {
+  Future<void> _connect(String base, String? user, String? pass) async {
     try {
       // config doubles as the auth check (401 -> credential fallback below)
-      await Api(base, token: token).config();
+      await Api(base, username: user, password: pass).config();
       if (!mounted) return;
       setState(() {
-        _api = Api(base, token: token);
+        _api = Api(base, username: user, password: pass);
         _authMode = null;
       });
     } catch (e) {
@@ -110,30 +113,50 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  Future<void> _onConnected(String base, String? token, List<String> roots) async {
+  Future<void> _onConnected(
+      String base, String? user, String? pass, List<String> roots) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_kPrefUrl, base);
-    if (token == null) {
-      await prefs.remove(_kPrefToken);
+    if (user == null || pass == null) {
+      await prefs.remove(_kPrefUser);
+      await prefs.remove(_kPrefPass);
     } else {
-      await prefs.setString(_kPrefToken, token);
+      await prefs.setString(_kPrefUser, user);
+      await prefs.setString(_kPrefPass, pass);
     }
     if (!mounted) return;
     setState(() {
       _savedUrl = base;
-      _savedToken = token;
-      _api = Api(base, token: token);
+      _savedUser = user;
+      _savedPass = pass;
+      _api = Api(base, username: user, password: pass);
+    });
+  }
+
+  /// Called by Settings after account update/reset.
+  Future<void> _setCredentials(String? user, String? pass) async {
+    final prefs = await SharedPreferences.getInstance();
+    final newUser = user ?? _savedUser;
+    final newPass = pass ?? _savedPass;
+    if (newUser != null) await prefs.setString(_kPrefUser, newUser);
+    if (newPass != null) await prefs.setString(_kPrefPass, newPass);
+    if (!mounted) return;
+    setState(() {
+      _savedUser = newUser;
+      _savedPass = newPass;
+      _api = Api(_savedUrl, username: newUser, password: newPass);
     });
   }
 
   Future<void> _forget() async {
-    // Disconnect synchronously FIRST — the settings pop fires a reconnect
-    // on return, and an awaited prefs write would lose that race.
+    // Disconnect synchronously FIRST — navigation fires refresh signals and
+    // an awaited prefs write would lose that race.
     if (!mounted) return;
     setState(() => _api = null);
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_kPrefUrl);
-    await prefs.remove(_kPrefToken);
+    await prefs.remove(_kPrefUser);
+    await prefs.remove(_kPrefPass);
   }
 
   @override
@@ -147,7 +170,8 @@ class _HomeScreenState extends State<HomeScreen> {
         body: SafeArea(
           child: ConnectForm(
             initial: _savedUrl,
-            initialToken: _savedToken,
+            initialUser: _savedUser,
+            initialPass: _savedPass,
             mode: _authMode,
             onConnected: _onConnected,
           ),
@@ -172,6 +196,7 @@ class _HomeScreenState extends State<HomeScreen> {
               onSaved: () => _refreshTick.value++,
               saveTrigger: _saveTrigger,
               refreshSignal: _refreshTick,
+              onCredentialsChanged: _setCredentials,
             ),
           ],
         ),
@@ -265,16 +290,18 @@ class _NavItem extends StatelessWidget {
 /// success; shows the server's/network's error verbatim on failure.
 class ConnectForm extends StatefulWidget {
   final String initial;
-  final String? initialToken;
+  final String? initialUser;
+  final String? initialPass;
 
-  /// Which credentials the server wants: 'setup' (first run), 'password'
-  /// (username/password login), 'token' (env token), null (legacy/open).
+  /// Which credentials the server wants: 'setup' (first run) or 'password'.
   final String? mode;
-  final void Function(String base, String? token, List<String> roots) onConnected;
+  final void Function(String base, String? user, String? pass, List<String> roots)
+      onConnected;
   const ConnectForm({
     super.key,
     required this.initial,
-    required this.initialToken,
+    required this.initialUser,
+    required this.initialPass,
     required this.mode,
     required this.onConnected,
   });
@@ -286,19 +313,17 @@ class ConnectForm extends StatefulWidget {
 class _ConnectFormState extends State<ConnectForm> {
   late final TextEditingController _ctrl =
       TextEditingController(text: widget.initial);
-  late final TextEditingController _tokenCtrl =
-      TextEditingController(text: widget.initialToken ?? '');
-  final _userCtrl = TextEditingController(text: 'admin');
-  final _passCtrl = TextEditingController();
+  late final TextEditingController _userCtrl =
+      TextEditingController(text: widget.initialUser ?? 'admin');
+  late final TextEditingController _passCtrl =
+      TextEditingController(text: widget.initialPass ?? '');
   final _tzCtrl = TextEditingController();
   bool _saving = false;
   String? _error;
 
-  bool get _wantsPassword =>
-      widget.mode == 'password' || widget.mode == 'setup';
   bool get _wantsSetup => widget.mode == 'setup';
-  bool get _wantsToken =>
-      !_wantsPassword && (widget.mode == 'token' || widget.mode == null);
+  bool get _wantsPassword =>
+      _wantsSetup || widget.mode == 'password' || widget.mode == null;
 
   @override
   void dispose() {
@@ -325,16 +350,17 @@ class _ConnectFormState extends State<ConnectForm> {
       _error = null;
     });
     try {
-      String? token = _tokenCtrl.text.trim().isEmpty ? null : _tokenCtrl.text.trim();
-      if (_wantsPassword) {
-        final password = _passCtrl.text;
-        token = _wantsSetup
-            ? await Api(base).setup(password, _tzCtrl.text.trim())
-            : await Api(base).login(_userCtrl.text.trim(), password);
+      var user = _userCtrl.text.trim();
+      var pass = _passCtrl.text;
+      if (_wantsSetup) {
+        await Api(base).setup(pass, _tzCtrl.text.trim());
+        user = 'admin';
+      } else if (_wantsPassword) {
+        await Api(base).verify(user, pass);
       }
-      final roots = await Api(base, token: token).config();
+      final roots = await Api(base, username: user, password: pass).config();
       if (!mounted) return;
-      widget.onConnected(base, token, roots);
+      widget.onConnected(base, user, pass, roots);
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -413,19 +439,6 @@ class _ConnectFormState extends State<ConnectForm> {
                 ),
               ),
             ],
-          ] else if (_wantsToken) ...[
-            const SizedBox(height: 12),
-            TextField(
-              controller: _tokenCtrl,
-              autocorrect: false,
-              enabled: !_saving,
-              onSubmitted: (_) => _save(),
-              decoration: const InputDecoration(
-                border: OutlineInputBorder(),
-                labelText: 'Token (optional)',
-                hintText: 'DIURN_TOKEN set on the server, if any',
-              ),
-            ),
           ],
           if (_error != null) ...[
             const SizedBox(height: 12),

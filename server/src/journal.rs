@@ -359,6 +359,9 @@ pub fn get_settings(
     conn: &rusqlite::Connection,
     profile: &Profile,
 ) -> rusqlite::Result<serde_json::Value> {
+    let username: String = conn
+        .query_row("SELECT username FROM users ORDER BY id LIMIT 1", [], |r| r.get(0))
+        .unwrap_or_default();
     let mut stmt = conn.prepare(
         "SELECT id, identifier, question, answer_prompt, asked, sort_order
          FROM profile_questions WHERE profile_id = ?1 ORDER BY sort_order",
@@ -382,6 +385,7 @@ pub fn get_settings(
         std::fs::read_to_string(&profile.template_note_path).unwrap_or_default()
     };
     Ok(serde_json::json!({
+        "user": { "username": username },
         "profile": SettingsProfile {
             id: profile.id,
             name: profile.name.clone(),

@@ -10,6 +10,7 @@
 //! /api/fs?check only validates existence/kind — root scoping is enforced
 //! on read endpoints (list/media) where traversal actually matters.
 
+use std::collections::HashSet;
 use std::{
     path::{Component, Path, PathBuf},
     sync::Arc,
@@ -43,21 +44,21 @@ const MEDIA_EXTS: &[&str] = &[
 #[derive(Clone)]
 pub struct AppState {
     roots: Arc<Vec<PathBuf>>,
-    token: Option<Arc<String>>,
     db: Arc<Db>,
+    verified: Arc<std::sync::Mutex<HashSet<String>>>,
 }
 
-pub fn build_router(roots: Vec<PathBuf>, token: Option<String>, db: Arc<Db>) -> Router {
+pub fn build_router(roots: Vec<PathBuf>, db: Arc<Db>) -> Router {
     let state = AppState {
         roots: Arc::new(roots),
-        token: token.map(Arc::new),
         db,
+        verified: Arc::new(std::sync::Mutex::new(HashSet::new())),
     };
     // /api/auth/* is public (login IS the auth); everything else is gated.
     let public = Router::new()
         .route("/api/auth/status", get(auth_status))
         .route("/api/auth/setup", post(auth_setup))
-        .route("/api/auth/login", post(auth_login))
+        .route("/api/auth/verify", post(auth_verify))
         .with_state(state.clone());
     let protected = Router::new()
         .route("/api/config", get(config))
@@ -70,6 +71,7 @@ pub fn build_router(roots: Vec<PathBuf>, token: Option<String>, db: Arc<Db>) -> 
         .route("/api/media/file", get(media))
         .route("/api/thumbnail", get(thumbnail))
         .route("/api/auth/account", put(auth_account))
+        .route("/api/auth/reset", post(auth_reset))
         .layer(axum::middleware::from_fn_with_state(state.clone(), auth))
         .with_state(state);
     // ponytail: permissive CORS is fine pre-auth for LAN dev, but it lets any
@@ -86,22 +88,25 @@ async fn auth(
     req: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> Response {
+    // HTTP Basic for JSON calls; <img>/<video> tags cannot send headers, so
+    // ?auth=<base64 user:pass> is accepted as a fallback.
+    use base64::Engine as _;
     let header = req
         .headers()
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "))
-        .map(|s| s.to_string());
-    let query = req
-        .uri()
-        .query()
-        .and_then(|q| q.split('&').find_map(|kv| kv.strip_prefix("token=")));
+        .and_then(|v| v.strip_prefix("Basic "))
+        .map(|s| s.trim().to_string());
+    let query = req.uri().query().and_then(|q| {
+        q.split('&').find_map(|kv| kv.strip_prefix("auth="))
+    });
     let presented = header.or_else(|| query.map(|s| s.to_string()));
-    if auth::is_authorized(
-        &state.db,
-        state.token.as_ref().map(|s| s.as_str()),
-        presented.as_deref(),
-    ) {
+    let ok = {
+        let conn = state.db.0.lock().unwrap();
+        let mut verified = state.verified.lock().unwrap();
+        auth::is_authorized(&conn, &mut verified, presented.as_deref())
+    };
+    if ok {
         next.run(req).await
     } else {
         StatusCode::UNAUTHORIZED.into_response()
@@ -111,7 +116,7 @@ async fn auth(
 /// GET /api/auth/status — public; tells the client which connect screen to show.
 async fn auth_status(state: State<AppState>) -> Response {
     let conn = state.db.0.lock().unwrap();
-    Json(auth::status(&conn, state.token.is_some())).into_response()
+    Json(auth::status(&conn)).into_response()
 }
 
 /// POST /api/auth/setup — first-run admin creation.
@@ -130,9 +135,9 @@ async fn auth_setup(state: State<AppState>, Json(body): Json<SetupBody>) -> Resp
     }
 }
 
-/// POST /api/auth/login — {username, password} -> {token}.
+/// POST /api/auth/verify — {username, password} -> 200 or 401.
 #[derive(Deserialize)]
-struct LoginBody {
+struct VerifyBody {
     #[serde(default = "default_username")]
     username: String,
     password: String,
@@ -154,16 +159,23 @@ struct AccountBody {
 async fn auth_account(state: State<AppState>, Json(body): Json<AccountBody>) -> Response {
     let conn = state.db.0.lock().unwrap();
     match auth::update_account(&conn, body.username.as_deref(), body.password.as_deref()) {
-        Ok(()) => Json(json!({ "ok": true })).into_response(),
+        Ok(()) => {
+            state.verified.lock().unwrap().clear();
+            Json(json!({ "ok": true })).into_response()
+        }
         Err(e) => (StatusCode::BAD_REQUEST, e).into_response(),
     }
 }
 
-async fn auth_login(state: State<AppState>, Json(body): Json<LoginBody>) -> Response {
-    let conn = state.db.0.lock().unwrap();
-    match auth::login(&conn, &body.username, &body.password) {
-        Ok(token) => Json(json!({ "token": token })).into_response(),
-        Err(e) => (StatusCode::UNAUTHORIZED, e).into_response(),
+/// POST /api/auth/reset — restore defaults (account admin/root included).
+async fn auth_reset(state: State<AppState>) -> Response {
+    let mut conn = state.db.0.lock().unwrap();
+    match auth::reset_defaults(&mut conn) {
+        Ok(()) => {
+            state.verified.lock().unwrap().clear();
+            Json(json!({ "ok": true })).into_response()
+        }
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
     }
 }
 
@@ -687,5 +699,15 @@ mod tests {
         assert!(under_any_root(&roots, &Path::new("/srv/media/a/b.jpg")));
         assert!(!under_any_root(&roots, &Path::new("/srv/media/../etc/passwd")));
         assert!(!under_any_root(&roots, &Path::new("/etc/passwd")));
+    }
+}
+
+/// POST /api/auth/verify — {username, password} -> 200 or 401.
+async fn auth_verify(state: State<AppState>, Json(body): Json<VerifyBody>) -> Response {
+    let conn = state.db.0.lock().unwrap();
+    if auth::verify_credentials(&conn, &body.username, &body.password) {
+        Json(json!({ "ok": true })).into_response()
+    } else {
+        (StatusCode::UNAUTHORIZED, "Invalid username or password").into_response()
     }
 }

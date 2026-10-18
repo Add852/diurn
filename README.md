@@ -17,12 +17,11 @@ app/      Flutter client: media grid, directory browser, image/video viewer
 ```sh
 cd server
 DIURN_ROOTS="$HOME:$HOME/pictures" cargo run        # ':'-separated allowed roots, default: $HOME
-DIURN_TOKEN=sekrit cargo run                        # optional: require Bearer auth on all routes
 ```
 
 Port: `DIURN_PORT` (default 12321). Only paths under a root are readable —
-everything else is 403. Thumbnails cache under `DIURN_CACHE`
-(default: system temp dir, `diurn-thumbs/`).
+everything else is 403. DB at `~/.diurn/data.db` (override: `DIURN_DB`).
+Thumbnails cache under `DIURN_CACHE` (default: system temp dir, `diurn-thumbs/`).
 
 ## Run the app
 
@@ -49,9 +48,11 @@ flutter run --dart-define=DIURN_URL=http://192.168.1.20:12321
 | `GET /api/media/file?path=<abs>` | file stream; `Range` supported (206/416) |
 | `GET /api/thumbnail?path=<abs>&size=` | JPEG thumb (longest edge, default 400), disk-cached |
 
-Auth: when `DIURN_TOKEN` is set, every route needs `Authorization: Bearer
-<token>`; media/thumbnail also accept `?token=` (img/video tags can't send
-headers). Unset = no auth (LAN dev).
+Auth: single admin (HTTP Basic). First run is open — create the admin via
+`POST /api/auth/setup {password, timezone}` (or the app's connect screen).
+After that every route needs `Authorization: Basic <base64 user:pass>`;
+media/thumbnail also accept `?auth=` (img/video tags can't send headers).
+`POST /api/auth/reset` restores all defaults (admin/root).
 
 ## Tests
 

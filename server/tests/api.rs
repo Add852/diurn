@@ -7,16 +7,18 @@ use http_body_util::BodyExt;
 use tower::ServiceExt;
 
 fn app(root: &PathBuf) -> axum::Router {
-    router_with_db(root, None)
+    router_with_db(root)
 }
 
-fn router_with_db(root: &PathBuf, token: Option<String>) -> axum::Router {
+fn router_with_db(root: &PathBuf) -> axum::Router {
     // keep the DB outside the served root so fs/media listings stay clean
     let dbfile = std::env::temp_dir()
         .join(format!("diurn-db-{}", root.file_name().unwrap().to_string_lossy()));
-    let _ = std::fs::remove_file(&dbfile);
+    for suffix in ["", "-wal", "-shm"] {
+        let _ = std::fs::remove_file(format!("{}{suffix}", dbfile.display()));
+    }
     let db = std::sync::Arc::new(diurn_server::db::Db::open(&dbfile).unwrap());
-    diurn_server::build_router(vec![root.clone()], token, db)
+    diurn_server::build_router(vec![root.clone()], db)
 }
 
 /// Insert an active profile whose folders point at `root`, plus a session
@@ -26,14 +28,10 @@ fn seed_profile(root: &PathBuf) {
         .join(format!("diurn-db-{}", root.file_name().unwrap().to_string_lossy()));
     let conn = rusqlite::Connection::open(&dbfile).unwrap();
     conn.execute_batch(diurn_server::db::SCHEMA).unwrap();
+    let (hash, salt) = diurn_server::auth::hash_password("test-pass");
     conn.execute(
-        "INSERT INTO users (id, username, password_hash, salt) VALUES (1, 'test', 'x', 'y')",
-        [],
-    )
-    .unwrap();
-    conn.execute(
-        "INSERT OR REPLACE INTO api_sessions (token, user_id) VALUES ('test-session', 1)",
-        [],
+        "INSERT INTO users (id, username, password_hash, salt) VALUES (1, 'test', ?1, ?2)",
+        rusqlite::params![hash, salt],
     )
     .unwrap();
     conn.execute(
@@ -44,10 +42,6 @@ fn seed_profile(root: &PathBuf) {
     .unwrap();
 }
 
-fn app_with_token(root: &PathBuf, token: &str) -> axum::Router {
-    router_with_db(root, Some(token.to_string()))
-}
-
 /// Router for tests that seed a user/profile: injects the seeded session
 /// token into every request so auth doesn't need per-call headers.
 fn app_with_profile(root: &PathBuf) -> axum::Router {
@@ -55,10 +49,12 @@ fn app_with_profile(root: &PathBuf) -> axum::Router {
     seed_profile(root);
     router.layer(axum::middleware::from_fn(
         |req: axum::extract::Request, next: axum::middleware::Next| async move {
+            use base64::Engine as _;
+            let cred = base64::engine::general_purpose::STANDARD.encode("test:test-pass");
             let (mut parts, body) = req.into_parts();
             parts.headers.insert(
                 axum::http::header::AUTHORIZATION,
-                axum::http::HeaderValue::from_static("Bearer test-session"),
+                axum::http::HeaderValue::from_str(&format!("Basic {cred}")).unwrap(),
             );
             next.run(axum::extract::Request::from_parts(parts, body)).await
         },
@@ -250,65 +246,6 @@ async fn thumbnail_resizes_and_caches() {
         .await
         .unwrap();
     assert_eq!(res.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
-}
-
-#[tokio::test]
-async fn auth_gate_and_media_token_query_fallback() {
-    let root = tmp_root("auth");
-    let content: Vec<u8> = (0u8..=9).collect();
-    std::fs::write(root.join("clip.bin"), &content).unwrap();
-    let media_url = format!("/api/media/file?path={}", root.join("clip.bin").display());
-    let app = app_with_token(&root, "sekrit");
-
-    // no credentials -> 401 on JSON route
-    let res = app
-        .clone()
-        .oneshot(Request::get("/api/config").body(Body::empty()).unwrap())
-        .await
-        .unwrap();
-    assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
-
-    // correct header -> 200
-    let res = app
-        .clone()
-        .oneshot(
-            Request::get("/api/config")
-                .header("authorization", "Bearer sekrit")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(res.status(), StatusCode::OK);
-
-    // media via ?token= (img/video tags can't send headers)
-    let res = app
-        .clone()
-        .oneshot(Request::get(&media_url).body(Body::empty()).unwrap())
-        .await
-        .unwrap();
-    assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
-    let res = app
-        .clone()
-        .oneshot(
-            Request::get(format!("{media_url}&token=sekrit"))
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(res.status(), StatusCode::OK);
-
-    // wrong token rejected
-    let res = app
-        .oneshot(
-            Request::get("/api/config?token=wrong")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
 }
 
 #[tokio::test]
@@ -626,203 +563,6 @@ async fn settings_get_put_roundtrip() {
 }
 
 #[tokio::test]
-async fn auth_setup_login_and_session_flow() {
-    let root = tmp_root("authflow");
-    let router = app(&root);
-
-    // status before setup
-    let res = router
-        .clone()
-        .oneshot(Request::get("/api/auth/status").body(Body::empty()).unwrap())
-        .await
-        .unwrap();
-    let body = res.into_body().collect().await.unwrap().to_bytes();
-    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(v["needs_setup"], serde_json::json!(true));
-
-    // protected route open pre-setup (no users, no env token)
-    let res = router
-        .clone()
-        .oneshot(Request::get("/api/config").body(Body::empty()).unwrap())
-        .await
-        .unwrap();
-    assert_eq!(res.status(), StatusCode::OK);
-
-    // setup: short password rejected
-    let res = router
-        .clone()
-        .oneshot(
-            Request::post("/api/auth/setup")
-                .header("content-type", "application/json")
-                .body(Body::from(r#"{"password":"abc"}"#))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
-
-    // setup ok
-    let res = router
-        .clone()
-        .oneshot(
-            Request::post("/api/auth/setup")
-                .header("content-type", "application/json")
-                .body(Body::from(r#"{"password":"hunter2","timezone":"Europe/Helsinki"}"#))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(res.status(), StatusCode::OK);
-
-    // second setup -> 403-ish 400
-    let res = router
-        .clone()
-        .oneshot(
-            Request::post("/api/auth/setup")
-                .header("content-type", "application/json")
-                .body(Body::from(r#"{"password":"again1"}"#))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
-
-    // after setup, protected route requires auth
-    let res = router
-        .clone()
-        .oneshot(Request::get("/api/config").body(Body::empty()).unwrap())
-        .await
-        .unwrap();
-    assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
-
-    // bad login
-    let res = router
-        .clone()
-        .oneshot(
-            Request::post("/api/auth/login")
-                .header("content-type", "application/json")
-                .body(Body::from(r#"{"username":"admin","password":"wrong"}"#))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
-
-    // good login -> token -> authorized request
-    let res = router
-        .clone()
-        .oneshot(
-            Request::post("/api/auth/login")
-                .header("content-type", "application/json")
-                .body(Body::from(r#"{"username":"admin","password":"hunter2"}"#))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(res.status(), StatusCode::OK);
-    let body = res.into_body().collect().await.unwrap().to_bytes();
-    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    let token = v["token"].as_str().unwrap().to_string();
-    assert_eq!(token.len(), 64);
-
-    let res = router
-        .oneshot(
-            Request::get("/api/config")
-                .header("authorization", format!("Bearer {token}"))
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(res.status(), StatusCode::OK);
-}
-
-#[test]
-fn scrypt_hashes_are_cross_compatible_with_node() {
-    // Golden vector from node crypto (the old app's hash format):
-    //   node -e "const c=require('crypto');const salt='0123456789abcdef0123456789abcdef';
-    //            console.log(c.scryptSync('hunter2',salt,64).toString('hex'))"
-    let salt = "0123456789abcdef0123456789abcdef";
-    let hash = "4971254c23d915ca81fee56d02cb00bf641a7461bd516d17175bcb314c8abad13e74b1c8f6e11649cb30cee8f888fdd4c8baee55535fd8b628d65e8c655edffe";
-    assert!(diurn_server::auth::verify_password("hunter2", hash, salt));
-    assert!(!diurn_server::auth::verify_password("wrong", hash, salt));
-    // our own hash_password round-trips
-    let (h, s) = diurn_server::auth::hash_password("another pass");
-    assert!(diurn_server::auth::verify_password("another pass", &h, &s));
-    assert!(!diurn_server::auth::verify_password("nope", &h, &s));
-}
-
-#[tokio::test]
-async fn account_update_changes_credentials() {
-    let root = tmp_root("account");
-    let router = app(&root); // no users -> open
-    // setup
-    router
-        .clone()
-        .oneshot(
-            Request::post("/api/auth/setup")
-                .header("content-type", "application/json")
-                .body(Body::from(r#"{"password":"old-pass"}"#))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    // login with old password, get token
-    let res = router
-        .clone()
-        .oneshot(
-            Request::post("/api/auth/login")
-                .header("content-type", "application/json")
-                .body(Body::from(r#"{"username":"admin","password":"old-pass"}"#))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    let body = res.into_body().collect().await.unwrap().to_bytes();
-    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    let token = v["token"].as_str().unwrap();
-
-    // change username + password (authed)
-    let res = router
-        .clone()
-        .oneshot(
-            Request::put("/api/auth/account")
-                .header("content-type", "application/json")
-                .header("authorization", format!("Bearer {token}"))
-                .body(Body::from(r#"{"username":"tony","password":"new-pass"}"#))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(res.status(), StatusCode::OK);
-
-    // old credentials no longer work
-    let res = router
-        .clone()
-        .oneshot(
-            Request::post("/api/auth/login")
-                .header("content-type", "application/json")
-                .body(Body::from(r#"{"username":"admin","password":"old-pass"}"#))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
-
-    // new credentials work
-    let res = router
-        .oneshot(
-            Request::post("/api/auth/login")
-                .header("content-type", "application/json")
-                .body(Body::from(r#"{"username":"tony","password":"new-pass"}"#))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(res.status(), StatusCode::OK);
-}
-
-#[tokio::test]
 async fn template_content_editable() {
     let root = tmp_root("template");
     let router = app_with_profile(&root);
@@ -889,4 +629,220 @@ async fn template_content_editable() {
         .unwrap();
     assert_eq!(res.status(), StatusCode::OK);
     assert_eq!(std::fs::read_to_string(&tpl).unwrap(), "updated");
+}
+
+#[tokio::test]
+async fn auth_setup_verify_and_basic_flow() {
+    let root = tmp_root("authflow");
+    let router = app(&root);
+    let basic = |u: &str, p: &str| {
+        use base64::Engine as _;
+        format!("Basic {}", base64::engine::general_purpose::STANDARD.encode(format!("{u}:{p}")))
+    };
+
+    // pre-setup: open + needs_setup
+    let res = router
+        .clone()
+        .oneshot(Request::get("/api/auth/status").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    let body = res.into_body().collect().await.unwrap().to_bytes();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["needs_setup"], serde_json::json!(true));
+    let res = router
+        .clone()
+        .oneshot(Request::get("/api/config").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    // setup
+    let res = router
+        .clone()
+        .oneshot(
+            Request::post("/api/auth/setup")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"password":"abc"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    let res = router
+        .clone()
+        .oneshot(
+            Request::post("/api/auth/setup")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"password":"hunter2","timezone":"Europe/Helsinki"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    // post-setup: gated
+    let res = router
+        .clone()
+        .oneshot(Request::get("/api/config").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+
+    // verify: wrong + right
+    let res = router
+        .clone()
+        .oneshot(
+            Request::post("/api/auth/verify")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"username":"admin","password":"wrong"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+    let res = router
+        .clone()
+        .oneshot(
+            Request::post("/api/auth/verify")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"username":"admin","password":"hunter2"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    // Basic auth on protected routes
+    let res = router
+        .clone()
+        .oneshot(
+            Request::get("/api/config")
+                .header("authorization", basic("admin", "hunter2"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    // ?auth= fallback (media file tags)
+    use base64::Engine as _;
+    let cred = base64::engine::general_purpose::STANDARD.encode("admin:hunter2");
+    let res = router
+        .oneshot(
+            Request::get(format!("/api/config?auth={cred}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn account_update_and_reset_defaults() {
+    let root = tmp_root("account");
+    let router = app(&root);
+    let basic = |u: &str, p: &str| {
+        use base64::Engine as _;
+        format!("Basic {}", base64::engine::general_purpose::STANDARD.encode(format!("{u}:{p}")))
+    };
+    router
+        .clone()
+        .oneshot(
+            Request::post("/api/auth/setup")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"password":"old-pass"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // change username + password
+    let res = router
+        .clone()
+        .oneshot(
+            Request::put("/api/auth/account")
+                .header("content-type", "application/json")
+                .header("authorization", basic("admin", "old-pass"))
+                .body(Body::from(r#"{"username":"tony","password":"new-pass"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let res = router
+        .clone()
+        .oneshot(
+            Request::post("/api/auth/verify")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"username":"admin","password":"old-pass"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+    let res = router
+        .clone()
+        .oneshot(
+            Request::post("/api/auth/verify")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"username":"tony","password":"new-pass"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    // settings GET exposes the username
+    let res = router
+        .clone()
+        .oneshot(
+            Request::get("/api/settings")
+                .header("authorization", basic("tony", "new-pass"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = res.into_body().collect().await.unwrap().to_bytes();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["user"]["username"], serde_json::json!("tony"));
+
+    // reset defaults: back to admin/root, folders cleared
+    let res = router
+        .clone()
+        .oneshot(
+            Request::post("/api/auth/reset")
+                .header("authorization", basic("tony", "new-pass"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let res = router
+        .clone()
+        .oneshot(
+            Request::post("/api/auth/verify")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"username":"admin","password":"root"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let res = router
+        .oneshot(
+            Request::get("/api/settings")
+                .header("authorization", basic("admin", "root"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = res.into_body().collect().await.unwrap().to_bytes();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["profile"]["daily_note_folder"], serde_json::json!(""));
+    assert_eq!(v["user"]["username"], serde_json::json!("admin"));
 }

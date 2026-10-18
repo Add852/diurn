@@ -98,15 +98,26 @@ class MediaFile {
 
 class Api {
   final String baseUrl;
-  final String? token;
-  Api(this.baseUrl, {this.token});
+  final String? username;
+  final String? password;
+  Api(this.baseUrl, {this.username, this.password});
 
-  /// Media/thumbnail URLs carry ?token= because <img>/<video> tags cannot
+  /// base64(user:pass) — HTTP Basic for JSON calls; ?auth= fallback for
+  /// <img>/<video> tags which cannot send headers.
+  String? get _authParam => (username == null || password == null)
+      ? null
+      : base64.encode(utf8.encode('${username!}:${password!}'));
+
+  Map<String, String> get _authHeaders => {
+        if (_authParam != null) 'Authorization': 'Basic $_authParam!',
+      };
+
+  /// Media/thumbnail URLs carry ?auth= because <img>/<video> tags cannot
   /// send Authorization headers.
   String _fileUrl(String endpoint, String path) {
     return Uri.parse('$baseUrl/api/$endpoint').replace(queryParameters: {
       'path': path,
-      if (token != null) 'token': token,
+      'auth': ?_authParam,
     }).toString();
   }
 
@@ -118,9 +129,7 @@ class Api {
     final http.Response res;
     try {
       res = await _client
-          .get(uri, headers: {
-            if (token != null) 'Authorization': 'Bearer $token',
-          })
+          .get(uri, headers: _authHeaders)
           .timeout(const Duration(seconds: 15));
     } on TimeoutException {
       throw ApiException('Request timed out');
@@ -138,8 +147,8 @@ class Api {
   ) async {
     final uri = Uri.parse('$baseUrl$path').replace(queryParameters: query);
     final req = http.Request(method, uri)
-      ..headers['Content-Type'] = 'application/json';
-    if (token != null) req.headers['Authorization'] = 'Bearer $token';
+      ..headers['Content-Type'] = 'application/json'
+      ..headers.addAll(_authHeaders);
     if (body != null) req.body = jsonEncode(body);
     final http.StreamedResponse res;
     try {
@@ -155,7 +164,7 @@ class Api {
 
   dynamic _decodeBody(int status, String text) {
     if (status == 401) {
-      throw ApiException('Unauthorized — check the token in settings');
+      throw ApiException('Unauthorized — check username/password in settings');
     }
     final decoded = text.isEmpty ? null : jsonDecode(text);
     if (status == 409 && decoded is Map && decoded['exists'] == true) {
@@ -290,28 +299,25 @@ class Api {
     return v as Map<String, dynamic>;
   }
 
-  /// POST /api/auth/setup — first-run admin creation; returns session token.
-  Future<String> setup(String password, String timezone) async {
-    final v = await _send('POST', '/api/auth/setup', {}, {
+  /// POST /api/auth/setup — first-run admin creation.
+  Future<void> setup(String password, String timezone) async {
+    await _send('POST', '/api/auth/setup', {}, {
       'password': password,
       'timezone': timezone,
     });
-    return _loginToken(v);
   }
 
-  /// POST /api/auth/login — credentials -> session token.
-  Future<String> login(String username, String password) async {
-    final v = await _send('POST', '/api/auth/login', {}, {
+  /// POST /api/auth/verify — throws on bad credentials.
+  Future<void> verify(String username, String password) async {
+    await _send('POST', '/api/auth/verify', {}, {
       'username': username,
       'password': password,
     });
-    return _loginToken(v);
   }
 
-  String _loginToken(dynamic v) {
-    final t = v is Map ? v['token'] as String? : null;
-    if (t == null || t.isEmpty) throw ApiException('No token in response');
-    return t;
+  /// POST /api/auth/reset — restore all settings + account to defaults.
+  Future<void> resetDefaults() async {
+    await _send('POST', '/api/auth/reset', {}, null);
   }
 }
 

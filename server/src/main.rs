@@ -22,11 +22,7 @@ fn main() {
 
     let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
     rt.block_on(async move {
-        let token = std::env::var("DIURN_TOKEN").ok().filter(|t| !t.is_empty());
-        if token.is_some() {
-            println!("auth: enabled (DIURN_TOKEN)");
-        }
-        let app = build_router(roots, token, db);
+        let app = build_router(roots, db);
         let listener = tokio::net::TcpListener::bind(("0.0.0.0", port))
             .await
             .expect("bind 0.0.0.0");

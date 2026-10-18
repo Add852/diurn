@@ -20,6 +20,7 @@ chrono-tz = "0.10"
 regex = "1"
 scrypt = "0.11"
 getrandom = "0.2"
+base64 = "0.22"
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }

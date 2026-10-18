@@ -13,6 +13,9 @@ import 'api.dart';
 class SettingsScreen extends StatefulWidget {
   final Api api;
   final VoidCallback? onChangeServer;
+
+  /// Called with the new (username, password) after account update/reset.
+  final void Function(String? username, String? password)? onCredentialsChanged;
   final VoidCallback? onSaved;
   final ValueListenable<int>? saveTrigger;
   final ValueListenable<int>? refreshSignal;
@@ -21,6 +24,7 @@ class SettingsScreen extends StatefulWidget {
     super.key,
     required this.api,
     this.onChangeServer,
+    this.onCredentialsChanged,
     this.onSaved,
     this.saveTrigger,
     this.refreshSignal,
@@ -41,38 +45,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Settings'),
-        actions: [
-          if (widget.onChangeServer != null)
-            IconButton(
-              icon: const Icon(Icons.dns_outlined),
-              tooltip: 'Change server',
-              onPressed: () {
-                Navigator.of(context).pop();
-                widget.onChangeServer!();
-              },
-            ),
-        ],
-      ),
-      body: FutureBuilder<Map<String, dynamic>>(
-        future: _future,
-        builder: (context, snap) {
-          if (snap.hasError) return Center(child: Text('${snap.error}'));
-          if (!snap.hasData) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          return _SettingsForm(
-            api: widget.api,
-            data: snap.data!,
-            onSaved: widget.onSaved,
-            onChangeServer: widget.onChangeServer,
-            saveTrigger: widget.saveTrigger,
-            refreshSignal: widget.refreshSignal,
-          );
-        },
-      ),
+    // pane of the main shell — no Scaffold/AppBar of its own
+    return FutureBuilder<Map<String, dynamic>>(
+      future: _future,
+      builder: (context, snap) {
+        if (snap.hasError) return Center(child: Text('${snap.error}'));
+        if (!snap.hasData) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        return _SettingsForm(
+          api: widget.api,
+          data: snap.data!,
+          onSaved: widget.onSaved,
+          onChangeServer: widget.onChangeServer,
+          onCredentialsChanged: widget.onCredentialsChanged,
+          saveTrigger: widget.saveTrigger,
+          refreshSignal: widget.refreshSignal,
+        );
+      },
     );
   }
 }
@@ -82,6 +72,7 @@ class _SettingsForm extends StatefulWidget {
   final Map<String, dynamic> data;
   final VoidCallback? onSaved;
   final VoidCallback? onChangeServer;
+  final void Function(String? username, String? password)? onCredentialsChanged;
   final ValueListenable<int>? saveTrigger;
   final ValueListenable<int>? refreshSignal;
   const _SettingsForm({
@@ -89,6 +80,7 @@ class _SettingsForm extends StatefulWidget {
     required this.data,
     this.onSaved,
     this.onChangeServer,
+    this.onCredentialsChanged,
     this.saveTrigger,
     this.refreshSignal,
   });
@@ -104,6 +96,9 @@ class _SettingsFormState extends State<_SettingsForm> {
   final _tzFocus = FocusNode();
   late final TextEditingController _templateCtrl = TextEditingController(
     text: widget.data['template_content'] as String? ?? '',
+  );
+  late final TextEditingController _usernameCtrl = TextEditingController(
+    text: (widget.data['user'] as Map?)?['username'] as String? ?? 'admin',
   );
   bool _saving = false;
   String? _error;
@@ -136,6 +131,7 @@ class _SettingsFormState extends State<_SettingsForm> {
       _fields.putIfAbsent(key, () => TextEditingController(
             text: '${_profile[key] ?? ''}',
           ));
+
 
   String _txt(String key) => _fields[key]?.text ?? '${_profile[key] ?? ''}';
 
@@ -184,6 +180,7 @@ class _SettingsFormState extends State<_SettingsForm> {
     }
     _tzFocus.dispose();
     _templateCtrl.dispose();
+    _usernameCtrl.dispose();
     _flashTimer?.cancel();
     widget.saveTrigger?.removeListener(_save);
     widget.refreshSignal?.removeListener(_discardDraft);
@@ -223,7 +220,7 @@ class _SettingsFormState extends State<_SettingsForm> {
   }
 
   Future<void> _saveAccount() async {
-    final username = _txt('accountUsername');
+    final username = _usernameCtrl.text;
     final password = _txt('accountPassword');
     if (username.isEmpty && password.isEmpty) {
       _fail('Nothing to update — enter a username or new password');
@@ -238,6 +235,47 @@ class _SettingsFormState extends State<_SettingsForm> {
       if (!mounted) return;
       _flash('Account updated');
       _fields['accountPassword']?.clear();
+      // the shell must send the new credentials from now on
+      widget.onCredentialsChanged?.call(
+          username.isEmpty ? null : username,
+          password.isEmpty ? null : password);
+    } catch (e) {
+      if (!mounted) return;
+      _fail('$e');
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Future<void> _restoreDefaults() async {
+    final yes = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Restore defaults?'),
+        content: const Text(
+            'This resets every setting (folders, questions, template) and the '
+            'admin account to admin / root. Journal entries and files are '
+            'kept. This cannot be undone.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel')),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text('Restore'),
+          ),
+        ],
+      ),
+    );
+    if (yes != true) return;
+    setState(() => _saving = true);
+    try {
+      await widget.api.resetDefaults();
+      if (!mounted) return;
+      widget.onCredentialsChanged?.call('admin', 'root');
+      _flash('Defaults restored');
+      await _discardDraft();
     } catch (e) {
       if (!mounted) return;
       _fail('$e');
@@ -384,12 +422,12 @@ class _SettingsFormState extends State<_SettingsForm> {
                   tabs: [
                     Tab(text: 'General'),
                     Tab(text: 'Notes'),
-                    Tab(text: 'Account'),
+                    Tab(text: 'Admin'),
                   ],
                 ),
                 Expanded(
                   child: TabBarView(
-                    children: [_generalTab(), _notesTab(), _accountTab()],
+                    children: [_generalTab(), _notesTab(), _adminTab()],
                   ),
                 ),
               ],
@@ -481,12 +519,22 @@ class _SettingsFormState extends State<_SettingsForm> {
     );
   }
 
-  Widget _accountTab() {
+  Widget _adminTab() {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
         _section('Admin account'),
-        _textField('Username', 'accountUsername'),
+        Padding(
+          padding: const EdgeInsets.only(bottom: 12),
+          child: TextFormField(
+            controller: _usernameCtrl,
+            decoration: const InputDecoration(
+              border: OutlineInputBorder(),
+              labelText: 'Username',
+              isDense: true,
+            ),
+          ),
+        ),
         _textField('New password (min 4, empty = keep)', 'accountPassword',
             obscure: true),
         const SizedBox(height: 8),
@@ -494,6 +542,12 @@ class _SettingsFormState extends State<_SettingsForm> {
           onPressed: _saving ? null : _saveAccount,
           icon: const Icon(Icons.key_outlined),
           label: const Text('Update account'),
+        ),
+        const SizedBox(height: 12),
+        OutlinedButton.icon(
+          onPressed: _saving ? null : _restoreDefaults,
+          icon: const Icon(Icons.restart_alt_outlined),
+          label: const Text('Restore defaults'),
         ),
         const SizedBox(height: 20),
         _section('Server'),
