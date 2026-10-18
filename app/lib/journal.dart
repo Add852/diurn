@@ -156,6 +156,76 @@ class _EntryCard extends StatelessWidget {
     required this.onChanged,
   });
 
+  /// Metadata capsules that fit two rows of the card; the rest collapse
+  /// into a "+N" capsule instead of overflowing.
+  Widget _fitChips(BoxConstraints c) {
+    const style = TextStyle(fontSize: 11, color: Colors.white);
+    const hPad = 8.0;
+    const gap = 6.0;
+    const rowH = 24.0;
+    const maxRows = 2;
+    final maxW = c.maxWidth;
+
+    Widget chip(String label) => Container(
+          padding: const EdgeInsets.symmetric(horizontal: hPad, vertical: 4),
+          decoration: BoxDecoration(
+            color: Colors.black.withValues(alpha: 0.45),
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(color: Colors.white24),
+          ),
+          child: Text(label, style: style),
+        );
+
+    double widthOf(String label) {
+      final tp = TextPainter(
+        text: TextSpan(text: label, style: style),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      return tp.width + hPad * 2 + 2; // + border
+    }
+
+    final rows = <List<Widget>>[[]];
+    var x = 0.0;
+    var shown = 0;
+    for (final kv in fm.entries) {
+      final label = '${kv.key}: ${kv.value}';
+      final w = widthOf(label);
+      if (w > maxW) continue; // can never fit this card
+      if (x + w > maxW) {
+        if (rows.length >= maxRows) break;
+        rows.add([]);
+        x = 0;
+      }
+      rows.last.add(chip(label));
+      x += w + gap;
+      shown++;
+    }
+    final hidden = fm.length - shown;
+    if (hidden > 0) {
+      final w = widthOf('+$hidden');
+      if (x + w > maxW && rows.length < maxRows) {
+        rows.add([]);
+        x = 0;
+      }
+      if (x + w <= maxW) rows.last.add(chip('+$hidden'));
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (final row in rows)
+          if (row.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 4),
+              child: SizedBox(
+                height: rowH,
+                child: Wrap(spacing: gap, children: row),
+              ),
+            ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
@@ -217,14 +287,7 @@ class _EntryCard extends StatelessWidget {
                     ),
                     const SizedBox(height: 4),
                     if (fm.isNotEmpty)
-                      Wrap(
-                        spacing: 6,
-                        runSpacing: 4,
-                        children: [
-                          for (final kv in fm.entries.take(6))
-                            _fmChip(context, kv.key, kv.value, onPhoto: true),
-                        ],
-                      )
+                      LayoutBuilder(builder: (context, c) => _fitChips(c))
                     else
                       Text('No metadata',
                           style: TextStyle(
