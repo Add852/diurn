@@ -822,3 +822,72 @@ async fn account_update_changes_credentials() {
         .unwrap();
     assert_eq!(res.status(), StatusCode::OK);
 }
+
+#[tokio::test]
+async fn template_content_editable() {
+    let root = tmp_root("template");
+    let router = app_with_profile(&root);
+    std::fs::create_dir_all(root.join("notes")).unwrap(); // seeded daily folder must exist
+    let tpl = root.join("my-template.md");
+
+    // set path + create content in one save (file doesn't exist yet)
+    let put = format!(
+        r#"{{"profile": {{"template_note_path": "{}"}},
+             "template_content": "---\nday: $date(\"dddd\")\n---\n- {{Q1.answer}}\n"}}"#,
+        tpl.display()
+    );
+    let res = router
+        .clone()
+        .oneshot(
+            Request::put("/api/settings")
+                .header("content-type", "application/json")
+                .body(Body::from(put))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    assert!(tpl.is_file());
+    let on_disk = std::fs::read_to_string(&tpl).unwrap();
+    assert!(on_disk.contains("$date(\"dddd\")"));
+
+    // GET returns the content
+    let res = router
+        .clone()
+        .oneshot(Request::get("/api/settings").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    let body = res.into_body().collect().await.unwrap().to_bytes();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["template_content"], serde_json::json!(on_disk));
+
+    // non-.md path rejected
+    let bad = root.join("template.txt");
+    let res = router
+        .clone()
+        .oneshot(
+            Request::put("/api/settings")
+                .header("content-type", "application/json")
+                .body(Body::from(format!(
+                    r#"{{"profile": {{"template_note_path": "{}"}}, "template_content": "x"}}"#,
+                    bad.display()
+                )))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+
+    // content without path in the request -> writes to the configured path
+    let res = router
+        .oneshot(
+            Request::put("/api/settings")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"profile": {}, "template_content": "updated"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(std::fs::read_to_string(&tpl).unwrap(), "updated");
+}

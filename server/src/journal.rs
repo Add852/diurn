@@ -454,6 +454,7 @@ pub fn put_settings(
     profile_id: i64,
     p: &ProfileIn,
     questions: Option<&Vec<QuestionIn>>,
+    template_content: Option<&str>,
 ) -> Result<(), String> {
     let current: (String, String, bool, String, i64, String) = conn
         .query_row(
@@ -480,9 +481,27 @@ pub fn put_settings(
     if !template.is_empty() {
         let tp = Path::new(&template);
         let ext = tp.extension().map(|e| e.to_string_lossy().to_lowercase());
-        if !tp.is_file() || ext.as_deref() != Some("md") {
+        if ext.as_deref() != Some("md") {
             return Err(format!("Template note path must be a .md file: {template}"));
         }
+        // The file must exist only when we're NOT (re)creating it below.
+        if template_content.is_none() && !tp.is_file() {
+            return Err(format!("Template note path must be a .md file: {template}"));
+        }
+    }
+
+    // Template content edit: atomic write to the configured file (create ok).
+    if let Some(content) = template_content {
+        if template.is_empty() {
+            return Err("Set the template note path before editing its content".into());
+        }
+        let tp = Path::new(&template);
+        if let Some(parent) = tp.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        let tmp = tp.with_extension("md.tmp");
+        std::fs::write(&tmp, content).map_err(|e| e.to_string())?;
+        std::fs::rename(&tmp, tp).map_err(|e| e.to_string())?;
     }
 
     let tx = conn.transaction().map_err(|e| e.to_string())?;

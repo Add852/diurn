@@ -395,6 +395,8 @@ async fn settings(state: State<AppState>) -> Response {
 struct SettingsBody {
     profile: journal::ProfileIn,
     questions: Option<Vec<journal::QuestionIn>>,
+    #[serde(default)]
+    template_content: Option<String>,
 }
 
 async fn settings_put(state: State<AppState>, Json(body): Json<SettingsBody>) -> Response {
@@ -402,7 +404,13 @@ async fn settings_put(state: State<AppState>, Json(body): Json<SettingsBody>) ->
         return (StatusCode::BAD_REQUEST, "No active profile").into_response();
     };
     let mut conn = state.db.0.lock().unwrap();
-    match journal::put_settings(&mut conn, profile.id, &body.profile, body.questions.as_ref()) {
+    match journal::put_settings(
+        &mut conn,
+        profile.id,
+        &body.profile,
+        body.questions.as_ref(),
+        body.template_content.as_deref(),
+    ) {
         Ok(()) => Json(json!({ "ok": true })).into_response(),
         Err(e) => (StatusCode::BAD_REQUEST, e).into_response(),
     }

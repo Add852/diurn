@@ -86,6 +86,8 @@ class _SettingsFormState extends State<_SettingsForm> {
   late List<Map<String, dynamic>> _questions;
   final _fields = <String, TextEditingController>{};
   final _tzFocus = FocusNode();
+  late final TextEditingController _templateCtrl =
+      TextEditingController(text: widget.data['template_content'] as String? ?? '');
   bool _saving = false;
   String? _error;
   String? _savedFlash;
@@ -113,6 +115,7 @@ class _SettingsFormState extends State<_SettingsForm> {
       c.dispose();
     }
     _tzFocus.dispose();
+    _templateCtrl.dispose();
     super.dispose();
   }
 
@@ -132,7 +135,11 @@ class _SettingsFormState extends State<_SettingsForm> {
       'day_offset_hours': int.tryParse(_txt('day_offset_hours')) ?? 0,
     };
     try {
-      await widget.api.saveSettings(profile, _questions);
+      await widget.api.saveSettings(
+        profile,
+        _questions,
+        templateContent: _templateCtrl.text,
+      );
       if (!mounted) return;
       setState(() => _savedFlash = 'Saved');
       widget.onSaved?.call();
@@ -211,6 +218,26 @@ class _SettingsFormState extends State<_SettingsForm> {
         if (_profile['media_enabled'] == true)
           _pathField('Media folder', 'media_folder', pickFile: false),
         _pathField('Template note (.md)', 'template_note_path', pickFile: true),
+        if ((_txt('template_note_path')).isNotEmpty) ...[
+          const Text('Template content',
+              style: TextStyle(fontSize: 13, color: Colors.white70)),
+          const SizedBox(height: 6),
+          TextFormField(
+            controller: _templateCtrl,
+            minLines: 6,
+            maxLines: 16,
+            style: const TextStyle(
+                fontSize: 12, fontFamily: 'monospace'),
+            decoration: const InputDecoration(
+              border: OutlineInputBorder(),
+              hintText: 'Markdown template — {Q1.answer}, \\$date("dddd") …',
+            ),
+          ),
+        ] else
+          const Text(
+            'Set a template note path above to edit the template.',
+            style: TextStyle(fontSize: 12, color: Colors.white38),
+          ),
         const SizedBox(height: 16),
         _section('General'),
         _tzField('Timezone', 'timezone'),

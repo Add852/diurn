@@ -103,11 +103,13 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _forget() async {
+    // Disconnect synchronously FIRST — the settings pop fires a reconnect
+    // on return, and an awaited prefs write would lose that race.
+    if (!mounted) return;
+    setState(() => _api = null);
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_kPrefUrl);
     await prefs.remove(_kPrefToken);
-    if (!mounted) return;
-    setState(() => _api = null);
   }
 
   @override

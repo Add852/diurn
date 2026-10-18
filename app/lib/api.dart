@@ -261,11 +261,13 @@ class Api {
   /// PUT /api/settings — whitelisted profile fields + question upserts.
   Future<void> saveSettings(
     Map<String, dynamic> profile,
-    List<Map<String, dynamic>> questions,
-  ) async {
+    List<Map<String, dynamic>> questions, {
+    String? templateContent,
+  }) async {
     await _send('PUT', '/api/settings', {}, {
       'profile': profile,
       'questions': questions,
+      'template_content': ?templateContent,
     });
   }
 
