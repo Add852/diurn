@@ -158,10 +158,12 @@ class _EntryCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final onPhoto = dayMedia.isNotEmpty;
     return Card(
       margin: EdgeInsets.zero,
       clipBehavior: Clip.antiAlias,
-      color: const Color(0xff18181b),
+      color: cs.surfaceContainerHighest,
       child: InkWell(
         onTap: () => Navigator.of(context).push(MaterialPageRoute(
           builder: (_) => EntryScreen(
@@ -170,7 +172,7 @@ class _EntryCard extends StatelessWidget {
         child: Stack(
           fit: StackFit.expand,
           children: [
-              if (dayMedia.isNotEmpty)
+              if (onPhoto) ...[
                 Image.network(
                   dayMedia.first.hasThumb
                       ? api.thumbUrl(dayMedia.first.path)
@@ -178,7 +180,11 @@ class _EntryCard extends StatelessWidget {
                   fit: BoxFit.cover,
                   errorBuilder: (_, _, _) => const SizedBox.shrink(),
                 ),
-              Container(color: Colors.black.withValues(alpha: 0.55)),
+                Container(color: Colors.black.withValues(alpha: 0.55)),
+              ] else
+                // themed placeholder for entries without media that day
+                Icon(Icons.notes_outlined,
+                    size: 72, color: cs.onSurface.withValues(alpha: 0.12)),
               Padding(
                 padding: const EdgeInsets.all(14),
                 child: Column(
@@ -188,18 +194,24 @@ class _EntryCard extends StatelessWidget {
                     Row(
                       children: [
                         Text(entry.date,
-                            style: const TextStyle(
+                            style: TextStyle(
                                 fontWeight: FontWeight.w700,
                                 fontSize: 15,
-                                color: Colors.white,
-                                shadows: [_photoTextShadow])),
+                                color: onPhoto ? Colors.white : cs.onSurface,
+                                shadows: onPhoto
+                                    ? const [_photoTextShadow]
+                                    : null)),
                         if (entry.fsOnly)
                           Padding(
                             padding: const EdgeInsets.only(left: 6),
                             child: Icon(Icons.description_outlined,
                                 size: 14,
-                                color: Colors.white70,
-                                shadows: const [_photoTextShadow]),
+                                color: onPhoto
+                                    ? Colors.white70
+                                    : cs.onSurface.withValues(alpha: 0.55),
+                                shadows: onPhoto
+                                    ? const [_photoTextShadow]
+                                    : null),
                           ),
                       ],
                     ),
@@ -218,8 +230,12 @@ class _EntryCard extends StatelessWidget {
                           style: TextStyle(
                               fontSize: 12,
                               fontStyle: FontStyle.italic,
-                              color: Colors.white54,
-                              shadows: const [_photoTextShadow])),
+                              color: onPhoto
+                                  ? Colors.white54
+                                  : cs.onSurface.withValues(alpha: 0.4),
+                              shadows: onPhoto
+                                  ? const [_photoTextShadow]
+                                  : null)),
                   ],
                 ),
               ),
