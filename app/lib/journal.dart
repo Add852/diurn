@@ -264,6 +264,7 @@ class _EntryScreenState extends State<EntryScreen> {
       setState(() {
         _current = _editor.text;
         _editing = false;
+        _saving = false;
       });
       widget.onChanged?.call();
     } catch (e) {
