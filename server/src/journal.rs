@@ -589,6 +589,8 @@ pub fn put_settings(
                         ],
                     )
                     .map_err(|e| e.to_string())?;
+                    // the not-in delete below must not eat the row we just made
+                    keep_ids.push(tx.last_insert_rowid());
                 }
             }
         }

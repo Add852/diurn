@@ -480,6 +480,59 @@ async fn form_create_update_delete_roundtrip() {
 }
 
 #[tokio::test]
+async fn settings_put_new_question_survives_cleanup() {
+    let root = tmp_root("q_new");
+    let router = app_with_profile(&root);
+    std::fs::create_dir_all(root.join("notes")).ok();
+
+    // seed one question (no id -> insert)
+    let put = r#"{"profile": {}, "questions": [{"identifier": "Q1", "question": "One?", "asked": true, "sort_order": 0}]}"#;
+    let res = router
+        .clone()
+        .oneshot(
+            Request::put("/api/settings")
+                .header("content-type", "application/json")
+                .body(Body::from(put))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    // full-list save with the existing id + a NEW question without id
+    let put = r#"{"profile": {}, "questions": [{"id": 1, "identifier": "Q1", "question": "One?", "asked": true, "sort_order": 0}, {"identifier": "Q2", "question": "Two?", "asked": true, "sort_order": 1}]}"#;
+    let res = router
+        .clone()
+        .oneshot(
+            Request::put("/api/settings")
+                .header("content-type", "application/json")
+                .body(Body::from(put))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let st = res.status();
+    let b = res.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(st, StatusCode::OK, "second PUT failed: {}", String::from_utf8_lossy(&b));
+
+    // the new question must survive the delete-absent-ids cleanup
+    let res = router
+        .clone()
+        .oneshot(Request::get("/api/settings").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    let body = res.into_body().collect().await.unwrap().to_bytes();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let ids: Vec<&str> = v["questions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|q| q["identifier"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, vec!["Q1", "Q2"]);
+}
+
+#[tokio::test]
 async fn settings_get_put_roundtrip() {
     let root = tmp_root("settings");
     let router = app_with_profile(&root);
