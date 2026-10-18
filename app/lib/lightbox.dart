@@ -107,15 +107,61 @@ class _MediaViewerScreenState extends State<MediaViewerScreen> {
         controller: _controller,
         itemCount: files.length,
         onPageChanged: (i) => setState(() => _index = i),
-        itemBuilder: (context, i) {
-          final f = files[i];
-          return ViewerScreen(
-            url: widget.api.mediaUrl(f.path),
-            name: f.name,
-            video: f.isVideo,
-            embedded: true,
-          );
-        },
+      body: Stack(
+        children: [
+          PageView.builder(
+            controller: _controller,
+            itemCount: files.length,
+            onPageChanged: (i) => setState(() => _index = i),
+            itemBuilder: (context, i) {
+              final f = files[i];
+              return ViewerScreen(
+                url: widget.api.mediaUrl(f.path),
+                name: f.name,
+                video: f.isVideo,
+                embedded: true,
+              );
+            },
+          ),
+          // explicit prev/next over the swipe gesture
+          if (_index > 0)
+            Positioned(
+              left: 8,
+              top: 0,
+              bottom: 0,
+              child: Center(
+                child: _navButton(Icons.chevron_left, () {
+                  _controller.previousPage(
+                      duration: const Duration(milliseconds: 250),
+                      curve: Curves.easeOut);
+                }),
+              ),
+            ),
+          if (_index < files.length - 1)
+            Positioned(
+              right: 8,
+              top: 0,
+              bottom: 0,
+              child: Center(
+                child: _navButton(Icons.chevron_right, () {
+                  _controller.nextPage(
+                      duration: const Duration(milliseconds: 250),
+                      curve: Curves.easeOut);
+                }),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _navButton(IconData icon, VoidCallback onTap) {
+    return IconButton.filledTonal(
+      onPressed: onTap,
+      icon: Icon(icon, size: 32),
+      style: IconButton.styleFrom(
+        backgroundColor: Colors.black.withValues(alpha: 0.45),
+        foregroundColor: Colors.white,
       ),
     );
   }
