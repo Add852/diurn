@@ -97,7 +97,14 @@ async fn auth(
         .and_then(|v| v.strip_prefix("Basic "))
         .map(|s| s.trim().to_string());
     let query = req.uri().query().and_then(|q| {
-        q.split('&').find_map(|kv| kv.strip_prefix("auth="))
+        q.split('&')
+            .find_map(|kv| kv.strip_prefix("auth="))
+            // Flutter percent-encodes the query value ('=' -> %3D)
+            .map(|v| {
+                percent_encoding::percent_decode_str(v)
+                    .decode_utf8_lossy()
+                    .into_owned()
+            })
     });
     let presented = header.or_else(|| query.map(|s| s.to_string()));
     let ok = {

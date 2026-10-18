@@ -199,7 +199,7 @@ class _HomeScreenState extends State<HomeScreen> {
         child: IndexedStack(
           index: _index,
           children: [
-            FormScreen(api: api),
+            FormScreen(api: api, refreshSignal: _refreshTick),
             JournalScreen(api: api, refreshSignal: _refreshTick),
             MediaScreen(
               api: api,

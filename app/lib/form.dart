@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'api.dart';
@@ -6,14 +7,15 @@ import 'api.dart';
 /// Verbatim answers -> server renders the template -> {date}.md.
 class FormScreen extends StatefulWidget {
   final Api api;
-  const FormScreen({super.key, required this.api});
+  final ValueListenable<int>? refreshSignal;
+  const FormScreen({super.key, required this.api, this.refreshSignal});
 
   @override
   State<FormScreen> createState() => _FormScreenState();
 }
 
 class _FormScreenState extends State<FormScreen> {
-  late final Future<FormInfo> _future;
+  late Future<FormInfo> _future;
   final _answers = <String, TextEditingController>{};
   bool _saving = false;
   String? _error;
@@ -23,14 +25,24 @@ class _FormScreenState extends State<FormScreen> {
   void initState() {
     super.initState();
     _future = widget.api.form();
+    widget.refreshSignal?.addListener(_reload);
+  }
+
+  void _reload() {
+    if (!mounted) return;
+    setState(() {
+      _future = widget.api.form();
+    });
   }
 
   @override
   void dispose() {
+    widget.refreshSignal?.removeListener(_reload);
     for (final c in _answers.values) {
       c.dispose();
     }
     super.dispose();
+  }
   }
 
   Future<void> _save(FormInfo info, {bool overwrite = false}) async {
