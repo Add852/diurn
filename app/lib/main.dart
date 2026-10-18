@@ -7,6 +7,7 @@ import 'form.dart';
 import 'journal.dart';
 import 'lightbox.dart';
 import 'settings.dart';
+import 'widgets/timezone_field.dart';
 
 const _kPrefUrl = 'server_url';
 const _kPrefUser = 'server_user';
@@ -443,15 +444,9 @@ class _ConnectFormState extends State<ConnectForm> {
             ),
             if (_wantsSetup) ...[
               const SizedBox(height: 12),
-              TextField(
+              TimezoneField(
                 controller: _tzCtrl,
-                autocorrect: false,
-                enabled: !_saving,
-                onSubmitted: (_) => _save(),
-                decoration: const InputDecoration(
-                  border: OutlineInputBorder(),
-                  labelText: 'Timezone (optional, e.g. Europe/Helsinki)',
-                ),
+                label: 'Timezone (optional, e.g. Europe/Helsinki)',
               ),
             ],
           ],

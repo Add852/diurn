@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'api.dart';
+import 'widgets/timezone_field.dart';
 
 /// Settings: three tabs (General / Notes / Account). One form state covers
 /// all tabs; the shell's FAB triggers save via [saveTrigger].
@@ -93,7 +94,6 @@ class _SettingsFormState extends State<_SettingsForm> {
   late final Map<String, dynamic> _profile;
   late List<Map<String, dynamic>> _questions;
   final _fields = <String, TextEditingController>{};
-  final _tzFocus = FocusNode();
   late final TextEditingController _templateCtrl = TextEditingController(
     text: widget.data['template_content'] as String? ?? '',
   );
@@ -178,7 +178,6 @@ class _SettingsFormState extends State<_SettingsForm> {
     for (final c in _fields.values) {
       c.dispose();
     }
-    _tzFocus.dispose();
     _templateCtrl.dispose();
     _usernameCtrl.dispose();
     _flashTimer?.cancel();
@@ -638,60 +637,7 @@ class _SettingsFormState extends State<_SettingsForm> {
   }
 
   Widget _tzField(String label, String key) {
-    const zones = [
-      'UTC', 'Europe/Helsinki', 'Europe/Stockholm', 'Europe/Berlin',
-      'Europe/Paris', 'Europe/London', 'Europe/Madrid', 'Europe/Rome',
-      'Europe/Warsaw', 'Europe/Athens', 'Europe/Istanbul', 'Europe/Moscow',
-      'America/New_York', 'America/Chicago', 'America/Denver',
-      'America/Los_Angeles', 'America/Phoenix', 'America/Toronto',
-      'America/Vancouver', 'America/Mexico_City', 'America/Sao_Paulo',
-      'America/Argentina/Buenos_Aires', 'Asia/Tokyo', 'Asia/Seoul',
-      'Asia/Shanghai', 'Asia/Hong_Kong', 'Asia/Singapore', 'Asia/Bangkok',
-      'Asia/Kolkata', 'Asia/Dubai', 'Asia/Jerusalem', 'Australia/Sydney',
-      'Australia/Melbourne', 'Australia/Perth', 'Pacific/Auckland',
-      'Africa/Cairo', 'Africa/Johannesburg', 'Africa/Lagos',
-    ];
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: RawAutocomplete<String>(
-        textEditingController: _ctrl(key),
-        focusNode: _tzFocus,
-        optionsBuilder: (TextEditingValue v) => zones.where(
-          (z) => z.toLowerCase().contains(v.text.toLowerCase()),
-        ),
-        fieldViewBuilder: (context, ctrl, focus, onSubmit) => TextFormField(
-          controller: ctrl,
-          focusNode: focus,
-          onFieldSubmitted: (_) => onSubmit(),
-          decoration: InputDecoration(
-            border: const OutlineInputBorder(),
-            labelText: label,
-            isDense: true,
-          ),
-        ),
-        optionsViewBuilder: (context, onSelected, options) => Align(
-          alignment: Alignment.topLeft,
-          child: Material(
-            elevation: 4,
-            color: const Color(0xff27272a),
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxHeight: 240, maxWidth: 340),
-              child: ListView(
-                shrinkWrap: true,
-                children: [
-                  for (final z in options)
-                    ListTile(
-                      dense: true,
-                      title: Text(z, style: const TextStyle(fontSize: 13)),
-                      onTap: () => onSelected(z),
-                    ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
+    return TimezoneField(controller: _ctrl(key), label: label);
   }
 
   Future<void> _editQuestion(int i) async {
