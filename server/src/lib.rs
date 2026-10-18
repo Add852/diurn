@@ -475,10 +475,8 @@ async fn media_list(state: State<AppState>, Query(q): Query<MediaListQuery>) -> 
             // Background scan — never block the response (a big library would
             // hang the tab for minutes). Cached rows serve now; the next
             // request (or pull-to-refresh) picks up the scan's results.
-            let _ = tokio::task::spawn_blocking(move || {
-                let mut conn = db.0.lock().unwrap();
-                media::scan(&mut conn, &p, &folder)
-            });
+            // The scan only takes the DB lock in short bursts.
+            let _ = tokio::task::spawn_blocking(move || media::scan(&db, &p, &folder));
         }
     }
     let year_month = match (q.year.as_deref(), q.month.as_deref()) {

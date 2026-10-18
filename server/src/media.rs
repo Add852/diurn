@@ -97,22 +97,29 @@ pub fn list_files(
 /// Incremental scan: walk folder, re-resolve only changed paths, prune gone
 /// ones, generate thumbs for new rows. ponytail: full walk per /api/media
 /// request; add fs.watch + background scan when libraries get huge.
-pub fn scan(conn: &mut Connection, profile: &Profile, folder: &Path) -> usize {
-    let mut cached: HashMap<String, (i64, Option<String>)> = HashMap::new();
-    {
-        let mut stmt = match conn.prepare("SELECT path, mtime, thumb FROM media_cache WHERE profile_id = ?1") {
-            Ok(s) => s,
-            Err(_) => return 0,
-        };
-        let rows = stmt.query_map(rusqlite::params![profile.id], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, Option<String>>(2)?))
-        });
-        if let Ok(rows) = rows {
-            for r in rows.flatten() {
-                cached.insert(r.0, (r.1, r.2));
+pub fn scan(db: &crate::db::Db, profile: &Profile, folder: &Path) -> usize {
+    // Short lock: read the cache, then release — the walk + EXIF + thumbnail
+    // work below must not block journal/entry requests behind the mutex.
+    let cached: HashMap<String, (i64, Option<String>)> = {
+        let conn = db.0.lock().unwrap();
+        let mut map = HashMap::new();
+        if let Ok(mut stmt) = conn
+            .prepare("SELECT path, mtime, thumb FROM media_cache WHERE profile_id = ?1")
+        {
+            if let Ok(rows) = stmt.query_map(rusqlite::params![profile.id], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, i64>(1)?,
+                    r.get::<_, Option<String>>(2)?,
+                ))
+            }) {
+                for r in rows.flatten() {
+                    map.insert(r.0, (r.1, r.2));
+                }
             }
         }
-    }
+        map
+    };
 
     let mut seen: Vec<String> = Vec::new();
     let mut updates: Vec<(String, Option<String>, i64, i64, Option<String>, String)> = Vec::new(); // path,date,captured_at,mtime,thumb,type
@@ -134,6 +141,7 @@ pub fn scan(conn: &mut Connection, profile: &Profile, folder: &Path) -> usize {
         updates.push((path_str, date, captured_at, mtime_ms, thumb, kind.to_string()));
     });
 
+    let mut conn = db.0.lock().unwrap();
     let tx = match conn.transaction() {
         Ok(t) => t,
         Err(_) => return 0,

@@ -228,7 +228,9 @@ class EntryScreen extends StatefulWidget {
 }
 
 class _EntryScreenState extends State<EntryScreen> {
-  late final (Map<String, String>, String) _parsed;
+  /// The note as currently known — updated on save so the view reflects
+  /// edits immediately instead of keeping the pre-save parse.
+  late String _current;
   late TextEditingController _editor;
   bool _editing = false;
   bool _saving = false;
@@ -238,9 +240,9 @@ class _EntryScreenState extends State<EntryScreen> {
   @override
   void initState() {
     super.initState();
-    _parsed = parseFrontmatter(widget.entry.markdown);
+    _current = widget.entry.markdown;
     // the editor gets the FULL note — frontmatter is editable markdown too
-    _editor = TextEditingController(text: widget.entry.markdown);
+    _editor = TextEditingController(text: _current);
   }
 
   @override
@@ -257,7 +259,10 @@ class _EntryScreenState extends State<EntryScreen> {
     try {
       await widget.api.updateEntry(widget.entry.date, _editor.text);
       if (!mounted) return;
-      setState(() => _editing = false);
+      setState(() {
+        _current = _editor.text;
+        _editing = false;
+      });
       widget.onChanged?.call();
     } catch (e) {
       if (!mounted) return;
@@ -303,7 +308,7 @@ class _EntryScreenState extends State<EntryScreen> {
   @override
   Widget build(BuildContext context) {
     if (_deleted) return const Scaffold(body: SizedBox.shrink());
-    final (fm, body) = _parsed;
+    final (fm, body) = parseFrontmatter(_current);
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.entry.date),
