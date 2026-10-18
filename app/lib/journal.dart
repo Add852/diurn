@@ -157,88 +157,63 @@ class _EntryCard extends StatelessWidget {
       color: const Color(0xff18181b),
       child: InkWell(
         onTap: () => Navigator.of(context).push(MaterialPageRoute(
-          builder: (_) =>
-              EntryScreen(api: api, entry: entry, onChanged: onChanged),
+          builder: (_) => EntryScreen(
+              api: api, entry: entry, onChanged: onChanged, media: dayMedia),
         )),
-        child: Padding(
-          padding: const EdgeInsets.all(10),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Text(entry.date,
-                      style: const TextStyle(
-                          fontWeight: FontWeight.w700, fontSize: 13)),
-                  if (entry.fsOnly)
-                    Padding(
-                      padding: const EdgeInsets.only(left: 6),
-                      child: Icon(Icons.description_outlined,
-                          size: 13, color: Colors.white38),
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+              if (dayMedia.isNotEmpty)
+                Image.network(
+                  dayMedia.first.hasThumb
+                      ? api.thumbUrl(dayMedia.first.path)
+                      : api.mediaUrl(dayMedia.first.path),
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, _, _) => const SizedBox.shrink(),
+                ),
+              Container(color: Colors.black.withValues(alpha: 0.55)),
+              Padding(
+                padding: const EdgeInsets.all(14),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Row(
+                      children: [
+                        Text(entry.date,
+                            style: const TextStyle(
+                                fontWeight: FontWeight.w700, fontSize: 15)),
+                        if (entry.fsOnly)
+                          Padding(
+                            padding: const EdgeInsets.only(left: 6),
+                            child: Icon(Icons.description_outlined,
+                                size: 14, color: Colors.white38),
+                          ),
+                      ],
                     ),
-                ],
-              ),
-              const SizedBox(height: 3),
-              if (metadata.isNotEmpty)
-                Text(
-                  metadata,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                      fontSize: 11,
-                      height: 1.25,
-                      color: Colors.white.withValues(alpha: 0.7)),
-                )
-              else
-                Text('No metadata',
-                    style: TextStyle(
-                        fontSize: 11,
-                        fontStyle: FontStyle.italic,
-                        color: Colors.white24)),
-              if (dayMedia.isNotEmpty) ...[
-                const SizedBox(height: 6),
-                SizedBox(height: 64, child: _filmstrip(context)),
-              ],
-              const Spacer(),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _filmstrip(BuildContext context) {
-    return ListView.builder(
-      scrollDirection: Axis.horizontal,
-      itemCount: dayMedia.length,
-      itemBuilder: (context, i) {
-        final f = dayMedia[i];
-        return GestureDetector(
-          onTap: () => Navigator.of(context).push(MaterialPageRoute(
-            builder: (_) => MediaViewerScreen(
-                api: api, files: dayMedia, initialIndex: i),
-          )),
-          child: Padding(
-            padding: const EdgeInsets.only(right: 6),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(6),
-              child: Image.network(
-                f.hasThumb ? api.thumbUrl(f.path) : api.mediaUrl(f.path),
-                fit: BoxFit.cover,
-                width: 64,
-                height: 64,
-                errorBuilder: (_, _, _) => Container(
-                  width: 64,
-                  height: 64,
-                  color: Colors.white10,
-                  child: const Icon(Icons.movie_outlined,
-                      size: 18, color: Colors.white24),
+                    const SizedBox(height: 4),
+                    if (metadata.isNotEmpty)
+                      Text(
+                        metadata,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                            fontSize: 12,
+                            height: 1.25,
+                            color: Colors.white.withValues(alpha: 0.7)),
+                      )
+                    else
+                      Text('No metadata',
+                          style: TextStyle(
+                              fontSize: 12,
+                              fontStyle: FontStyle.italic,
+                              color: Colors.white24)),
+                  ],
                 ),
               ),
-            ),
-          ),
-        );
-      },
+            ],
+        ),
+      ),
     );
   }
 }
@@ -249,11 +224,15 @@ class EntryScreen extends StatefulWidget {
   final Api api;
   final Entry entry;
   final VoidCallback? onChanged;
+
+  /// That day's media — shown as a strip in the preview, tap for lightbox.
+  final List<MediaFile> media;
   const EntryScreen({
     super.key,
     required this.api,
     required this.entry,
     this.onChanged,
+    this.media = const [],
   });
 
   @override
@@ -403,14 +382,54 @@ class _EntryScreenState extends State<EntryScreen> {
             MarkdownBody(
               data: body,
               selectable: true,
-              styleSheet: MarkdownStyleSheet.fromTheme(
-                Theme.of(context).copyWith(
-                  textTheme: Theme.of(context).textTheme.apply(
-                        bodyColor: Colors.white.withValues(alpha: 0.9),
+              styleSheet: MarkdownStyleSheet.fromTheme(Theme.of(context)),
+            ),
+            if (widget.media.isNotEmpty) ...[
+              const SizedBox(height: 16),
+              Text('Media',
+                  style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
+              const SizedBox(height: 8),
+              SizedBox(
+                height: 84,
+                child: ListView.builder(
+                  scrollDirection: Axis.horizontal,
+                  itemCount: widget.media.length,
+                  itemBuilder: (context, i) {
+                    final f = widget.media[i];
+                    return GestureDetector(
+                      onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                        builder: (_) => MediaViewerScreen(
+                            api: widget.api,
+                            files: widget.media,
+                            initialIndex: i),
+                      )),
+                      child: Padding(
+                        padding: const EdgeInsets.only(right: 8),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(8),
+                          child: Image.network(
+                            f.hasThumb
+                                ? widget.api.thumbUrl(f.path)
+                                : widget.api.mediaUrl(f.path),
+                            fit: BoxFit.cover,
+                            width: 84,
+                            height: 84,
+                            errorBuilder: (_, _, _) => Container(
+                              width: 84,
+                              height: 84,
+                              color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                              child: Icon(Icons.movie_outlined,
+                                  size: 22,
+                                  color: Theme.of(context).colorScheme.outline),
+                            ),
+                          ),
+                        ),
                       ),
+                    );
+                  },
                 ),
               ),
-            ),
+            ],
           ],
         ],
       ),

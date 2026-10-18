@@ -342,6 +342,8 @@ pub struct SettingsProfile {
     pub media_folder: String,
     pub timezone: String,
     pub day_offset_hours: i64,
+    pub theme_mode: String,
+    pub accent_color: String,
 }
 
 #[derive(serde::Serialize)]
@@ -394,6 +396,8 @@ pub fn get_settings(
             media_folder: profile.media_folder.clone(),
             timezone: profile.timezone.clone(),
             day_offset_hours: profile.day_offset_hours,
+            theme_mode: profile.theme_mode.clone(),
+            accent_color: profile.accent_color.clone(),
         },
         "questions": questions,
         "template_content": template_content,
@@ -409,6 +413,8 @@ pub struct ProfileIn {
     pub media_folder: Option<String>,
     pub timezone: Option<String>,
     pub day_offset_hours: Option<i64>,
+    pub theme_mode: Option<String>,
+    pub accent_color: Option<String>,
 }
 
 #[derive(serde::Deserialize)]
@@ -427,6 +433,11 @@ pub struct QuestionIn {
 
 fn default_true() -> bool {
     true
+}
+
+fn is_hex_color(s: &str) -> bool {
+    let b = s.as_bytes();
+    b.len() == 7 && b[0] == b'#' && b[1..].iter().all(|c| c.is_ascii_hexdigit())
 }
 
 fn assert_dir(field: &str, v: &str) -> Result<(), String> {
@@ -457,12 +468,22 @@ pub fn put_settings(
     questions: Option<&Vec<QuestionIn>>,
     template_content: Option<&str>,
 ) -> Result<(), String> {
-    let current: (String, String, String, i64, String) = conn
+    let current: (String, String, String, i64, String, String, String) = conn
         .query_row(
-            "SELECT daily_note_folder, template_note_path, media_folder, day_offset_hours, timezone
+            "SELECT daily_note_folder, template_note_path, media_folder, day_offset_hours, timezone, theme_mode, accent_color
              FROM profiles WHERE id = ?1",
             rusqlite::params![profile_id],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+            |r| {
+                Ok((
+                    r.get(0)?,
+                    r.get(1)?,
+                    r.get(2)?,
+                    r.get(3)?,
+                    r.get(4)?,
+                    r.get(5)?,
+                    r.get(6)?,
+                ))
+            },
         )
         .map_err(|_| "Profile not found".to_string())?;
 
@@ -471,6 +492,14 @@ pub fn put_settings(
     let media_folder = p.media_folder.clone().unwrap_or_else(|| current.2.clone());
     let day_offset = p.day_offset_hours.unwrap_or(current.3).clamp(0, 24);
     let timezone = p.timezone.clone().unwrap_or_else(|| current.4.clone());
+    let mut theme_mode = p.theme_mode.clone().unwrap_or(current.5);
+    if !matches!(theme_mode.as_str(), "system" | "dark" | "light") {
+        theme_mode = "system".into();
+    }
+    let mut accent_color = p.accent_color.clone().unwrap_or(current.6);
+    if !is_hex_color(&accent_color) {
+        accent_color = "#22c55e".into();
+    }
 
     // Filesystem validation (empty = unset, allowed)
     assert_dir("Daily note folder", &daily)?;
@@ -505,8 +534,8 @@ pub fn put_settings(
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     tx.execute(
         "UPDATE profiles SET name = ?1, daily_note_folder = ?2, template_note_path = ?3,
-         media_folder = ?4, day_offset_hours = ?5, timezone = ?6
-         WHERE id = ?7",
+         media_folder = ?4, day_offset_hours = ?5, timezone = ?6, theme_mode = ?7, accent_color = ?8
+         WHERE id = ?9",
         rusqlite::params![
             p.name.clone().unwrap_or_default(),
             daily,
@@ -514,6 +543,8 @@ pub fn put_settings(
             media_folder,
             day_offset,
             timezone,
+            theme_mode,
+            accent_color,
             profile_id
         ],
     )

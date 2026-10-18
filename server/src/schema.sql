@@ -21,6 +21,8 @@ CREATE TABLE IF NOT EXISTS profiles (
   google_client_id TEXT NOT NULL DEFAULT '',
   google_client_secret TEXT NOT NULL DEFAULT '',
   day_offset_hours INTEGER NOT NULL DEFAULT 0,
+  theme_mode TEXT NOT NULL DEFAULT 'system',
+  accent_color TEXT NOT NULL DEFAULT '#22c55e',
   media_enabled INTEGER NOT NULL DEFAULT 0,
   media_folder TEXT NOT NULL DEFAULT '',
   obsidian_enabled INTEGER NOT NULL DEFAULT 0,

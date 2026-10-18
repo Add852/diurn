@@ -18,20 +18,58 @@ void main() {
   runApp(const DiurnApp());
 }
 
-class DiurnApp extends StatelessWidget {
+/// Appearance (theme mode + accent) lives in the server profile and is
+/// applied on connect and after each settings save.
+class DiurnApp extends StatefulWidget {
   const DiurnApp({super.key});
+
+  @override
+  State<DiurnApp> createState() => _DiurnAppState();
+}
+
+class _DiurnAppState extends State<DiurnApp> {
+  ThemeMode _themeMode = ThemeMode.system;
+  Color _accent = const Color(0xff22c55e); // green default
+
+  /// profile = the "profile" object from GET/PUT /api/settings.
+  void applyAppearance(Map<String, dynamic>? profile) {
+    if (profile == null) return;
+    setState(() {
+      switch (profile['theme_mode'] as String?) {
+        case 'dark':
+          _themeMode = ThemeMode.dark;
+        case 'light':
+          _themeMode = ThemeMode.light;
+        default:
+          _themeMode = ThemeMode.system;
+      }
+      final hex = profile['accent_color'] as String?;
+      if (hex != null && RegExp(r'^#[0-9a-fA-F]{6}$').hasMatch(hex)) {
+        _accent = Color(int.parse(hex.substring(1), radix: 16) | 0xff000000);
+      }
+    });
+  }
+
+  ThemeData _theme(Brightness brightness) => ThemeData(
+        useMaterial3: true,
+        colorScheme:
+            ColorScheme.fromSeed(seedColor: _accent, brightness: brightness),
+        scaffoldBackgroundColor:
+            brightness == Brightness.dark ? const Color(0xff09090b) : null,
+        appBarTheme: AppBarTheme(
+          backgroundColor:
+              brightness == Brightness.dark ? const Color(0xff18181b) : null,
+        ),
+      );
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'diurn',
-      theme: ThemeData(
-        useMaterial3: true,
-        brightness: Brightness.dark,
-        scaffoldBackgroundColor: const Color(0xff09090b), // zinc-950
-        appBarTheme: const AppBarTheme(backgroundColor: Color(0xff18181b)),
-      ),
-      home: const HomeScreen(),
+      theme: _theme(Brightness.light),
+      darkTheme: _theme(Brightness.dark),
+      themeMode: _themeMode,
+      home: HomeScreen(onAppearance: applyAppearance),
     );
   }
 }
@@ -39,7 +77,10 @@ class DiurnApp extends StatelessWidget {
 /// Bootstraps: load saved server URL -> /api/config -> tabs.
 /// No saved URL, unreachable server, or gear tap -> connect form.
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key});
+  /// Applies the profile's theme mode + accent (called after connect and
+  /// whenever settings are saved).
+  final void Function(Map<String, dynamic>? profile)? onAppearance;
+  const HomeScreen({super.key, this.onAppearance});
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -114,6 +155,7 @@ class _HomeScreenState extends State<HomeScreen> {
         _api = Api(base, username: user, password: pass);
         _authMode = null;
       });
+      _loadAppearance();
     } catch (e) {
       // 401 -> ask the server which credentials it wants (and whose name to show)
       if ('$e'.contains('Unauthorized') || '$e'.contains('401')) {
@@ -147,6 +189,18 @@ class _HomeScreenState extends State<HomeScreen> {
       _savedPass = pass;
       _api = Api(base, username: user, password: pass);
     });
+    _loadAppearance();
+  }
+
+  /// Theme mode + accent from the profile — applied at the app level.
+  Future<void> _loadAppearance() async {
+    try {
+      final s = await _api!.settings();
+      if (!mounted) return;
+      widget.onAppearance?.call(s['profile'] as Map<String, dynamic>?);
+    } catch (_) {
+      // appearance is cosmetic — never block the connect flow
+    }
   }
 
   /// Called by Settings after account update/reset.
@@ -213,6 +267,7 @@ class _HomeScreenState extends State<HomeScreen> {
               saveTrigger: _saveTrigger,
               refreshSignal: _refreshTick,
               onCredentialsChanged: _setCredentials,
+              onAppearanceChanged: widget.onAppearance,
             ),
           ],
         ),

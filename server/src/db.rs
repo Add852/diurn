@@ -35,6 +35,8 @@ fn migrate_columns(conn: &Connection) {
             ("media_folder", "TEXT NOT NULL DEFAULT ''"),
             ("timezone", "TEXT NOT NULL DEFAULT 'UTC'"),
             ("day_offset_hours", "INTEGER NOT NULL DEFAULT 0"),
+            ("theme_mode", "TEXT NOT NULL DEFAULT 'system'"),
+            ("accent_color", "TEXT NOT NULL DEFAULT '#22c55e'"),
         ],
     );
     let _ = ensure_columns(
@@ -96,7 +98,7 @@ impl Db {
     pub fn active_profile(&self) -> Option<Profile> {
         let conn = self.0.lock().ok()?;
         conn.query_row(
-            "SELECT id, name, daily_note_folder, template_note_path, media_folder, timezone, day_offset_hours
+            "SELECT id, name, daily_note_folder, template_note_path, media_folder, timezone, day_offset_hours, theme_mode, accent_color
              FROM profiles WHERE is_active = 1 LIMIT 1",
             [],
             |r| {
@@ -108,6 +110,8 @@ impl Db {
                     media_folder: r.get(4)?,
                     timezone: r.get(5)?,
                     day_offset_hours: r.get(6)?,
+                    theme_mode: r.get(7)?,
+                    accent_color: r.get(8)?,
                 })
             },
         )
@@ -124,4 +128,6 @@ pub struct Profile {
     pub media_folder: String,
     pub timezone: String,
     pub day_offset_hours: i64,
+    pub theme_mode: String,
+    pub accent_color: String,
 }

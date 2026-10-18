@@ -17,6 +17,9 @@ class SettingsScreen extends StatefulWidget {
 
   /// Called with the new (username, password) after account update/reset.
   final void Function(String? username, String? password)? onCredentialsChanged;
+
+  /// Called with the saved profile after a settings save (theme + accent).
+  final void Function(Map<String, dynamic> profile)? onAppearanceChanged;
   final VoidCallback? onSaved;
   final ValueListenable<int>? saveTrigger;
   final ValueListenable<int>? refreshSignal;
@@ -26,6 +29,7 @@ class SettingsScreen extends StatefulWidget {
     required this.api,
     this.onChangeServer,
     this.onCredentialsChanged,
+    this.onAppearanceChanged,
     this.onSaved,
     this.saveTrigger,
     this.refreshSignal,
@@ -60,6 +64,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           onSaved: widget.onSaved,
           onChangeServer: widget.onChangeServer,
           onCredentialsChanged: widget.onCredentialsChanged,
+          onAppearanceChanged: widget.onAppearanceChanged,
           saveTrigger: widget.saveTrigger,
           refreshSignal: widget.refreshSignal,
         );
@@ -74,6 +79,7 @@ class _SettingsForm extends StatefulWidget {
   final VoidCallback? onSaved;
   final VoidCallback? onChangeServer;
   final void Function(String? username, String? password)? onCredentialsChanged;
+  final void Function(Map<String, dynamic> profile)? onAppearanceChanged;
   final ValueListenable<int>? saveTrigger;
   final ValueListenable<int>? refreshSignal;
   const _SettingsForm({
@@ -82,6 +88,7 @@ class _SettingsForm extends StatefulWidget {
     this.onSaved,
     this.onChangeServer,
     this.onCredentialsChanged,
+    this.onAppearanceChanged,
     this.saveTrigger,
     this.refreshSignal,
   });
@@ -200,6 +207,8 @@ class _SettingsFormState extends State<_SettingsForm> {
       'media_folder': _txt('media_folder'),
       'timezone': _txt('timezone'),
       'day_offset_hours': int.tryParse(_txt('day_offset_hours')) ?? 0,
+      'theme_mode': _profile['theme_mode'] ?? 'system',
+      'accent_color': _profile['accent_color'] ?? '#22c55e',
     };
     try {
       await widget.api.saveSettings(
@@ -210,6 +219,7 @@ class _SettingsFormState extends State<_SettingsForm> {
       if (!mounted) return;
       _flash('Settings saved');
       widget.onSaved?.call();
+      widget.onAppearanceChanged?.call(profile);
     } catch (e) {
       if (!mounted) return;
       _fail('$e');
@@ -418,7 +428,85 @@ class _SettingsFormState extends State<_SettingsForm> {
         _tzField('Timezone', 'timezone'),
         _textField('Day offset hours (0-24)', 'day_offset_hours',
             number: true),
+        const SizedBox(height: 16),
+        _section('Appearance'),
+        _themeModeField(),
+        const SizedBox(height: 8),
+        const Text('Accent color'),
+        _accentField(),
       ],
+    );
+  }
+
+  Widget _themeModeField() {
+    final mode = (_profile['theme_mode'] as String?) ?? 'system';
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: SegmentedButton<String>(
+        segments: const [
+          ButtonSegment(
+              value: 'system',
+              label: Text('System'),
+              icon: Icon(Icons.brightness_auto_outlined)),
+          ButtonSegment(
+              value: 'dark',
+              label: Text('Dark'),
+              icon: Icon(Icons.dark_mode_outlined)),
+          ButtonSegment(
+              value: 'light',
+              label: Text('Light'),
+              icon: Icon(Icons.light_mode_outlined)),
+        ],
+        selected: {mode},
+        onSelectionChanged: (s) =>
+            setState(() => _profile['theme_mode'] = s.first),
+      ),
+    );
+  }
+
+  static const _accentChoices = <String, Color>{
+    '#22c55e': Color(0xff22c55e), // green — default
+    '#3b82f6': Color(0xff3b82f6),
+    '#06b6d4': Color(0xff06b6d4),
+    '#14b8a6': Color(0xff14b8a6),
+    '#a855f7': Color(0xffa855f7),
+    '#ec4899': Color(0xffec4899),
+    '#ef4444': Color(0xffef4444),
+    '#f97316': Color(0xfff97316),
+    '#eab308': Color(0xffeab308),
+  };
+
+  Widget _accentField() {
+    final current =
+        ((_profile['accent_color'] as String?) ?? '#22c55e').toLowerCase();
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Wrap(
+        spacing: 10,
+        runSpacing: 10,
+        children: [
+          for (final e in _accentChoices.entries)
+            InkWell(
+              onTap: () => setState(() => _profile['accent_color'] = e.key),
+              customBorder: const CircleBorder(),
+              child: Container(
+                width: 34,
+                height: 34,
+                decoration: BoxDecoration(
+                  color: e.value,
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: current == e.key ? Colors.white : Colors.transparent,
+                    width: 2,
+                  ),
+                ),
+                child: current == e.key
+                    ? const Icon(Icons.check, size: 18, color: Colors.white)
+                    : null,
+              ),
+            ),
+        ],
+      ),
     );
   }
 

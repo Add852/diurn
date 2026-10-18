@@ -494,11 +494,13 @@ async fn settings_get_put_roundtrip() {
     let body = res.into_body().collect().await.unwrap().to_bytes();
     let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(v["profile"]["daily_note_folder"], serde_json::json!(root.join("notes").to_string_lossy()));
+    assert_eq!(v["profile"]["theme_mode"], serde_json::json!("system"));
+    assert_eq!(v["profile"]["accent_color"], serde_json::json!("#22c55e"));
 
     // PUT: update folders + add one question
     let put = format!(
-        r#"{{"profile": {{"daily_note_folder": "{}", "media_enabled": false, "day_offset_hours": 2}},
-             "questions": [{{"identifier": "Q1", "question": "What happened?", "asked": true, "sort_order": 0}}]}}"#,
+        r##"{{"profile": {{"daily_note_folder": "{}", "media_enabled": false, "day_offset_hours": 2, "theme_mode": "dark", "accent_color": "#3b82f6"}},
+             "questions": [{{"identifier": "Q1", "question": "What happened?", "asked": true, "sort_order": 0}}]}}"##,
         root.display()
     );
     let res = router
@@ -523,6 +525,8 @@ async fn settings_get_put_roundtrip() {
     let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(v["questions"].as_array().unwrap().len(), 1);
     assert_eq!(v["profile"]["day_offset_hours"], serde_json::json!(2));
+    assert_eq!(v["profile"]["theme_mode"], serde_json::json!("dark"));
+    assert_eq!(v["profile"]["accent_color"], serde_json::json!("#3b82f6"));
     let qid = v["questions"][0]["id"].as_i64().unwrap();
 
     let put2 = format!(
