@@ -303,13 +303,18 @@ class _SettingsFormState extends State<_SettingsForm> {
       if (defaultTargetPlatform == TargetPlatform.android) {
         // Android has no system save dialog — hand the file to the share
         // sheet ("Save to Files", Drive, or any target app).
-        final result = await Share.shareXFiles([
-          XFile.fromData(
-            utf8.encode(json),
-            mimeType: 'application/json',
-            name: 'diurn-settings.json',
+        final result = await SharePlus.instance.share(
+          ShareParams(
+            files: [
+              XFile.fromData(
+                utf8.encode(json),
+                mimeType: 'application/json',
+                name: 'diurn-settings.json',
+              ),
+            ],
+            subject: 'diurn settings',
           ),
-        ], subject: 'diurn settings');
+        );
         if (!mounted) return;
         _flash(result.status == ShareResultStatus.success
             ? 'Exported via share sheet'
