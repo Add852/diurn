@@ -183,11 +183,14 @@ pub fn is_authorized(
 }
 
 
-/// Auth mode for the client's connect screen.
+/// Auth mode for the client's connect screen, plus a username hint so the
+/// form prefills the actual admin name instead of assuming 'admin'.
 pub fn status(conn: &Connection) -> serde_json::Value {
     if !has_users(conn) {
-        serde_json::json!({ "needs_setup": true, "mode": "setup" })
-    } else {
-        serde_json::json!({ "needs_setup": false, "mode": "password" })
+        return serde_json::json!({ "needs_setup": true, "mode": "setup" });
     }
+    let username: String = conn
+        .query_row("SELECT username FROM users ORDER BY id LIMIT 1", [], |r| r.get(0))
+        .unwrap_or_else(|_| "admin".into());
+    serde_json::json!({ "needs_setup": false, "mode": "password", "username": username })
 }

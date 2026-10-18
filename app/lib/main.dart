@@ -51,6 +51,7 @@ class _HomeScreenState extends State<HomeScreen> {
   String? _savedUser;
   String? _savedPass;
   String? _authMode; // 'setup' | 'password' | null
+  String? _hintUser; // username hint from /api/auth/status
   bool _booting = true;
 
   /// Bumped when profile settings may have changed (folders, etc.) so tabs
@@ -102,12 +103,15 @@ class _HomeScreenState extends State<HomeScreen> {
         _authMode = null;
       });
     } catch (e) {
-      // 401 -> ask the server which credentials it wants
+      // 401 -> ask the server which credentials it wants (and whose name to show)
       if ('$e'.contains('Unauthorized') || '$e'.contains('401')) {
         try {
           final st = await Api(base).authStatus();
           if (!mounted) return;
-          setState(() => _authMode = st['mode'] as String? ?? 'password');
+          setState(() {
+            _authMode = st['mode'] as String? ?? 'password';
+            _hintUser = st['username'] as String?;
+          });
         } catch (_) {}
       }
     }
@@ -170,7 +174,7 @@ class _HomeScreenState extends State<HomeScreen> {
         body: SafeArea(
           child: ConnectForm(
             initial: _savedUrl,
-            initialUser: _savedUser,
+            initialUser: _hintUser ?? _savedUser,
             initialPass: _savedPass,
             mode: _authMode,
             onConnected: _onConnected,
