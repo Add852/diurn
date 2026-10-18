@@ -291,7 +291,7 @@ class _ConnectFormState extends State<ConnectForm> {
             decoration: const InputDecoration(
               border: OutlineInputBorder(),
               labelText: 'Server URL',
-              hintText: 'http://192.168.1.147:8080',
+              hintText: 'http://192.168.1.147:12321',
             ),
           ),
           if (_wantsPassword) ...[

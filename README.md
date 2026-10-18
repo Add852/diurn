@@ -20,7 +20,7 @@ DIURN_ROOTS="$HOME:$HOME/pictures" cargo run        # ':'-separated allowed root
 DIURN_TOKEN=sekrit cargo run                        # optional: require Bearer auth on all routes
 ```
 
-Port: `DIURN_PORT` (default 8080). Only paths under a root are readable —
+Port: `DIURN_PORT` (default 12321). Only paths under a root are readable —
 everything else is 403. Thumbnails cache under `DIURN_CACHE`
 (default: system temp dir, `diurn-thumbs/`).
 
@@ -30,7 +30,7 @@ everything else is 403. Thumbnails cache under `DIURN_CACHE`
 cd app
 flutter pub get
 # phone/emulator on the same LAN: use the server machine's IP, not localhost
-flutter run --dart-define=DIURN_URL=http://192.168.1.20:8080
+flutter run --dart-define=DIURN_URL=http://192.168.1.20:12321
 ```
 
 ## API

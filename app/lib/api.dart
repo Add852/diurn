@@ -4,10 +4,10 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 /// Compile-time default, used only to prefill the connect form:
-///   flutter run --dart-define=DIURN_URL=http://192.168.1.20:8080
+///   flutter run --dart-define=DIURN_URL=http://192.168.1.20:12321
 const kDefaultUrl = String.fromEnvironment(
   'DIURN_URL',
-  defaultValue: 'http://127.0.0.1:8080',
+  defaultValue: 'http://127.0.0.1:12321',
 );
 
 /// Media file extensions the server recognises (mirror of MEDIA_EXTS).
