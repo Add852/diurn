@@ -229,17 +229,11 @@ class _FormScreenState extends State<FormScreen> {
               ),
               const SizedBox(height: 16),
             ],
+            if (_saving) const LinearProgressIndicator(),
             if (_error != null) ...[
-              Text(_error!, style: const TextStyle(color: Colors.redAccent)),
               const SizedBox(height: 12),
+              Text(_error!, style: const TextStyle(color: Colors.redAccent)),
             ],
-            _saving
-                ? const Center(child: CircularProgressIndicator())
-                : FilledButton.icon(
-                    onPressed: () => _save(selected),
-                    icon: const Icon(Icons.save_outlined),
-                    label: const Text('Save note'),
-                  ),
           ],
         );
       },
