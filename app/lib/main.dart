@@ -141,7 +141,8 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     }
     return DefaultTabController(
-      length: 2,
+      // keep in sync with the TabBar tabs / TabBarView children below
+      length: 3,
       child: Scaffold(
         appBar: AppBar(
           title: const Text('diurn'),
