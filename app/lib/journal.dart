@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 
 import 'api.dart';
+import 'lightbox.dart';
 
 /// Port of src/lib/frontmatter.ts: `---\nkey: value\n---\nbody` split.
 (Map<String, String>, String) parseFrontmatter(String content) {
@@ -29,7 +30,7 @@ class JournalScreen extends StatefulWidget {
 }
 
 class _JournalScreenState extends State<JournalScreen> {
-  late Future<(List<Entry>, Map<String, MediaFile>)> _future;
+  late Future<(List<Entry>, Map<String, List<MediaFile>>)> _future;
 
   @override
   void initState() {
@@ -38,13 +39,13 @@ class _JournalScreenState extends State<JournalScreen> {
     widget.refreshSignal?.addListener(_reload);
   }
 
-  Future<(List<Entry>, Map<String, MediaFile>)> _load() async {
+  Future<(List<Entry>, Map<String, List<MediaFile>>)> _load() async {
     final entries = await widget.api.entries();
     final (files, _) = await widget.api.mediaFiles();
-    // first media of each day becomes the card background
-    final byDate = <String, MediaFile>{};
+    // every day's media list feeds the card filmstrip
+    final byDate = <String, List<MediaFile>>{};
     for (final f in files) {
-      if (f.date != null && !byDate.containsKey(f.date)) byDate[f.date!] = f;
+      if (f.date != null) (byDate[f.date!] ??= []).add(f);
     }
     return (entries, byDate);
   }
@@ -64,7 +65,7 @@ class _JournalScreenState extends State<JournalScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder<(List<Entry>, Map<String, MediaFile>)>(
+    return FutureBuilder<(List<Entry>, Map<String, List<MediaFile>>)>(
       future: _future,
       builder: (context, snap) {
         if (snap.hasError) return Center(child: Text('${snap.error}'));
@@ -96,22 +97,32 @@ class _JournalScreenState extends State<JournalScreen> {
                       ),
                     ),
                   ),
-                  SliverList.builder(
-                    itemCount: groups[month]!.length,
-                    itemBuilder: (context, i) {
-                      final e = groups[month]![i];
-                      final fm = parseFrontmatter(e.markdown).$1;
-                      final metadata = fm.entries
-                          .map((kv) => '${kv.key}: ${kv.value}')
-                          .join('  ·  ');
-                      return _EntryCard(
-                        api: widget.api,
-                        entry: e,
-                        background: mediaByDate[e.date],
-                        metadata: metadata,
-                        onChanged: _reload,
-                      );
-                    },
+                  SliverPadding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                    sliver: SliverGrid.builder(
+                      itemCount: groups[month]!.length,
+                      gridDelegate:
+                          const SliverGridDelegateWithMaxCrossAxisExtent(
+                        maxCrossAxisExtent: 380,
+                        mainAxisSpacing: 8,
+                        crossAxisSpacing: 8,
+                        childAspectRatio: 1.35,
+                      ),
+                      itemBuilder: (context, i) {
+                        final e = groups[month]![i];
+                        final fm = parseFrontmatter(e.markdown).$1;
+                        final metadata = fm.entries
+                            .map((kv) => '${kv.key}: ${kv.value}')
+                            .join('  ·  ');
+                        return _EntryCard(
+                          api: widget.api,
+                          entry: e,
+                          dayMedia: mediaByDate[e.date] ?? const [],
+                          metadata: metadata,
+                          onChanged: _reload,
+                        );
+                      },
+                    ),
                   ),
                 ],
               ),
@@ -122,28 +133,26 @@ class _JournalScreenState extends State<JournalScreen> {
   }
 }
 
-/// Card per journal day: the day's first photo as the darkened background.
-/// ponytail: single static thumb (no mini-gallery) — add a filmstrip when
-/// days with many photos feel sparse.
+/// Card per journal day in a compact grid: date, metadata preview and a
+/// filmstrip of that day's media (tap a thumb for the day's lightbox).
 class _EntryCard extends StatelessWidget {
   final Api api;
   final Entry entry;
-  final MediaFile? background;
+  final List<MediaFile> dayMedia;
   final String metadata;
   final VoidCallback onChanged;
   const _EntryCard({
     required this.api,
     required this.entry,
-    required this.background,
+    required this.dayMedia,
     required this.metadata,
     required this.onChanged,
   });
 
   @override
   Widget build(BuildContext context) {
-    final bg = background;
     return Card(
-      margin: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+      margin: EdgeInsets.zero,
       clipBehavior: Clip.antiAlias,
       color: const Color(0xff18181b),
       child: InkWell(
@@ -151,61 +160,85 @@ class _EntryCard extends StatelessWidget {
           builder: (_) =>
               EntryScreen(api: api, entry: entry, onChanged: onChanged),
         )),
-        child: SizedBox(
-          height: 140,
-          child: Stack(
-            fit: StackFit.expand,
+        child: Padding(
+          padding: const EdgeInsets.all(10),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              if (bg != null)
-                Image.network(
-                  bg.hasThumb ? api.thumbUrl(bg.path) : api.mediaUrl(bg.path),
-                  fit: BoxFit.cover,
-                  errorBuilder: (_, _, _) => const SizedBox.shrink(),
-                ),
-              Container(color: Colors.black.withValues(alpha: 0.55)),
-              Padding(
-                padding: const EdgeInsets.all(14),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Row(
-                      children: [
-                        Text(entry.date,
-                            style: const TextStyle(
-                                fontWeight: FontWeight.w700, fontSize: 15)),
-                        if (entry.fsOnly)
-                          Padding(
-                            padding: const EdgeInsets.only(left: 6),
-                            child: Icon(Icons.description_outlined,
-                                size: 14, color: Colors.white38),
-                          ),
-                      ],
+              Row(
+                children: [
+                  Text(entry.date,
+                      style: const TextStyle(
+                          fontWeight: FontWeight.w700, fontSize: 13)),
+                  if (entry.fsOnly)
+                    Padding(
+                      padding: const EdgeInsets.only(left: 6),
+                      child: Icon(Icons.description_outlined,
+                          size: 13, color: Colors.white38),
                     ),
-                    const SizedBox(height: 4),
-                    if (metadata.isNotEmpty)
-                      Text(
-                        metadata,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                            fontSize: 12,
-                            height: 1.25,
-                            color: Colors.white.withValues(alpha: 0.7)),
-                      )
-                    else
-                      Text('No metadata',
-                          style: TextStyle(
-                              fontSize: 12,
-                              fontStyle: FontStyle.italic,
-                              color: Colors.white24)),
-                  ],
-                ),
+                ],
               ),
+              const SizedBox(height: 3),
+              if (metadata.isNotEmpty)
+                Text(
+                  metadata,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                      fontSize: 11,
+                      height: 1.25,
+                      color: Colors.white.withValues(alpha: 0.7)),
+                )
+              else
+                Text('No metadata',
+                    style: TextStyle(
+                        fontSize: 11,
+                        fontStyle: FontStyle.italic,
+                        color: Colors.white24)),
+              if (dayMedia.isNotEmpty) ...[
+                const SizedBox(height: 6),
+                SizedBox(height: 64, child: _filmstrip(context)),
+              ],
+              const Spacer(),
             ],
           ),
         ),
       ),
+    );
+  }
+
+  Widget _filmstrip(BuildContext context) {
+    return ListView.builder(
+      scrollDirection: Axis.horizontal,
+      itemCount: dayMedia.length,
+      itemBuilder: (context, i) {
+        final f = dayMedia[i];
+        return GestureDetector(
+          onTap: () => Navigator.of(context).push(MaterialPageRoute(
+            builder: (_) => MediaViewerScreen(
+                api: api, files: dayMedia, initialIndex: i),
+          )),
+          child: Padding(
+            padding: const EdgeInsets.only(right: 6),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(6),
+              child: Image.network(
+                f.hasThumb ? api.thumbUrl(f.path) : api.mediaUrl(f.path),
+                fit: BoxFit.cover,
+                width: 64,
+                height: 64,
+                errorBuilder: (_, _, _) => Container(
+                  width: 64,
+                  height: 64,
+                  color: Colors.white10,
+                  child: const Icon(Icons.movie_outlined,
+                      size: 18, color: Colors.white24),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 }
