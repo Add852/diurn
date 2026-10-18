@@ -408,9 +408,19 @@ class _ConnectFormState extends State<ConnectForm> {
   bool _saving = false;
   String? _error;
 
-  bool get _wantsSetup => widget.mode == 'setup';
+  /// Mirrors widget.mode; flips to 'setup' when a login attempt reveals the
+  /// server has no admin yet.
+  String? _mode;
+
+  @override
+  void initState() {
+    super.initState();
+    _mode = widget.mode;
+  }
+
+  bool get _wantsSetup => _mode == 'setup';
   bool get _wantsPassword =>
-      _wantsSetup || widget.mode == 'password' || widget.mode == null;
+      _wantsSetup || _mode == 'password' || _mode == null;
 
   @override
   void dispose() {
@@ -443,7 +453,24 @@ class _ConnectFormState extends State<ConnectForm> {
         await Api(base).setup(pass, _tzCtrl.text.trim());
         user = 'admin';
       } else if (_wantsPassword) {
-        await Api(base).verify(user, pass);
+        try {
+          await Api(base).verify(user, pass);
+        } catch (e) {
+          // 401 might just mean the server has no admin yet — flip to setup
+          if ('$e'.contains('Unauthorized') || '$e'.contains('401')) {
+            final st = await Api(base).authStatus();
+            if (st['needs_setup'] == true) {
+              if (!mounted) return;
+              setState(() {
+                _mode = 'setup';
+                _saving = false;
+                _error = null;
+              });
+              return;
+            }
+          }
+          rethrow;
+        }
       }
       final roots = await Api(base, username: user, password: pass).config();
       if (!mounted) return;
