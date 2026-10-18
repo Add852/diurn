@@ -90,7 +90,6 @@ async fn auth(
 ) -> Response {
     // HTTP Basic for JSON calls; <img>/<video> tags cannot send headers, so
     // ?auth=<base64 user:pass> is accepted as a fallback.
-    use base64::Engine as _;
     let header = req
         .headers()
         .get(header::AUTHORIZATION)

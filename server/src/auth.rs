@@ -6,7 +6,6 @@ use std::collections::HashSet;
 
 use rusqlite::Connection;
 
-use crate::db::Db;
 
 pub fn has_users(conn: &Connection) -> bool {
     conn.query_row("SELECT EXISTS(SELECT 1 FROM users)", [], |r| r.get::<_, i64>(0))
