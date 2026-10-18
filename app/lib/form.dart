@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'api.dart';
+import 'lightbox.dart';
 
 /// Today tab: the no-AI form interface (GET /api/form + POST /api/entries).
 /// Verbatim answers -> server renders the template -> {date}.md.
@@ -21,10 +22,15 @@ class _FormScreenState extends State<FormScreen> {
   String? _error;
   String? _savedDate;
 
+  /// Chosen entry day (null = the server's "today" from GET /api/form).
+  String? _date;
+  List<MediaFile> _allMedia = const [];
+
   @override
   void initState() {
     super.initState();
     _future = widget.api.form();
+    _loadMedia();
     widget.refreshSignal?.addListener(_reload);
   }
 
@@ -32,6 +38,39 @@ class _FormScreenState extends State<FormScreen> {
     if (!mounted) return;
     setState(() {
       _future = widget.api.form();
+    });
+    _loadMedia();
+  }
+
+  Future<void> _loadMedia() async {
+    try {
+      final (files, _) = await widget.api.mediaFiles();
+      if (!mounted) return;
+      setState(() => _allMedia = files);
+    } catch (_) {
+      // media strip is cosmetic — the form must still work without it
+    }
+  }
+
+  Future<void> _pickDate(String current) async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: DateTime.tryParse(current) ?? DateTime.now(),
+      firstDate: DateTime(2000),
+      lastDate: DateTime.now().add(const Duration(days: 365)),
+    );
+    if (picked == null || !mounted) return;
+    final date =
+        '${picked.year.toString().padLeft(4, '0')}-'
+        '${picked.month.toString().padLeft(2, '0')}-'
+        '${picked.day.toString().padLeft(2, '0')}';
+    if (date == current) return;
+    setState(() {
+      _date = date;
+      _savedDate = null;
+      for (final c in _answers.values) {
+        c.clear();
+      }
     });
   }
 
@@ -44,7 +83,7 @@ class _FormScreenState extends State<FormScreen> {
     super.dispose();
   }
 
-  Future<void> _save(FormInfo info, {bool overwrite = false}) async {
+  Future<void> _save(String date, {bool overwrite = false}) async {
     setState(() {
       _saving = true;
       _error = null;
@@ -54,10 +93,10 @@ class _FormScreenState extends State<FormScreen> {
         if (e.value.text.trim().isNotEmpty) e.key: e.value.text.trim(),
     };
     try {
-      await widget.api.createEntry(info.date, answers, overwrite: overwrite);
+      await widget.api.createEntry(date, answers, overwrite: overwrite);
       if (!mounted) return;
       setState(() {
-        _savedDate = info.date;
+        _savedDate = date;
         _saving = false;
       });
     } on EntryExistsException {
@@ -67,7 +106,7 @@ class _FormScreenState extends State<FormScreen> {
         context: context,
         builder: (context) => AlertDialog(
           title: const Text('Entry exists'),
-          content: Text('A note for ${info.date} already exists. Overwrite it?'),
+          content: Text('A note for $date already exists. Overwrite it?'),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context, false),
@@ -80,7 +119,7 @@ class _FormScreenState extends State<FormScreen> {
           ],
         ),
       );
-      if (overwriteIt == true) await _save(info, overwrite: true);
+      if (overwriteIt == true) await _save(date, overwrite: true);
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -100,7 +139,9 @@ class _FormScreenState extends State<FormScreen> {
           return const Center(child: CircularProgressIndicator());
         }
         final info = snap.data!;
-        if (_savedDate == info.date) {
+        final selected = _date ?? info.date;
+        final dayMedia = _allMedia.where((f) => f.date == selected).toList();
+        if (_savedDate == selected) {
           return Center(
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -108,11 +149,12 @@ class _FormScreenState extends State<FormScreen> {
                 const Icon(Icons.check_circle_outline,
                     size: 56, color: Colors.green),
                 const SizedBox(height: 12),
-                Text('Note saved for ${info.date}'),
+                Text('Note saved for $_savedDate'),
                 const SizedBox(height: 16),
                 OutlinedButton(
                   onPressed: () => setState(() {
                     _savedDate = null;
+                    _date = null;
                     for (final c in _answers.values) {
                       c.clear();
                     }
@@ -129,17 +171,29 @@ class _FormScreenState extends State<FormScreen> {
         return ListView(
           padding: const EdgeInsets.all(16),
           children: [
-            Text(
-              info.date,
-              style: TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.w700,
-                  color: Theme.of(context)
-                      .colorScheme
-                      .onSurface
-                      .withValues(alpha: 0.7)),
+            Row(
+              children: [
+                Text(
+                  selected,
+                  style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w700,
+                      color: Theme.of(context)
+                          .colorScheme
+                          .onSurface
+                          .withValues(alpha: 0.7)),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.calendar_month_outlined),
+                  tooltip: 'Choose day',
+                  onPressed: () => _pickDate(selected),
+                ),
+              ],
             ),
-            const SizedBox(height: 16),
+            if (dayMedia.isNotEmpty) ...[
+              MediaStrip(api: widget.api, files: dayMedia),
+              const SizedBox(height: 16),
+            ],
             for (final q in info.questions) ...[
               Text(q.question,
                   style: const TextStyle(fontWeight: FontWeight.w600)),
@@ -162,7 +216,7 @@ class _FormScreenState extends State<FormScreen> {
             _saving
                 ? const Center(child: CircularProgressIndicator())
                 : FilledButton.icon(
-                    onPressed: () => _save(info),
+                    onPressed: () => _save(selected),
                     icon: const Icon(Icons.save_outlined),
                     label: const Text('Save note'),
                   ),

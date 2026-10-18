@@ -389,6 +389,10 @@ class _EntryScreenState extends State<EntryScreen> {
                     label: const Text('Save changes'),
                   ),
           ] else ...[
+            if (widget.media.isNotEmpty) ...[
+              MediaStrip(api: widget.api, files: widget.media),
+              const SizedBox(height: 16),
+            ],
             if (fm.isNotEmpty)
               Wrap(
                 spacing: 8,
@@ -403,52 +407,6 @@ class _EntryScreenState extends State<EntryScreen> {
               selectable: true,
               styleSheet: MarkdownStyleSheet.fromTheme(Theme.of(context)),
             ),
-            if (widget.media.isNotEmpty) ...[
-              const SizedBox(height: 16),
-              Text('Media',
-                  style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
-              const SizedBox(height: 8),
-              SizedBox(
-                height: 84,
-                child: ListView.builder(
-                  scrollDirection: Axis.horizontal,
-                  itemCount: widget.media.length,
-                  itemBuilder: (context, i) {
-                    final f = widget.media[i];
-                    return GestureDetector(
-                      onTap: () => Navigator.of(context).push(MaterialPageRoute(
-                        builder: (_) => MediaViewerScreen(
-                            api: widget.api,
-                            files: widget.media,
-                            initialIndex: i),
-                      )),
-                      child: Padding(
-                        padding: const EdgeInsets.only(right: 8),
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(8),
-                          child: Image.network(
-                            f.hasThumb
-                                ? widget.api.thumbUrl(f.path)
-                                : widget.api.mediaUrl(f.path),
-                            fit: BoxFit.cover,
-                            width: 84,
-                            height: 84,
-                            errorBuilder: (_, _, _) => Container(
-                              width: 84,
-                              height: 84,
-                              color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                              child: Icon(Icons.movie_outlined,
-                                  size: 22,
-                                  color: Theme.of(context).colorScheme.outline),
-                            ),
-                          ),
-                        ),
-                      ),
-                    );
-                  },
-                ),
-              ),
-            ],
           ],
         ],
       ),
