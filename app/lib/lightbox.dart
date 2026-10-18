@@ -103,10 +103,6 @@ class _MediaViewerScreenState extends State<MediaViewerScreen> {
           style: const TextStyle(fontSize: 15),
         ),
       ),
-      body: PageView.builder(
-        controller: _controller,
-        itemCount: files.length,
-        onPageChanged: (i) => setState(() => _index = i),
       body: Stack(
         children: [
           PageView.builder(
