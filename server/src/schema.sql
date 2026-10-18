@@ -92,3 +92,8 @@ CREATE TABLE IF NOT EXISTS media_cache (
   scanned_at TEXT NOT NULL DEFAULT (datetime('now')),
   PRIMARY KEY (path, profile_id)
 );
+CREATE TABLE IF NOT EXISTS api_sessions (
+  token TEXT PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);

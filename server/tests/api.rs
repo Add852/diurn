@@ -19,7 +19,8 @@ fn router_with_db(root: &PathBuf, token: Option<String>) -> axum::Router {
     diurn_server::build_router(vec![root.clone()], token, db)
 }
 
-/// Insert an active profile whose folders point at `root`.
+/// Insert an active profile whose folders point at `root`, plus a session
+/// token for the seeded user.
 fn seed_profile(root: &PathBuf) {
     let dbfile = std::env::temp_dir()
         .join(format!("diurn-db-{}", root.file_name().unwrap().to_string_lossy()));
@@ -27,6 +28,11 @@ fn seed_profile(root: &PathBuf) {
     conn.execute_batch(diurn_server::db::SCHEMA).unwrap();
     conn.execute(
         "INSERT INTO users (id, username, password_hash, salt) VALUES (1, 'test', 'x', 'y')",
+        [],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT OR REPLACE INTO api_sessions (token, user_id) VALUES ('test-session', 1)",
         [],
     )
     .unwrap();
@@ -40,6 +46,23 @@ fn seed_profile(root: &PathBuf) {
 
 fn app_with_token(root: &PathBuf, token: &str) -> axum::Router {
     router_with_db(root, Some(token.to_string()))
+}
+
+/// Router for tests that seed a user/profile: injects the seeded session
+/// token into every request so auth doesn't need per-call headers.
+fn app_with_profile(root: &PathBuf) -> axum::Router {
+    let router = app(root); // creates schema
+    seed_profile(root);
+    router.layer(axum::middleware::from_fn(
+        |req: axum::extract::Request, next: axum::middleware::Next| async move {
+            let (mut parts, body) = req.into_parts();
+            parts.headers.insert(
+                axum::http::header::AUTHORIZATION,
+                axum::http::HeaderValue::from_static("Bearer test-session"),
+            );
+            next.run(axum::extract::Request::from_parts(parts, body)).await
+        },
+    ))
 }
 
 fn tmp_root(tag: &str) -> PathBuf {
@@ -291,8 +314,7 @@ async fn auth_gate_and_media_token_query_fallback() {
 #[tokio::test]
 async fn entries_merge_db_and_fs_only_notes() {
     let root = tmp_root("entries");
-    let router = app(&root); // creates schema
-    seed_profile(&root);
+    let router = app_with_profile(&root);
     let notes = root.join("notes");
     std::fs::create_dir_all(&notes).unwrap();
 
@@ -341,8 +363,7 @@ async fn entries_merge_db_and_fs_only_notes() {
 #[tokio::test]
 async fn media_scan_lists_and_thumbs() {
     let root = tmp_root("mediascan");
-    let router = app(&root); // creates schema
-    seed_profile(&root);
+    let router = app_with_profile(&root);
     let img = image::RgbaImage::from_pixel(800, 400, image::Rgba([10u8, 20, 30, 255]));
     image::DynamicImage::ImageRgb8(
         image::DynamicImage::ImageRgba8(img).to_rgb8(),
@@ -396,8 +417,7 @@ async fn media_scan_lists_and_thumbs() {
 #[tokio::test]
 async fn form_create_update_delete_roundtrip() {
     let root = tmp_root("form");
-    let router = app(&root);
-    seed_profile(&root);
+    let router = app_with_profile(&root);
     let notes = root.join("notes");
     std::fs::create_dir_all(&notes).unwrap();
 
@@ -512,8 +532,7 @@ async fn form_create_update_delete_roundtrip() {
 #[tokio::test]
 async fn settings_get_put_roundtrip() {
     let root = tmp_root("settings");
-    let router = app(&root);
-    seed_profile(&root);
+    let router = app_with_profile(&root);
 
     // GET: profile subset + empty questions
     let res = router
@@ -591,4 +610,131 @@ async fn settings_get_put_roundtrip() {
         .await
         .unwrap();
     assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn auth_setup_login_and_session_flow() {
+    let root = tmp_root("authflow");
+    let router = app(&root);
+
+    // status before setup
+    let res = router
+        .clone()
+        .oneshot(Request::get("/api/auth/status").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    let body = res.into_body().collect().await.unwrap().to_bytes();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["needs_setup"], serde_json::json!(true));
+
+    // protected route open pre-setup (no users, no env token)
+    let res = router
+        .clone()
+        .oneshot(Request::get("/api/config").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    // setup: short password rejected
+    let res = router
+        .clone()
+        .oneshot(
+            Request::post("/api/auth/setup")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"password":"abc"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+
+    // setup ok
+    let res = router
+        .clone()
+        .oneshot(
+            Request::post("/api/auth/setup")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"password":"hunter2","timezone":"Europe/Helsinki"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    // second setup -> 403-ish 400
+    let res = router
+        .clone()
+        .oneshot(
+            Request::post("/api/auth/setup")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"password":"again1"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+
+    // after setup, protected route requires auth
+    let res = router
+        .clone()
+        .oneshot(Request::get("/api/config").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+
+    // bad login
+    let res = router
+        .clone()
+        .oneshot(
+            Request::post("/api/auth/login")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"username":"admin","password":"wrong"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+
+    // good login -> token -> authorized request
+    let res = router
+        .clone()
+        .oneshot(
+            Request::post("/api/auth/login")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"username":"admin","password":"hunter2"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = res.into_body().collect().await.unwrap().to_bytes();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let token = v["token"].as_str().unwrap().to_string();
+    assert_eq!(token.len(), 64);
+
+    let res = router
+        .oneshot(
+            Request::get("/api/config")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+}
+
+#[test]
+fn scrypt_hashes_are_cross_compatible_with_node() {
+    // Golden vector from node crypto (the old app's hash format):
+    //   node -e "const c=require('crypto');const salt='0123456789abcdef0123456789abcdef';
+    //            console.log(c.scryptSync('hunter2',salt,64).toString('hex'))"
+    let salt = "0123456789abcdef0123456789abcdef";
+    let hash = "4971254c23d915ca81fee56d02cb00bf641a7461bd516d17175bcb314c8abad13e74b1c8f6e11649cb30cee8f888fdd4c8baee55535fd8b628d65e8c655edffe";
+    assert!(diurn_server::auth::verify_password("hunter2", hash, salt));
+    assert!(!diurn_server::auth::verify_password("wrong", hash, salt));
+    // our own hash_password round-trips
+    let (h, s) = diurn_server::auth::hash_password("another pass");
+    assert!(diurn_server::auth::verify_password("another pass", &h, &s));
+    assert!(!diurn_server::auth::verify_password("nope", &h, &s));
 }

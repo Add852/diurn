@@ -20,7 +20,7 @@ use axum::{
     extract::{Query, State},
     http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
-    routing::get,
+    routing::{get, post},
     Json, Router,
 };
 use serde::Deserialize;
@@ -28,6 +28,7 @@ use serde_json::json;
 use tokio_util::io::ReaderStream;
 use tower_http::cors::CorsLayer;
 
+pub mod auth;
 pub mod db;
 pub mod journal;
 pub mod media;
@@ -52,10 +53,13 @@ pub fn build_router(roots: Vec<PathBuf>, token: Option<String>, db: Arc<Db>) -> 
         token: token.map(Arc::new),
         db,
     };
-    // ponytail: permissive CORS is fine pre-auth for LAN dev, but it lets any
-    // webpage you visit read the API (files on this box) — restrict to known
-    // origins at the same time as the auth middleware lands.
-    Router::new()
+    // /api/auth/* is public (login IS the auth); everything else is gated.
+    let public = Router::new()
+        .route("/api/auth/status", get(auth_status))
+        .route("/api/auth/setup", post(auth_setup))
+        .route("/api/auth/login", post(auth_login))
+        .with_state(state.clone());
+    let protected = Router::new()
         .route("/api/config", get(config))
         .route("/api/fs", get(fs))
         .route("/api/form", get(form))
@@ -65,38 +69,82 @@ pub fn build_router(roots: Vec<PathBuf>, token: Option<String>, db: Arc<Db>) -> 
         .route("/api/media/file", get(media))
         .route("/api/thumbnail", get(thumbnail))
         .layer(axum::middleware::from_fn_with_state(state.clone(), auth))
-        .layer(CorsLayer::permissive())
-        .with_state(state)
+        .with_state(state);
+    // ponytail: permissive CORS is fine pre-auth for LAN dev, but it lets any
+    // webpage you visit read the API (files on this box) — restrict to known
+    // origins when this faces the internet.
+    public.merge(protected).layer(CorsLayer::permissive())
 }
 
-/// Bearer-token gate for every /api route. Disabled when DIURN_TOKEN unset.
-/// ponytail: `==` comparison, fine for a LAN shared secret; swap in
-/// constant-time compare (e.g. `subtle`) if tokens become user-scoped.
+/// Bearer/session gate for every protected /api route.
+/// Priority: env DIURN_TOKEN match, then session table; open before setup
+/// when neither exists. <img>/<video> tags cannot send headers: allow ?token=.
 async fn auth(
     State(state): State<AppState>,
     req: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> Response {
-    let Some(expected) = &state.token else {
-        return next.run(req).await;
-    };
-    let header_ok = req
+    let header = req
         .headers()
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
-        .is_some_and(|v| v.strip_prefix("Bearer ") == Some(expected.as_str()));
-    // <img>/<video> tags cannot send headers: allow ?token= as a fallback.
-    let query_ok = req
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .map(|s| s.to_string());
+    let query = req
         .uri()
         .query()
-        .and_then(|q| {
-            q.split('&').find_map(|kv| kv.strip_prefix("token="))
-        })
-        .is_some_and(|t| t == expected.as_str());
-    if header_ok || query_ok {
+        .and_then(|q| q.split('&').find_map(|kv| kv.strip_prefix("token=")));
+    let presented = header.or_else(|| query.map(|s| s.to_string()));
+    if auth::is_authorized(
+        &state.db,
+        state.token.as_ref().map(|s| s.as_str()),
+        presented.as_deref(),
+    ) {
         next.run(req).await
     } else {
         StatusCode::UNAUTHORIZED.into_response()
+    }
+}
+
+/// GET /api/auth/status — public; tells the client which connect screen to show.
+async fn auth_status(state: State<AppState>) -> Response {
+    let conn = state.db.0.lock().unwrap();
+    Json(auth::status(&conn, state.token.is_some())).into_response()
+}
+
+/// POST /api/auth/setup — first-run admin creation.
+#[derive(Deserialize)]
+struct SetupBody {
+    password: String,
+    #[serde(default)]
+    timezone: String,
+}
+
+async fn auth_setup(state: State<AppState>, Json(body): Json<SetupBody>) -> Response {
+    let mut conn = state.db.0.lock().unwrap();
+    match auth::setup(&mut conn, &body.password, &body.timezone) {
+        Ok(()) => Json(json!({ "ok": true })).into_response(),
+        Err(e) => (StatusCode::BAD_REQUEST, e).into_response(),
+    }
+}
+
+/// POST /api/auth/login — {username, password} -> {token}.
+#[derive(Deserialize)]
+struct LoginBody {
+    #[serde(default = "default_username")]
+    username: String,
+    password: String,
+}
+
+fn default_username() -> String {
+    "admin".into()
+}
+
+async fn auth_login(state: State<AppState>, Json(body): Json<LoginBody>) -> Response {
+    let conn = state.db.0.lock().unwrap();
+    match auth::login(&conn, &body.username, &body.password) {
+        Ok(token) => Json(json!({ "token": token })).into_response(),
+        Err(e) => (StatusCode::UNAUTHORIZED, e).into_response(),
     }
 }
 
@@ -373,7 +421,12 @@ async fn media_list(state: State<AppState>, Query(q): Query<MediaListQuery>) -> 
     };
     let conn = state.db.0.lock().unwrap();
     let files = media::list_files(&conn, profile.id, q.date.as_deref(), year_month.as_deref());
-    Json(json!({ "files": files })).into_response()
+    Json(json!({
+        "files": files,
+        "enabled": profile.media_enabled,
+        "folder": profile.media_folder,
+    }))
+    .into_response()
 }
 
 async fn media(state: State<AppState>, Query(q): Query<MediaQuery>, headers: HeaderMap) -> Response {

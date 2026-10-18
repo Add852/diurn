@@ -208,10 +208,15 @@ class Api {
   }
 
   /// GET /api/media — media cache rows (triggers an incremental scan).
-  Future<List<MediaFile>> mediaFiles() async {
+  /// Returns (files, enabled, folder) so the UI can explain an empty grid.
+  Future<(List<MediaFile>, bool, String)> mediaFiles() async {
     final v = await _getJson('/api/media', {});
     final list = (v['files'] as List).cast<Map<String, dynamic>>();
-    return list.map(MediaFile.fromJson).toList();
+    return (
+      list.map(MediaFile.fromJson).toList(),
+      v['enabled'] as bool? ?? false,
+      v['folder'] as String? ?? '',
+    );
   }
 
   /// GET /api/form
@@ -262,6 +267,36 @@ class Api {
       'profile': profile,
       'questions': questions,
     });
+  }
+
+  /// GET /api/auth/status — public.
+  Future<Map<String, dynamic>> authStatus() async {
+    final v = await _getJson('/api/auth/status', {});
+    return v as Map<String, dynamic>;
+  }
+
+  /// POST /api/auth/setup — first-run admin creation; returns session token.
+  Future<String> setup(String password, String timezone) async {
+    final v = await _send('POST', '/api/auth/setup', {}, {
+      'password': password,
+      'timezone': timezone,
+    });
+    return _loginToken(v);
+  }
+
+  /// POST /api/auth/login — credentials -> session token.
+  Future<String> login(String username, String password) async {
+    final v = await _send('POST', '/api/auth/login', {}, {
+      'username': username,
+      'password': password,
+    });
+    return _loginToken(v);
+  }
+
+  String _loginToken(dynamic v) {
+    final t = v is Map ? v['token'] as String? : null;
+    if (t == null || t.isEmpty) throw ApiException('No token in response');
+    return t;
   }
 }
 

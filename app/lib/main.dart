@@ -6,7 +6,6 @@ import 'form.dart';
 import 'journal.dart';
 import 'lightbox.dart';
 import 'settings.dart';
-import 'viewer.dart';
 
 const _kPrefUrl = 'server_url';
 const _kPrefToken = 'server_token';
@@ -45,9 +44,9 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   Api? _api;
-  List<String> _roots = [];
   String _savedUrl = kDefaultUrl;
   String? _savedToken;
+  String? _authMode; // 'setup' | 'password' | 'token' | null
   bool _booting = true;
 
   @override
@@ -68,14 +67,22 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _connect(String base, String? token) async {
     try {
-      final roots = await Api(base, token: token).config();
+      // config doubles as the auth check (401 -> credential fallback below)
+      await Api(base, token: token).config();
       if (!mounted) return;
       setState(() {
         _api = Api(base, token: token);
-        _roots = roots;
+        _authMode = null;
       });
-    } catch (_) {
-      // unreachable: connect form stays visible with its own error display
+    } catch (e) {
+      // 401 -> ask the server which credentials it wants
+      if ('$e'.contains('Unauthorized') || '$e'.contains('401')) {
+        try {
+          final st = await Api(base).authStatus();
+          if (!mounted) return;
+          setState(() => _authMode = st['mode'] as String? ?? 'password');
+        } catch (_) {}
+      }
     }
   }
 
@@ -92,7 +99,6 @@ class _HomeScreenState extends State<HomeScreen> {
       _savedUrl = base;
       _savedToken = token;
       _api = Api(base, token: token);
-      _roots = roots;
     });
   }
 
@@ -116,6 +122,7 @@ class _HomeScreenState extends State<HomeScreen> {
         body: ConnectForm(
           initial: _savedUrl,
           initialToken: _savedToken,
+          mode: _authMode,
           onConnected: _onConnected,
         ),
       );
@@ -141,7 +148,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ],
           bottom: const TabBar(
-            tabs: [Tab(text: 'Today'), Tab(text: 'Journal'), Tab(text: 'Media'), Tab(text: 'Browse')],
+            tabs: [Tab(text: 'Today'), Tab(text: 'Journal'), Tab(text: 'Media')],
           ),
         ),
         body: TabBarView(
@@ -149,7 +156,6 @@ class _HomeScreenState extends State<HomeScreen> {
             FormScreen(api: api),
             JournalScreen(api: api),
             MediaScreen(api: api),
-            BrowserScreen(api: api, initialDir: _roots.first),
           ],
         ),
       ),
@@ -162,11 +168,16 @@ class _HomeScreenState extends State<HomeScreen> {
 class ConnectForm extends StatefulWidget {
   final String initial;
   final String? initialToken;
+
+  /// Which credentials the server wants: 'setup' (first run), 'password'
+  /// (username/password login), 'token' (env token), null (legacy/open).
+  final String? mode;
   final void Function(String base, String? token, List<String> roots) onConnected;
   const ConnectForm({
     super.key,
     required this.initial,
     required this.initialToken,
+    required this.mode,
     required this.onConnected,
   });
 
@@ -179,8 +190,25 @@ class _ConnectFormState extends State<ConnectForm> {
       TextEditingController(text: widget.initial);
   late final TextEditingController _tokenCtrl =
       TextEditingController(text: widget.initialToken ?? '');
-  bool _checking = false;
+  final _userCtrl = TextEditingController(text: 'admin');
+  final _passCtrl = TextEditingController();
+  final _tzCtrl = TextEditingController();
+  bool _saving = false;
   String? _error;
+
+  bool get _wantsPassword =>
+      widget.mode == 'password' || widget.mode == 'setup';
+  bool get _wantsSetup => widget.mode == 'setup';
+  bool get _wantsToken =>
+      !_wantsPassword && (widget.mode == 'token' || widget.mode == null);
+
+  @override
+  void dispose() {
+    _userCtrl.dispose();
+    _passCtrl.dispose();
+    _tzCtrl.dispose();
+    super.dispose();
+  }
 
   Future<void> _save() async {
     var base = _ctrl.text.trim();
@@ -195,17 +223,24 @@ class _ConnectFormState extends State<ConnectForm> {
       base = base.substring(0, base.length - 1);
     }
     setState(() {
-      _checking = true;
+      _saving = true;
       _error = null;
     });
-    final token = _tokenCtrl.text.trim();
     try {
-      final roots = await Api(base, token: token.isEmpty ? null : token).config();
+      String? token = _tokenCtrl.text.trim().isEmpty ? null : _tokenCtrl.text.trim();
+      if (_wantsPassword) {
+        final password = _passCtrl.text;
+        token = _wantsSetup
+            ? await Api(base).setup(password, _tzCtrl.text.trim())
+            : await Api(base).login(_userCtrl.text.trim(), password);
+      }
+      final roots = await Api(base, token: token).config();
       if (!mounted) return;
-      widget.onConnected(base, token.isEmpty ? null : token, roots);
+      widget.onConnected(base, token, roots);
     } catch (e) {
+      if (!mounted) return;
       setState(() {
-        _checking = false;
+        _saving = false;
         _error = '$e';
       });
     }
@@ -232,7 +267,7 @@ class _ConnectFormState extends State<ConnectForm> {
             controller: _ctrl,
             keyboardType: TextInputType.url,
             autocorrect: false,
-            enabled: !_checking,
+            enabled: !_saving,
             onSubmitted: (_) => _save(),
             decoration: const InputDecoration(
               border: OutlineInputBorder(),
@@ -240,26 +275,70 @@ class _ConnectFormState extends State<ConnectForm> {
               hintText: 'http://192.168.1.147:8080',
             ),
           ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _tokenCtrl,
-            autocorrect: false,
-            enabled: !_checking,
-            onSubmitted: (_) => _save(),
-            decoration: const InputDecoration(
-              border: OutlineInputBorder(),
-              labelText: 'Token (optional)',
-              hintText: 'DIURN_TOKEN set on the server, if any',
+          if (_wantsPassword) ...[
+            const SizedBox(height: 12),
+            if (!_wantsSetup)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: TextField(
+                  controller: _userCtrl,
+                  autocorrect: false,
+                  enabled: !_saving,
+                  decoration: const InputDecoration(
+                    border: OutlineInputBorder(),
+                    labelText: 'Username',
+                  ),
+                ),
+              ),
+            TextField(
+              controller: _passCtrl,
+              obscureText: true,
+              enabled: !_saving,
+              onSubmitted: (_) => _save(),
+              decoration: InputDecoration(
+                border: const OutlineInputBorder(),
+                labelText: _wantsSetup
+                    ? 'Create admin password (min 4 chars)'
+                    : 'Password',
+              ),
             ),
-          ),
+            if (_wantsSetup) ...[
+              const SizedBox(height: 12),
+              TextField(
+                controller: _tzCtrl,
+                autocorrect: false,
+                enabled: !_saving,
+                onSubmitted: (_) => _save(),
+                decoration: const InputDecoration(
+                  border: OutlineInputBorder(),
+                  labelText: 'Timezone (optional, e.g. Europe/Helsinki)',
+                ),
+              ),
+            ],
+          ] else if (_wantsToken) ...[
+            const SizedBox(height: 12),
+            TextField(
+              controller: _tokenCtrl,
+              autocorrect: false,
+              enabled: !_saving,
+              onSubmitted: (_) => _save(),
+              decoration: const InputDecoration(
+                border: OutlineInputBorder(),
+                labelText: 'Token (optional)',
+                hintText: 'DIURN_TOKEN set on the server, if any',
+              ),
+            ),
+          ],
           if (_error != null) ...[
             const SizedBox(height: 12),
             Text(_error!, style: const TextStyle(color: Colors.redAccent)),
           ],
           const SizedBox(height: 16),
-          _checking
+          _saving
               ? const Center(child: CircularProgressIndicator())
-              : FilledButton(onPressed: _save, child: const Text('Connect')),
+              : FilledButton(
+                  onPressed: _save,
+                  child: Text(_wantsSetup ? 'Create admin & connect' : 'Connect')),
         ],
       ),
     );
@@ -277,7 +356,7 @@ class MediaScreen extends StatefulWidget {
 }
 
 class _MediaScreenState extends State<MediaScreen> {
-  late final Future<List<MediaFile>> _files;
+  late final Future<(List<MediaFile>, bool, String)> _files;
 
   @override
   void initState() {
@@ -287,16 +366,35 @@ class _MediaScreenState extends State<MediaScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder<List<MediaFile>>(
+    return FutureBuilder<(List<MediaFile>, bool, String)>(
       future: _files,
       builder: (context, snap) {
         if (snap.hasError) return Center(child: Text('${snap.error}'));
         if (!snap.hasData) {
           return const Center(child: CircularProgressIndicator());
         }
-        final files = snap.data!;
+        final (files, enabled, folder) = snap.data!;
         if (files.isEmpty) {
-          return const Center(child: Text('No media in the library yet'));
+          if (!enabled || folder.isEmpty) {
+            return Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('Media library is not configured'),
+                  const SizedBox(height: 12),
+                  FilledButton.icon(
+                    onPressed: () => Navigator.of(context).push(
+                      MaterialPageRoute(
+                          builder: (_) => SettingsScreen(api: widget.api)),
+                    ),
+                    icon: const Icon(Icons.settings_outlined),
+                    label: const Text('Open settings'),
+                  ),
+                ],
+              ),
+            );
+          }
+          return Center(child: Text('No media found in $folder'));
         }
         // group by day, keep API order (newest day first)
         final groups = <String, List<int>>{};
@@ -391,91 +489,3 @@ class _MediaScreenState extends State<MediaScreen> {
   }
 }
 
-/// Simple directory browser mirroring the old settings dir-picker flow.
-class BrowserScreen extends StatefulWidget {
-  final Api api;
-  final String initialDir;
-  const BrowserScreen({
-    super.key,
-    required this.api,
-    required this.initialDir,
-  });
-
-  @override
-  State<BrowserScreen> createState() => _BrowserScreenState();
-}
-
-class _BrowserScreenState extends State<BrowserScreen> {
-  late String _dir;
-  late Future<List<FsEntry>> _future;
-
-  @override
-  void initState() {
-    super.initState();
-    _dir = widget.initialDir;
-    _future = widget.api.listDir(_dir);
-  }
-
-  void _open(String dir) {
-    setState(() {
-      _dir = dir;
-      _future = widget.api.listDir(dir);
-    });
-  }
-
-  void _up() {
-    final i = _dir.lastIndexOf('/');
-    if (i > 0) _open(_dir.substring(0, i));
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final canUp = _dir.length > widget.initialDir.length;
-    return Scaffold(
-      appBar: AppBar(
-        leading: canUp ? BackButton(onPressed: _up) : null,
-        title: Text(_dir.split('/').where((s) => s.isNotEmpty).last),
-      ),
-      body: FutureBuilder<List<FsEntry>>(
-        future: _future,
-        builder: (context, snap) {
-          if (snap.hasError) return Center(child: Text('${snap.error}'));
-          if (!snap.hasData) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          final entries = snap.data!;
-          return ListView.builder(
-            itemCount: entries.length,
-            itemBuilder: (context, i) {
-              final e = entries[i];
-              final media = isMedia(e.path);
-              return ListTile(
-                leading: Icon(
-                  e.isDir
-                      ? Icons.folder_outlined
-                      : media
-                          ? (isVideo(e.path)
-                              ? Icons.movie_outlined
-                              : Icons.image_outlined)
-                          : Icons.insert_drive_file_outlined,
-                ),
-                title: Text(e.name),
-                onTap: e.isDir
-                    ? () => _open(e.path)
-                    : media
-                        ? () => Navigator.of(context).push(MaterialPageRoute(
-                              builder: (_) => ViewerScreen(
-                                url: widget.api.mediaUrl(e.path),
-                                name: e.name,
-                                video: isVideo(e.path),
-                              ),
-                            ))
-                        : null,
-              );
-            },
-          );
-        },
-      ),
-    );
-  }
-}

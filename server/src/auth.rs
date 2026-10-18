@@ -1,0 +1,143 @@
+//! Auth: single admin user (shared users table with the old app), scrypt
+//! password verification, session tokens for the native clients.
+//! Port of src/lib/auth.ts hashPassword/verifyPassword + setup/login flows.
+
+use rusqlite::Connection;
+
+use crate::db::Db;
+
+pub fn has_users(conn: &Connection) -> bool {
+    conn.query_row("SELECT EXISTS(SELECT 1 FROM users)", [], |r| r.get::<_, i64>(0))
+        .map(|n| n != 0)
+        .unwrap_or(false)
+}
+
+fn random_hex(bytes: usize) -> String {
+    let mut buf = vec![0u8; bytes];
+    getrandom::getrandom(&mut buf).expect("getrandom");
+    buf.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Node scryptSync defaults: N=16384 (log_n 14), r=8, p=1, 64-byte key.
+/// Salt is the hex STRING, used as raw bytes — must match the old hashes.
+fn scrypt_key(password: &str, salt_hex: &str) -> [u8; 64] {
+    let params = scrypt::Params::new(14, 8, 1, 64).expect("scrypt params");
+    let mut out = [0u8; 64];
+    scrypt::scrypt(password.as_bytes(), salt_hex.as_bytes(), &params, &mut out)
+        .expect("scrypt");
+    out
+}
+
+pub fn hash_password(password: &str) -> (String, String) {
+    let salt = random_hex(16);
+    let key = scrypt_key(password, &salt);
+    let hash: String = key.iter().map(|b| format!("{b:02x}")).collect();
+    (hash, salt)
+}
+
+/// ponytail: plain == compare; timing side-channels need `subtle` when this
+/// faces the internet instead of a LAN.
+pub fn verify_password(password: &str, hash_hex: &str, salt_hex: &str) -> bool {
+    let key = scrypt_key(password, salt_hex);
+    let hex: String = key.iter().map(|b| format!("{b:02x}")).collect();
+    hex == hash_hex
+}
+
+/// POST /api/auth/setup — first-run: create admin + Default profile.
+/// Mirrors the old setup route's rows so either app can read the DB.
+pub fn setup(conn: &mut Connection, password: &str, timezone: &str) -> Result<(), String> {
+    if password.len() < 4 {
+        return Err("Password must be at least 4 characters".into());
+    }
+    let tz = if !timezone.is_empty()
+        && timezone
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '/' || c == '+' || c == '-')
+    {
+        timezone
+    } else {
+        "UTC"
+    };
+    if has_users(conn) {
+        return Err("Already set up".into());
+    }
+    let (hash, salt) = hash_password(password);
+    const PERSONALITY: &str = "You are a thoughtful daily journaling companion. You help the user reflect on their day with warmth and directness. Ask questions to capture the day's texture — concise, natural, no therapy-fluff. No bullet points in conversation — save those for notes.";
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    tx.execute(
+        "INSERT INTO users (username, password_hash, salt) VALUES ('admin', ?1, ?2)",
+        rusqlite::params![hash, salt],
+    )
+    .map_err(|e| e.to_string())?;
+    let user_id = tx.last_insert_rowid();
+    tx.execute(
+        "INSERT INTO profiles (user_id, name, is_default, is_active, llm_endpoint, llm_model, personality_prompt, ui_mode, ask_mode, timezone)
+         VALUES (?1, 'Default', 1, 1, '', '', ?2, 'chat', 'all', ?3)",
+        rusqlite::params![user_id, PERSONALITY, tz],
+    )
+    .map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())
+}
+
+/// POST /api/auth/login — verify credentials, mint a session token.
+pub fn login(conn: &Connection, username: &str, password: &str) -> Result<String, String> {
+    let row: Option<(i64, String, String)> = conn
+        .query_row(
+            "SELECT id, password_hash, salt FROM users WHERE username = ?1",
+            rusqlite::params![username],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .ok();
+    let Some((user_id, hash, salt)) = row else {
+        return Err("Invalid username or password".into());
+    };
+    if !verify_password(password, &hash, &salt) {
+        return Err("Invalid username or password".into());
+    }
+    let token = random_hex(32);
+    conn.execute(
+        "INSERT INTO api_sessions (token, user_id) VALUES (?1, ?2)",
+        rusqlite::params![token, user_id],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(token)
+}
+
+/// Is this token an active session?
+pub fn session_valid(conn: &Connection, token: &str) -> bool {
+    conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM api_sessions WHERE token = ?1)",
+        rusqlite::params![token],
+        |r| r.get::<_, i64>(0),
+    )
+    .map(|n| n != 0)
+    .unwrap_or(false)
+}
+
+/// Auth mode for the client's connect screen: 'setup' (first run),
+/// 'password' (username/password), or 'token' (env token only / open).
+pub fn status(conn: &Connection, env_token_set: bool) -> serde_json::Value {
+    if !has_users(conn) {
+        serde_json::json!({ "needs_setup": true, "mode": "setup" })
+    } else {
+        serde_json::json!({
+            "needs_setup": false,
+            "mode": if env_token_set { "password_or_token" } else { "password" }
+        })
+    }
+}
+
+/// Guard used by the middleware: env token match OR valid session.
+/// Open before setup (no users, no env token) so a fresh install can bootstrap.
+pub fn is_authorized(db: &Db, env_token: Option<&str>, presented: Option<&str>) -> bool {
+    if let (Some(env), Some(p)) = (env_token, presented) {
+        if p == env {
+            return true;
+        }
+    }
+    let conn = db.0.lock().unwrap();
+    if !has_users(&conn) && env_token.is_none() {
+        return true;
+    }
+    presented.is_some_and(|t| session_valid(&conn, t))
+}
