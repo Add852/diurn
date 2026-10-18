@@ -279,6 +279,12 @@ class Api {
     });
   }
 
+  /// GET /api/template-content?path= — file content for the settings editor.
+  Future<String> templateContent(String path) async {
+    final v = await _getJson('/api/template-content', {'path': path});
+    return v['content'] as String? ?? '';
+  }
+
   /// GET /api/auth/status — public.
   Future<Map<String, dynamic>> authStatus() async {
     final v = await _getJson('/api/auth/status', {});

@@ -7,6 +7,79 @@ use rusqlite::Connection;
 
 pub const SCHEMA: &str = include_str!("schema.sql");
 
+/// The old app migrates existing tables with column-level ALTERs on startup
+/// (db.ts migrateProfileColumns/migrateMediaCacheColumns) — CREATE IF NOT
+/// EXISTS can't add columns to tables from older schema versions, so mirror
+/// that here for every column the Rust code touches.
+fn migrate_columns(conn: &Connection) {
+    let _ = ensure_columns(
+        conn,
+        "media_cache",
+        &[
+            ("date", "TEXT"),
+            ("captured_at", "INTEGER"),
+            ("type", "TEXT NOT NULL DEFAULT 'image'"),
+            ("mtime", "INTEGER NOT NULL DEFAULT 0"),
+            ("thumb", "TEXT"),
+            ("scanned_at", "TEXT"),
+        ],
+    );
+    let _ = ensure_columns(
+        conn,
+        "profiles",
+        &[
+            ("name", "TEXT NOT NULL DEFAULT ''"),
+            ("daily_note_folder", "TEXT NOT NULL DEFAULT ''"),
+            ("template_note_path", "TEXT NOT NULL DEFAULT ''"),
+            ("media_enabled", "INTEGER NOT NULL DEFAULT 0"),
+            ("media_folder", "TEXT NOT NULL DEFAULT ''"),
+            ("timezone", "TEXT NOT NULL DEFAULT 'UTC'"),
+            ("day_offset_hours", "INTEGER NOT NULL DEFAULT 0"),
+        ],
+    );
+    let _ = ensure_columns(
+        conn,
+        "entries",
+        &[
+            ("date", "TEXT NOT NULL DEFAULT ''"),
+            ("rendered_markdown", "TEXT NOT NULL DEFAULT ''"),
+            ("file_path", "TEXT"),
+        ],
+    );
+    let _ = ensure_columns(
+        conn,
+        "profile_questions",
+        &[
+            ("identifier", "TEXT NOT NULL DEFAULT ''"),
+            ("question", "TEXT NOT NULL DEFAULT ''"),
+            ("answer_prompt", "TEXT NOT NULL DEFAULT ''"),
+            ("asked", "INTEGER NOT NULL DEFAULT 1"),
+            ("sort_order", "INTEGER NOT NULL DEFAULT 0"),
+        ],
+    );
+}
+
+fn ensure_columns(
+    conn: &Connection,
+    table: &str,
+    cols: &[(&str, &str)],
+) -> rusqlite::Result<()> {
+    let existing: Vec<String> = {
+        let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
+        let names = stmt
+            .query_map([], |r| r.get::<_, String>(1))?
+            .flatten()
+            .collect();
+        names
+    };
+    for (col, decl) in cols {
+        if !existing.iter().any(|c| c == col) {
+            conn.execute(&format!("ALTER TABLE {table} ADD COLUMN {col} {decl}"), [])?;
+        }
+    }
+    Ok(())
+}
+
 pub struct Db(pub Mutex<Connection>);
 
 impl Db {
@@ -16,6 +89,7 @@ impl Db {
         }
         let conn = Connection::open(path)?;
         conn.execute_batch(SCHEMA)?;
+        migrate_columns(&conn);
         Ok(Db(Mutex::new(conn)))
     }
 

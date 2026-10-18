@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 
@@ -20,19 +21,32 @@ import 'api.dart';
 /// journal-view masonry, as a plain list).
 class JournalScreen extends StatefulWidget {
   final Api api;
-  const JournalScreen({super.key, required this.api});
+  final ValueListenable<int>? refreshSignal;
+  const JournalScreen({super.key, required this.api, this.refreshSignal});
 
   @override
   State<JournalScreen> createState() => _JournalScreenState();
 }
 
 class _JournalScreenState extends State<JournalScreen> {
-  late final Future<List<Entry>> _future;
+  late Future<List<Entry>> _future;
 
   @override
   void initState() {
     super.initState();
     _future = widget.api.entries();
+    widget.refreshSignal?.addListener(_reload);
+  }
+
+  void _reload() {
+    if (!mounted) return;
+    setState(() => _future = widget.api.entries());
+  }
+
+  @override
+  void dispose() {
+    widget.refreshSignal?.removeListener(_reload);
+    super.dispose();
   }
 
   @override

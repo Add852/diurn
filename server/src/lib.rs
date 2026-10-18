@@ -65,6 +65,7 @@ pub fn build_router(roots: Vec<PathBuf>, token: Option<String>, db: Arc<Db>) -> 
         .route("/api/form", get(form))
         .route("/api/entries", get(entries).post(entries_create).put(entries_update).delete(entries_delete))
         .route("/api/settings", get(settings).put(settings_put))
+        .route("/api/template-content", get(template_content))
         .route("/api/media", get(media_list))
         .route("/api/media/file", get(media))
         .route("/api/thumbnail", get(thumbnail))
@@ -413,6 +414,26 @@ async fn settings_put(state: State<AppState>, Json(body): Json<SettingsBody>) ->
     ) {
         Ok(()) => Json(json!({ "ok": true })).into_response(),
         Err(e) => (StatusCode::BAD_REQUEST, e).into_response(),
+    }
+}
+
+/// GET /api/template-content?path= — live preview for the settings editor.
+/// ponytail: reads any .md the server process can access; single-admin trust
+/// model (same as /api/fs). Constrain to roots if that ever changes.
+#[derive(Deserialize)]
+struct TplQuery {
+    path: String,
+}
+
+async fn template_content(state: State<AppState>, Query(q): Query<TplQuery>) -> Response {
+    let p = Path::new(&q.path);
+    let ext = p.extension().map(|e| e.to_string_lossy().to_lowercase());
+    if ext.as_deref() != Some("md") {
+        return (StatusCode::BAD_REQUEST, "Not a .md file").into_response();
+    }
+    match std::fs::read_to_string(p) {
+        Ok(content) => Json(json!({ "content": content })).into_response(),
+        Err(_) => (StatusCode::NOT_FOUND, "Cannot read file").into_response(),
     }
 }
 

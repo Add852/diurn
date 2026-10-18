@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -48,6 +49,16 @@ class _HomeScreenState extends State<HomeScreen> {
   String? _savedToken;
   String? _authMode; // 'setup' | 'password' | 'token' | null
   bool _booting = true;
+
+  /// Bumped when profile settings may have changed (folders, etc.) so tabs
+  /// refetch — TabBarView keeps tab state alive across navigations.
+  final ValueNotifier<int> _refreshTick = ValueNotifier(0);
+
+  @override
+  void dispose() {
+    _refreshTick.dispose();
+    super.dispose();
+  }
 
   @override
   void initState() {
@@ -148,7 +159,10 @@ class _HomeScreenState extends State<HomeScreen> {
                   // refresh roots on return — but not after "change server",
                   // which intentionally disconnects (_api == null)
                   .then((_) {
-                if (mounted && _api != null) _connect(_savedUrl, _savedToken);
+                if (mounted && _api != null) {
+                  _connect(_savedUrl, _savedToken);
+                  _refreshTick.value++; // tabs refetch after settings changes
+                }
               }),
             ),
           ],
@@ -159,8 +173,8 @@ class _HomeScreenState extends State<HomeScreen> {
         body: TabBarView(
           children: [
             FormScreen(api: api),
-            JournalScreen(api: api),
-            MediaScreen(api: api),
+            JournalScreen(api: api, refreshSignal: _refreshTick),
+            MediaScreen(api: api, refreshSignal: _refreshTick),
           ],
         ),
       ),
@@ -354,7 +368,8 @@ class _ConnectFormState extends State<ConnectForm> {
 /// media-view: newest day on top, day headers, thumbs from the scan).
 class MediaScreen extends StatefulWidget {
   final Api api;
-  const MediaScreen({super.key, required this.api});
+  final ValueListenable<int>? refreshSignal;
+  const MediaScreen({super.key, required this.api, this.refreshSignal});
 
   @override
   State<MediaScreen> createState() => _MediaScreenState();
@@ -367,6 +382,13 @@ class _MediaScreenState extends State<MediaScreen> {
   void initState() {
     super.initState();
     _files = widget.api.mediaFiles();
+    widget.refreshSignal?.addListener(_reload);
+  }
+
+  @override
+  void dispose() {
+    widget.refreshSignal?.removeListener(_reload);
+    super.dispose();
   }
 
   Future<void> _reload() async {

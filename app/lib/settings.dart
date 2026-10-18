@@ -194,8 +194,19 @@ class _SettingsFormState extends State<_SettingsForm> {
         initial: current,
       ),
     );
-    if (picked != null) {
-      setState(() => _fields[key]?.text = picked);
+    if (picked == null) return;
+    setState(() => _fields[key]?.text = picked);
+    if (key == 'template_note_path') await _loadTemplate(picked);
+  }
+
+  Future<void> _loadTemplate(String path) async {
+    if (path.isEmpty) return;
+    try {
+      final content = await widget.api.templateContent(path);
+      if (!mounted) return;
+      setState(() => _templateCtrl.text = content);
+    } catch (_) {
+      // unreadable file: keep the editor as-is; save will surface the error
     }
   }
 
@@ -219,8 +230,20 @@ class _SettingsFormState extends State<_SettingsForm> {
           _pathField('Media folder', 'media_folder', pickFile: false),
         _pathField('Template note (.md)', 'template_note_path', pickFile: true),
         if ((_txt('template_note_path')).isNotEmpty) ...[
-          const Text('Template content',
-              style: TextStyle(fontSize: 13, color: Colors.white70)),
+          Row(
+            children: [
+              const Expanded(
+                child: Text('Template content',
+                    style: TextStyle(fontSize: 13, color: Colors.white70)),
+              ),
+              IconButton(
+                icon: const Icon(Icons.refresh, size: 20),
+                tooltip: 'Reload from file',
+                onPressed: () =>
+                    _loadTemplate(_txt('template_note_path')),
+              ),
+            ],
+          ),
           const SizedBox(height: 6),
           TextFormField(
             controller: _templateCtrl,
