@@ -230,7 +230,7 @@ class _SettingsFormState extends State<_SettingsForm> {
                 fontSize: 12, fontFamily: 'monospace'),
             decoration: const InputDecoration(
               border: OutlineInputBorder(),
-              hintText: 'Markdown template — {Q1.answer}, \\$date("dddd") …',
+              hintText: 'Markdown template — {Q1.answer}, \$date("dddd") …',
             ),
           ),
         ] else
