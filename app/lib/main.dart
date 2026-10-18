@@ -377,6 +377,7 @@ class MediaScreen extends StatefulWidget {
 
 class _MediaScreenState extends State<MediaScreen> {
   late Future<(List<MediaFile>, bool, String)> _files;
+  int _retries = 0;
 
   @override
   void initState() {
@@ -393,7 +394,16 @@ class _MediaScreenState extends State<MediaScreen> {
 
   Future<void> _reload() async {
     setState(() => _files = widget.api.mediaFiles());
-    await _files;
+    final (files, enabled, _) = await _files;
+    // Server scans in the background: an enabled-but-empty library usually
+    // means the scan is still running — retry a few times automatically.
+    if (enabled && files.isEmpty && _retries < 3 && mounted) {
+      _retries++;
+      await Future.delayed(const Duration(seconds: 2));
+      if (mounted) _reload();
+    } else if (files.isNotEmpty) {
+      _retries = 0;
+    }
   }
 
   @override
