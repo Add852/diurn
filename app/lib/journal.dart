@@ -51,7 +51,9 @@ class _JournalScreenState extends State<JournalScreen> {
 
   void _reload() {
     if (!mounted) return;
-    setState(() => _future = _load());
+    setState(() {
+      _future = _load();
+    });
   }
 
   @override
