@@ -1,0 +1,18 @@
+# docker compose up -d --build
+services:
+  diurn:
+    build: ./server
+    container_name: diurn
+    ports:
+      - "12321:12321"
+    environment:
+      # everything the server may touch must live under DIURN_ROOTS
+      - DIURN_ROOTS=/data
+    volumes:
+      - diurn-data:/data
+      # reusing existing libraries/DB from the host — mount them under /data:
+      # - ~/.diurn:/data/.diurn        # existing DB → set DIURN_DB=/data/.diurn/data.db
+      # - ~/SyncFedora/ObsidianVaults:/data/notes
+      # - ~/Pictures:/data/media
+volumes:
+  diurn-data:

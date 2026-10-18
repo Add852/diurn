@@ -54,6 +54,17 @@ flutter run --dart-define=DIURN_URL=http://192.168.1.20:12321
 The connect screen handles first-run setup (create the admin) and login; the
 address and credentials persist on the device.
 
+## Docker
+
+```sh
+docker compose up -d --build     # or: docker build -t diurn ./server
+```
+
+The container keeps the DB and thumbnail cache in the `diurn-data` volume at
+`/data` (`HOME=/data`). To serve existing host libraries instead, mount them
+under `/data` and widen the allowed roots — see the comments in
+`docker-compose.yml` (mount `~/.diurn` at `/data/.diurn` to reuse your DB).
+
 ## API
 
 | Endpoint | Meaning |
