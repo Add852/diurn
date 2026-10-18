@@ -6,13 +6,14 @@ services:
     ports:
       - "12321:12321"
     environment:
-      # everything the server may touch must live under DIURN_ROOTS
-      - DIURN_ROOTS=/data
+      # same default as bare-metal: the host user's home is the allowed root
+      - DIURN_ROOTS=${HOME}
     volumes:
-      - diurn-data:/data
-      # reusing existing libraries/DB from the host — mount them under /data:
-      # - ~/.diurn:/data/.diurn        # existing DB → set DIURN_DB=/data/.diurn/data.db
-      # - ~/SyncFedora/ObsidianVaults:/data/notes
-      # - ~/Pictures:/data/media
+      - diurn-data:/data           # DB + thumbnail cache live here
+      - ${HOME}:${HOME}            # home mounted at its real path, so folder
+                                   # settings match bare-metal paths exactly
+      # optional: reuse the host's existing diurn DB (HOME=/data puts the DB
+      # at /data/.diurn/data.db, so this mount slots right in):
+      # - ~/.diurn:/data/.diurn
 volumes:
   diurn-data:

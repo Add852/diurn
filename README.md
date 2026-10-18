@@ -61,9 +61,10 @@ docker compose up -d --build     # or: docker build -t diurn ./server
 ```
 
 The container keeps the DB and thumbnail cache in the `diurn-data` volume at
-`/data` (`HOME=/data`). To serve existing host libraries instead, mount them
-under `/data` and widen the allowed roots — see the comments in
-`docker-compose.yml` (mount `~/.diurn` at `/data/.diurn` to reuse your DB).
+`/data` (`HOME=/data`); your home directory is mounted at its real path and is
+the default allowed root (`DIURN_ROOTS=${HOME}`), so folder paths configured in
+the app match bare-metal ones. Mount `~/.diurn` at `/data/.diurn` to reuse an
+existing DB — see the comments in `docker-compose.yml`.
 
 ## API
 
