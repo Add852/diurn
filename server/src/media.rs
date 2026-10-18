@@ -97,7 +97,31 @@ pub fn list_files(
 /// Incremental scan: walk folder, re-resolve only changed paths, prune gone
 /// ones, generate thumbs for new rows. ponytail: full walk per /api/media
 /// request; add fs.watch + background scan when libraries get huge.
+/// One scan at a time, process-wide. Concurrent scans (every /api/media
+/// request kicks one) would stack up and starve the CPU.
+static SCAN_RUNNING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 pub fn scan(db: &crate::db::Db, profile: &Profile, folder: &Path) -> usize {
+    use std::sync::atomic::Ordering;
+    if SCAN_RUNNING.swap(true, Ordering::SeqCst) {
+        return 0; // a scan is already in flight — skip
+    }
+    let _guard = ScanGuard;
+    scan_inner(db, profile, folder)
+}
+
+struct ScanGuard;
+impl Drop for ScanGuard {
+    fn drop(&mut self) {
+        std::sync::atomic::AtomicBool::store(
+            &SCAN_RUNNING,
+            false,
+            std::sync::atomic::Ordering::SeqCst,
+        );
+    }
+}
+
+fn scan_inner(db: &crate::db::Db, profile: &Profile, folder: &Path) -> usize {
     // Short lock: read the cache, then release — the walk + EXIF + thumbnail
     // work below must not block journal/entry requests behind the mutex.
     let cached: HashMap<String, (i64, Option<String>)> = {

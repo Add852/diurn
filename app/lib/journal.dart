@@ -257,7 +257,9 @@ class _EntryScreenState extends State<EntryScreen> {
       _error = null;
     });
     try {
+      debugPrint('[entry save] start ${widget.entry.date}');
       await widget.api.updateEntry(widget.entry.date, _editor.text);
+      debugPrint('[entry save] done ${widget.entry.date}');
       if (!mounted) return;
       setState(() {
         _current = _editor.text;

@@ -374,8 +374,15 @@ async fn entries_update(state: State<AppState>, Json(body): Json<UpdateBody>) ->
     let Some(profile) = state.db.active_profile() else {
         return (StatusCode::BAD_REQUEST, "No active profile").into_response();
     };
+    let started = std::time::Instant::now();
     let conn = state.db.0.lock().unwrap();
-    match journal::update_entry(&conn, &profile, &body.date, &body.markdown) {
+    let result = journal::update_entry(&conn, &profile, &body.date, &body.markdown);
+    eprintln!(
+        "[entries PUT] {} in {:?}",
+        body.date,
+        started.elapsed()
+    );
+    match result {
         Ok((id, file_path)) => Json(json!({ "ok": true, "id": id, "file_path": file_path })).into_response(),
         Err(journal::UpdateError::InvalidDate) => (StatusCode::BAD_REQUEST, "Invalid date").into_response(),
         Err(journal::UpdateError::NotFound) => (StatusCode::NOT_FOUND, "Entry not found").into_response(),
