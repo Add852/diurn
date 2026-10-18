@@ -452,7 +452,7 @@ class MediaScreen extends StatefulWidget {
 }
 
 class _MediaScreenState extends State<MediaScreen> {
-  late Future<(List<MediaFile>, bool, String)> _files;
+  late Future<(List<MediaFile>, String)> _files;
   int _retries = 0;
 
   @override
@@ -470,10 +470,10 @@ class _MediaScreenState extends State<MediaScreen> {
 
   Future<void> _reload() async {
     setState(() => _files = widget.api.mediaFiles());
-    final (files, enabled, _) = await _files;
-    // Server scans in the background: an enabled-but-empty library usually
-    // means the scan is still running — retry a few times automatically.
-    if (enabled && files.isEmpty && _retries < 3 && mounted) {
+    final (files, folder) = await _files;
+    // Server scans in the background: an empty library usually means the
+    // scan is still running — retry a few times automatically.
+    if (files.isEmpty && folder.isNotEmpty && _retries < 3 && mounted) {
       _retries++;
       await Future.delayed(const Duration(seconds: 2));
       if (mounted) _reload();
@@ -486,7 +486,7 @@ class _MediaScreenState extends State<MediaScreen> {
   Widget build(BuildContext context) {
     return RefreshIndicator(
       onRefresh: _reload,
-      child: FutureBuilder<(List<MediaFile>, bool, String)>(
+      child: FutureBuilder<(List<MediaFile>, String)>(
         future: _files,
         builder: (context, snap) {
           if (snap.hasError) {
@@ -498,10 +498,10 @@ class _MediaScreenState extends State<MediaScreen> {
           if (!snap.hasData) {
             return const Center(child: CircularProgressIndicator());
           }
-          final (files, enabled, folder) = snap.data!;
+          final (files, folder) = snap.data!;
           if (files.isEmpty) {
-            final message = !enabled || folder.isEmpty
-                ? 'Media library is not configured'
+            final message = folder.isEmpty
+                ? 'Media library folder is not configured'
                 : 'No media found in $folder\n\nPull down to refresh — the server scans in the background';
             return ListView(
               children: [
@@ -510,7 +510,7 @@ class _MediaScreenState extends State<MediaScreen> {
                   child: Column(
                     children: [
                       Text(message, textAlign: TextAlign.center),
-                      if (!enabled || folder.isEmpty) ...[
+                      if (folder.isEmpty) ...[
                         const SizedBox(height: 12),
                         FilledButton.icon(
                           onPressed: widget.onOpenSettings,

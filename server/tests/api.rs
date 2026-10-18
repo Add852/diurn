@@ -381,7 +381,6 @@ async fn media_scan_lists_and_thumbs() {
     assert_eq!(res.status(), StatusCode::OK);
     let body = res.into_body().collect().await.unwrap().to_bytes();
     let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(v["enabled"], serde_json::json!(true));
 
     // scan runs in the background now — poll for the row to land
     let dbfile = std::env::temp_dir()

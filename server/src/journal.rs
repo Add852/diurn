@@ -339,7 +339,6 @@ pub struct SettingsProfile {
     pub name: String,
     pub daily_note_folder: String,
     pub template_note_path: String,
-    pub media_enabled: bool,
     pub media_folder: String,
     pub timezone: String,
     pub day_offset_hours: i64,
@@ -388,7 +387,6 @@ pub fn get_settings(
             name: profile.name.clone(),
             daily_note_folder: profile.daily_note_folder.clone(),
             template_note_path: profile.template_note_path.clone(),
-            media_enabled: profile.media_enabled,
             media_folder: profile.media_folder.clone(),
             timezone: profile.timezone.clone(),
             day_offset_hours: profile.day_offset_hours,
@@ -404,7 +402,6 @@ pub struct ProfileIn {
     pub name: Option<String>,
     pub daily_note_folder: Option<String>,
     pub template_note_path: Option<String>,
-    pub media_enabled: Option<bool>,
     pub media_folder: Option<String>,
     pub timezone: Option<String>,
     pub day_offset_hours: Option<i64>,
@@ -456,27 +453,24 @@ pub fn put_settings(
     questions: Option<&Vec<QuestionIn>>,
     template_content: Option<&str>,
 ) -> Result<(), String> {
-    let current: (String, String, bool, String, i64, String) = conn
+    let current: (String, String, String, i64, String) = conn
         .query_row(
-            "SELECT daily_note_folder, template_note_path, media_enabled, media_folder, day_offset_hours, timezone
+            "SELECT daily_note_folder, template_note_path, media_folder, day_offset_hours, timezone
              FROM profiles WHERE id = ?1",
             rusqlite::params![profile_id],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get::<_, i64>(2)? != 0, r.get(3)?, r.get(4)?, r.get(5)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
         )
         .map_err(|_| "Profile not found".to_string())?;
 
     let daily = p.daily_note_folder.clone().unwrap_or_else(|| current.0.clone());
     let template = p.template_note_path.clone().unwrap_or_else(|| current.1.clone());
-    let media_enabled = p.media_enabled.unwrap_or(current.2);
-    let media_folder = p.media_folder.clone().unwrap_or_else(|| current.3.clone());
-    let day_offset = p.day_offset_hours.unwrap_or(current.4).clamp(0, 24);
-    let timezone = p.timezone.clone().unwrap_or_else(|| current.5.clone());
+    let media_folder = p.media_folder.clone().unwrap_or_else(|| current.2.clone());
+    let day_offset = p.day_offset_hours.unwrap_or(current.3).clamp(0, 24);
+    let timezone = p.timezone.clone().unwrap_or_else(|| current.4.clone());
 
     // Filesystem validation (empty = unset, allowed)
     assert_dir("Daily note folder", &daily)?;
-    if media_enabled {
-        assert_dir("Media folder", &media_folder)?;
-    }
+    assert_dir("Media folder", &media_folder)?;
     let template = template.trim().to_string();
     if !template.is_empty() {
         let tp = Path::new(&template);
@@ -507,13 +501,12 @@ pub fn put_settings(
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     tx.execute(
         "UPDATE profiles SET name = ?1, daily_note_folder = ?2, template_note_path = ?3,
-         media_enabled = ?4, media_folder = ?5, day_offset_hours = ?6, timezone = ?7
-         WHERE id = ?8",
+         media_folder = ?4, day_offset_hours = ?5, timezone = ?6
+         WHERE id = ?7",
         rusqlite::params![
             p.name.clone().unwrap_or_default(),
             daily,
             template,
-            media_enabled as i64,
             media_folder,
             day_offset,
             timezone,
@@ -580,9 +573,7 @@ pub fn put_settings(
     }
 
     // Media bucketing changed -> drop cached rows; next /api/media rescans.
-    let media_now = media_enabled && !media_folder.is_empty();
-    let media_was = current.2 && !current.3.is_empty();
-    if day_offset != current.4 || timezone != current.5 || (media_now && (!media_was || media_folder != current.3)) {
+    if day_offset != current.3 || timezone != current.4 || media_folder != current.2 {
         tx.execute(
             "DELETE FROM media_cache WHERE profile_id = ?1",
             rusqlite::params![profile_id],

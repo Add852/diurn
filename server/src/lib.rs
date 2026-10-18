@@ -449,7 +449,7 @@ async fn media_list(state: State<AppState>, Query(q): Query<MediaListQuery>) -> 
     let Some(profile) = state.db.active_profile() else {
         return Json(json!({ "files": [] })).into_response();
     };
-    if profile.media_enabled && !profile.media_folder.is_empty() {
+    if !profile.media_folder.is_empty() {
         let folder = PathBuf::from(&profile.media_folder);
         if folder.is_dir() {
             let db = state.db.clone();
@@ -471,7 +471,6 @@ async fn media_list(state: State<AppState>, Query(q): Query<MediaListQuery>) -> 
     let files = media::list_files(&conn, profile.id, q.date.as_deref(), year_month.as_deref());
     Json(json!({
         "files": files,
-        "enabled": profile.media_enabled,
         "folder": profile.media_folder,
     }))
     .into_response()

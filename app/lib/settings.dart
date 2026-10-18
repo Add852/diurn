@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'dart:convert';
 
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -13,6 +15,7 @@ class SettingsScreen extends StatefulWidget {
   final VoidCallback? onChangeServer;
   final VoidCallback? onSaved;
   final ValueListenable<int>? saveTrigger;
+  final ValueListenable<int>? refreshSignal;
 
   const SettingsScreen({
     super.key,
@@ -20,6 +23,7 @@ class SettingsScreen extends StatefulWidget {
     this.onChangeServer,
     this.onSaved,
     this.saveTrigger,
+    this.refreshSignal,
   });
 
   @override
@@ -65,6 +69,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             onSaved: widget.onSaved,
             onChangeServer: widget.onChangeServer,
             saveTrigger: widget.saveTrigger,
+            refreshSignal: widget.refreshSignal,
           );
         },
       ),
@@ -78,12 +83,14 @@ class _SettingsForm extends StatefulWidget {
   final VoidCallback? onSaved;
   final VoidCallback? onChangeServer;
   final ValueListenable<int>? saveTrigger;
+  final ValueListenable<int>? refreshSignal;
   const _SettingsForm({
     required this.api,
     required this.data,
     this.onSaved,
     this.onChangeServer,
     this.saveTrigger,
+    this.refreshSignal,
   });
 
   @override
@@ -101,6 +108,29 @@ class _SettingsFormState extends State<_SettingsForm> {
   bool _saving = false;
   String? _error;
   String? _savedFlash;
+  Timer? _flashTimer;
+
+  void _flash(String msg) {
+    setState(() {
+      _savedFlash = msg;
+      _error = null;
+    });
+    _flashTimer?.cancel();
+    _flashTimer = Timer(const Duration(seconds: 4), () {
+      if (mounted) setState(() => _savedFlash = null);
+    });
+  }
+
+  void _fail(String msg) {
+    setState(() {
+      _error = msg;
+      _savedFlash = null;
+    });
+    _flashTimer?.cancel();
+    _flashTimer = Timer(const Duration(seconds: 6), () {
+      if (mounted) setState(() => _error = null);
+    });
+  }
 
   TextEditingController _ctrl(String key) =>
       _fields.putIfAbsent(key, () => TextEditingController(
@@ -118,6 +148,33 @@ class _SettingsFormState extends State<_SettingsForm> {
         .map(Map<String, dynamic>.from)
         .toList();
     widget.saveTrigger?.addListener(_save);
+    widget.refreshSignal?.addListener(_discardDraft);
+  }
+
+  /// Leaving the tab (or a save) reloads from the server — unsaved drafts
+  /// don't survive navigation.
+  Future<void> _discardDraft() async {
+    final fresh = await widget.api.settings();
+    if (!mounted) return;
+    setState(() {
+      _applyFresh(fresh);
+      _error = null;
+      _savedFlash = null;
+    });
+  }
+
+  void _applyFresh(Map<String, dynamic> fresh) {
+    _profile.clear();
+    _profile.addAll(fresh['profile'] as Map<String, dynamic>);
+    _questions = (fresh['questions'] as List)
+        .cast<Map<String, dynamic>>()
+        .map(Map<String, dynamic>.from)
+        .toList();
+    _templateCtrl.text = fresh['template_content'] as String? ?? '';
+    final freshProfile = _profile;
+    for (final key in _fields.keys.toList()) {
+      _fields[key]!.text = '${freshProfile[key] ?? ''}';
+    }
   }
 
   @override
@@ -127,7 +184,9 @@ class _SettingsFormState extends State<_SettingsForm> {
     }
     _tzFocus.dispose();
     _templateCtrl.dispose();
+    _flashTimer?.cancel();
     widget.saveTrigger?.removeListener(_save);
+    widget.refreshSignal?.removeListener(_discardDraft);
     super.dispose();
   }
 
@@ -142,7 +201,6 @@ class _SettingsFormState extends State<_SettingsForm> {
       'name': _profile['name'],
       'daily_note_folder': _txt('daily_note_folder'),
       'template_note_path': _txt('template_note_path'),
-      'media_enabled': _profile['media_enabled'],
       'media_folder': _txt('media_folder'),
       'timezone': _txt('timezone'),
       'day_offset_hours': int.tryParse(_txt('day_offset_hours')) ?? 0,
@@ -154,14 +212,11 @@ class _SettingsFormState extends State<_SettingsForm> {
         templateContent: _templateCtrl.text,
       );
       if (!mounted) return;
-      setState(() => _savedFlash = 'Settings saved');
+      _flash('Settings saved');
       widget.onSaved?.call();
     } catch (e) {
       if (!mounted) return;
-      setState(() {
-        _error = '$e';
-        _savedFlash = null;
-      });
+      _fail('$e');
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -171,28 +226,21 @@ class _SettingsFormState extends State<_SettingsForm> {
     final username = _txt('accountUsername');
     final password = _txt('accountPassword');
     if (username.isEmpty && password.isEmpty) {
-      setState(() =>
-          _error = 'Nothing to update — enter a username or new password');
+      _fail('Nothing to update — enter a username or new password');
       return;
     }
-    setState(() {
-      _saving = true;
-      _error = null;
-      _savedFlash = null;
-    });
+    setState(() => _saving = true);
     try {
       await widget.api.updateAccount(
         username.isEmpty ? null : username,
         password.isEmpty ? null : password,
       );
       if (!mounted) return;
-      setState(() {
-        _savedFlash = 'Account updated';
-        _fields['accountPassword']?.clear();
-      });
+      _flash('Account updated');
+      _fields['accountPassword']?.clear();
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = '$e');
+      _fail('$e');
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -201,16 +249,33 @@ class _SettingsFormState extends State<_SettingsForm> {
   Future<void> _exportSettings() async {
     try {
       final data = await widget.api.settings();
-      await Clipboard.setData(ClipboardData(text: const JsonEncoder.withIndent('  ').convert(data)));
+      final json = const JsonEncoder.withIndent('  ').convert(data);
+      final location = await getSaveLocation(suggestedName: 'diurn-settings.json');
+      if (location == null) return; // cancelled
+      await XFile.fromData(utf8.encode(json), mimeType: 'application/json')
+          .saveTo(location.path);
       if (!mounted) return;
-      setState(() => _savedFlash = 'Settings JSON copied to clipboard');
+      _flash('Exported to ${location.path}');
     } catch (e) {
+      // picker unsupported (some platforms) -> clipboard fallback
       if (!mounted) return;
-      setState(() => _error = '$e');
+      final data = await widget.api.settings();
+      await Clipboard.setData(ClipboardData(
+          text: const JsonEncoder.withIndent('  ').convert(data)));
+      if (!mounted) return;
+      _flash('File picker unavailable — JSON copied to clipboard ($e)');
     }
   }
 
   Future<void> _importSettings() async {
+    const typeGroup = XTypeGroup(label: 'JSON', extensions: ['json']);
+    final picked = await openFile(acceptedTypeGroups: [typeGroup]);
+    if (picked == null) return; // cancelled
+    final text = await picked.readAsString();
+    await _applyImport(text);
+  }
+
+  Future<void> _importFromDialog() async {
     final text = await showDialog<String>(
       context: context,
       builder: (context) {
@@ -238,11 +303,15 @@ class _SettingsFormState extends State<_SettingsForm> {
       },
     );
     if (text == null || text.trim().isEmpty) return;
+    await _applyImport(text);
+  }
+
+  Future<void> _applyImport(String text) async {
     Map<String, dynamic> incoming;
     try {
       incoming = jsonDecode(text) as Map<String, dynamic>;
     } catch (e) {
-      setState(() => _error = 'Invalid JSON: $e');
+      _fail('Invalid JSON: $e');
       return;
     }
     try {
@@ -257,31 +326,12 @@ class _SettingsFormState extends State<_SettingsForm> {
         templateContent: incoming['template_content'] as String?,
       );
       if (!mounted) return;
-      setState(() => _savedFlash = 'Imported — fields refreshed');
-      await _reloadFromServer();
+      _flash('Imported — fields refreshed');
+      await _discardDraft();
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = '$e');
+      _fail('$e');
     }
-  }
-
-  /// Re-fetch settings and rebuild the draft (used after import).
-  Future<void> _reloadFromServer() async {
-    final fresh = await widget.api.settings();
-    if (!mounted) return;
-    setState(() {
-      _profile.clear();
-      _profile.addAll(fresh['profile'] as Map<String, dynamic>);
-      _questions = (fresh['questions'] as List)
-          .cast<Map<String, dynamic>>()
-          .map(Map<String, dynamic>.from)
-          .toList();
-      _templateCtrl.text = fresh['template_content'] as String? ?? '';
-      for (final c in _fields.values) {
-        c.clear();
-      }
-      widget.onSaved?.call();
-    });
   }
 
   Future<void> _pickPath(String key, {required bool pickFile}) async {
@@ -356,17 +406,7 @@ class _SettingsFormState extends State<_SettingsForm> {
       children: [
         _section('Folders'),
         _pathField('Daily note folder', 'daily_note_folder', pickFile: false),
-        Row(
-          children: [
-            const Expanded(child: Text('Media library enabled')),
-            Switch(
-              value: _profile['media_enabled'] == true,
-              onChanged: (v) => setState(() => _profile['media_enabled'] = v),
-            ),
-          ],
-        ),
-        if (_profile['media_enabled'] == true)
-          _pathField('Media folder', 'media_folder', pickFile: false),
+        _pathField('Media library folder', 'media_folder', pickFile: false),
         const SizedBox(height: 16),
         _section('General'),
         _tzField('Timezone', 'timezone'),
@@ -473,11 +513,18 @@ class _SettingsFormState extends State<_SettingsForm> {
           onTap: _exportSettings,
         ),
         ListTile(
-          leading: const Icon(Icons.paste_outlined),
-          title: const Text('Import settings'),
-          subtitle: const Text('Paste previously exported settings JSON',
+          leading: const Icon(Icons.file_open_outlined),
+          title: const Text('Import from file'),
+          subtitle: const Text('Pick a previously exported settings JSON',
               style: TextStyle(fontSize: 12)),
           onTap: _importSettings,
+        ),
+        ListTile(
+          leading: const Icon(Icons.paste_outlined),
+          title: const Text('Import pasted JSON'),
+          subtitle: const Text('Paste settings JSON manually',
+              style: TextStyle(fontSize: 12)),
+          onTap: _importFromDialog,
         ),
       ],
     );

@@ -29,18 +29,29 @@ class JournalScreen extends StatefulWidget {
 }
 
 class _JournalScreenState extends State<JournalScreen> {
-  late Future<List<Entry>> _future;
+  late Future<(List<Entry>, Map<String, MediaFile>)> _future;
 
   @override
   void initState() {
     super.initState();
-    _future = widget.api.entries();
+    _future = _load();
     widget.refreshSignal?.addListener(_reload);
+  }
+
+  Future<(List<Entry>, Map<String, MediaFile>)> _load() async {
+    final entries = await widget.api.entries();
+    final (files, _) = await widget.api.mediaFiles();
+    // first media of each day becomes the card background
+    final byDate = <String, MediaFile>{};
+    for (final f in files) {
+      if (f.date != null && !byDate.containsKey(f.date)) byDate[f.date!] = f;
+    }
+    return (entries, byDate);
   }
 
   void _reload() {
     if (!mounted) return;
-    setState(() => _future = widget.api.entries());
+    setState(() => _future = _load());
   }
 
   @override
@@ -51,14 +62,14 @@ class _JournalScreenState extends State<JournalScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder<List<Entry>>(
+    return FutureBuilder<(List<Entry>, Map<String, MediaFile>)>(
       future: _future,
       builder: (context, snap) {
         if (snap.hasError) return Center(child: Text('${snap.error}'));
         if (!snap.hasData) {
           return const Center(child: CircularProgressIndicator());
         }
-        final entries = snap.data!;
+        final (entries, mediaByDate) = snap.data!;
         if (entries.isEmpty) return const Center(child: Text('No entries yet'));
         // group by month, preserve API order (date DESC)
         final groups = <String, List<Entry>>{};
@@ -91,21 +102,16 @@ class _JournalScreenState extends State<JournalScreen> {
                           .split('\n')
                           .where((l) =>
                               l.trim().isNotEmpty && !l.startsWith('---'))
+                          .map((l) => l
+                              .replaceFirst(RegExp(r'^#+\s*'), '')
+                              .replaceFirst(RegExp(r'^-\s*'), '')
+                              .trim())
                           .first;
-                      return ListTile(
-                        title: Text(e.date),
-                        subtitle: Text(
-                          preview,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        trailing: e.fsOnly
-                            ? const Icon(Icons.description_outlined, size: 18)
-                            : null,
-                        onTap: () =>
-                            Navigator.of(context).push(MaterialPageRoute(
-                          builder: (_) => EntryScreen(api: widget.api, entry: e),
-                        )),
+                      return _EntryCard(
+                        api: widget.api,
+                        entry: e,
+                        background: mediaByDate[e.date],
+                        preview: preview,
                       );
                     },
                   ),
@@ -114,6 +120,83 @@ class _JournalScreenState extends State<JournalScreen> {
           ],
         );
       },
+    );
+  }
+}
+
+/// Card per journal day: the day's first photo as the darkened background.
+/// ponytail: single static thumb (no mini-gallery) — add a filmstrip when
+/// days with many photos feel sparse.
+class _EntryCard extends StatelessWidget {
+  final Api api;
+  final Entry entry;
+  final MediaFile? background;
+  final String preview;
+  const _EntryCard({
+    required this.api,
+    required this.entry,
+    required this.background,
+    required this.preview,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final bg = background;
+    return Card(
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+      clipBehavior: Clip.antiAlias,
+      color: const Color(0xff18181b),
+      child: InkWell(
+        onTap: () => Navigator.of(context).push(MaterialPageRoute(
+          builder: (_) => EntryScreen(api: api, entry: entry),
+        )),
+        child: SizedBox(
+          height: 120,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              if (bg != null)
+                Image.network(
+                  bg.hasThumb ? api.thumbUrl(bg.path) : api.mediaUrl(bg.path),
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, _, _) => const SizedBox.shrink(),
+                ),
+              Container(color: Colors.black.withValues(alpha: 0.55)),
+              Padding(
+                padding: const EdgeInsets.all(14),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Row(
+                      children: [
+                        Text(entry.date,
+                            style: const TextStyle(
+                                fontWeight: FontWeight.w700, fontSize: 15)),
+                        if (entry.fsOnly)
+                          Padding(
+                            padding: const EdgeInsets.only(left: 6),
+                            child: Icon(Icons.description_outlined,
+                                size: 14, color: Colors.white38),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      preview,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                          fontSize: 13,
+                          color: Colors.white.withValues(alpha: 0.75)),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
@@ -141,7 +224,8 @@ class _EntryScreenState extends State<EntryScreen> {
   void initState() {
     super.initState();
     _parsed = parseFrontmatter(widget.entry.markdown);
-    _editor = TextEditingController(text: _parsed.$2);
+    // the editor gets the FULL note — frontmatter is editable markdown too
+    _editor = TextEditingController(text: widget.entry.markdown);
   }
 
   @override
@@ -156,10 +240,7 @@ class _EntryScreenState extends State<EntryScreen> {
       _error = null;
     });
     try {
-      final fm = _parsed.$1.isEmpty
-          ? ''
-          : '---\n${_parsed.$1.entries.map((e) => '${e.key}: ${e.value}').join('\n')}\n---\n';
-      await widget.api.updateEntry(widget.entry.date, '$fm${_editor.text}');
+      await widget.api.updateEntry(widget.entry.date, _editor.text);
       if (!mounted) return;
       setState(() => _editing = false);
     } catch (e) {
@@ -238,9 +319,11 @@ class _EntryScreenState extends State<EntryScreen> {
               minLines: 12,
               maxLines: 30,
               enabled: !_saving,
+              style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
               decoration: const InputDecoration(
                 border: OutlineInputBorder(),
-                hintText: 'Markdown body (frontmatter is preserved)',
+                hintText:
+                    'Full note — frontmatter (--- blocks) and markdown body',
               ),
             ),
             const SizedBox(height: 12),
