@@ -119,21 +119,30 @@ static LAST_SCAN_DONE: std::sync::Mutex<Option<std::time::Instant>> =
 /// request after a folder change says scanning=false and clients show an
 /// empty list with no loading state. Returns true (always: kicked or a scan
 /// is already in flight).
-pub fn request_scan(db: std::sync::Arc<crate::db::Db>, profile: Profile, folder: std::path::PathBuf) -> bool {
+pub fn request_scan(
+    db: std::sync::Arc<crate::db::Db>,
+    profile: Profile,
+    folder: std::path::PathBuf,
+) -> bool {
     use std::sync::atomic::Ordering;
     if SCAN_RUNNING.swap(true, Ordering::SeqCst) {
-        return true; // already scanning
+        return true; // genuinely in flight
+    }
+    {
+        // cooldown decided SYNCHRONOUSLY: skipping here means the flag is
+        // already false again — reporting true would stick the client's
+        // loading bar forever
+        let last = LAST_SCAN_DONE.lock().unwrap();
+        if let Some(t) = *last {
+            if t.elapsed() < SCAN_COOLDOWN && cache_has_rows(&db, profile.id) {
+                drop(last);
+                SCAN_RUNNING.store(false, Ordering::SeqCst);
+                return false;
+            }
+        }
     }
     let _ = tokio::task::spawn_blocking(move || {
         let _guard = ScanGuard;
-        {
-            let last = LAST_SCAN_DONE.lock().unwrap();
-            if let Some(t) = *last {
-                if t.elapsed() < SCAN_COOLDOWN && cache_has_rows(&db, profile.id) {
-                    return 0; // just scanned — cache is fresh enough (guard clears flag)
-                }
-            }
-        }
         let n = scan_inner(&db, &profile, &folder);
         *LAST_SCAN_DONE.lock().unwrap() = Some(std::time::Instant::now());
         n

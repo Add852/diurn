@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
@@ -37,7 +39,13 @@ class JournalScreen extends StatefulWidget {
 }
 
 class _JournalScreenState extends State<JournalScreen> {
-  late Future<(List<Entry>, Map<String, List<MediaFile>>)> _future;
+  late Future<(List<Entry>, Map<String, List<MediaFile>>, bool)> _future;
+  Timer? _pollTimer;
+  int _polls = 0;
+
+  /// last completed load — polls swap the future, which would otherwise
+  /// flash the whole tab back to a spinner every 3s
+  (List<Entry>, Map<String, List<MediaFile>>, bool)? _last;
 
   @override
   void initState() {
@@ -46,15 +54,15 @@ class _JournalScreenState extends State<JournalScreen> {
     widget.refreshSignal?.addListener(_reload);
   }
 
-  Future<(List<Entry>, Map<String, List<MediaFile>>)> _load() async {
+  Future<(List<Entry>, Map<String, List<MediaFile>>, bool)> _load() async {
     final entries = await widget.api.entries();
-    final (files, _, _) = await widget.api.mediaFiles();
-    // every day's media list feeds the card filmstrip
+    final (files, _, scanning) = await widget.api.mediaFiles();
+    // every day's media list feeds the card backgrounds
     final byDate = <String, List<MediaFile>>{};
     for (final f in files) {
       if (f.date != null) (byDate[f.date!] ??= []).add(f);
     }
-    return (entries, byDate);
+    return (entries, byDate, scanning);
   }
 
   void _reload() {
@@ -62,24 +70,43 @@ class _JournalScreenState extends State<JournalScreen> {
     setState(() {
       _future = _load();
     });
+    _poll();
+  }
+
+  /// while the server scans, poll so card backgrounds arrive as they index
+  Future<void> _poll() async {
+    final (_, _, scanning) = await _future;
+    if (!mounted) return;
+    _pollTimer?.cancel();
+    if (scanning && _polls < 600) {
+      _polls++;
+      _pollTimer = Timer(const Duration(seconds: 3), _reload);
+    } else if (!scanning) {
+      _polls = 0;
+    }
   }
 
   @override
   void dispose() {
     widget.refreshSignal?.removeListener(_reload);
+    _pollTimer?.cancel();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder<(List<Entry>, Map<String, List<MediaFile>>)>(
-      future: _future,
-      builder: (context, snap) {
-        if (snap.hasError) return Center(child: Text('${snap.error}'));
-        if (!snap.hasData) {
-          return const Center(child: CircularProgressIndicator());
-        }
-        final (entries, mediaByDate) = snap.data!;
+    return RefreshIndicator(
+      onRefresh: () async => _reload(),
+      child: FutureBuilder<(List<Entry>, Map<String, List<MediaFile>>, bool)>(
+        future: _future,
+        builder: (context, snap) {
+          final data = snap.data ?? _last;
+          if (data == null) {
+            if (snap.hasError) return Center(child: Text('${snap.error}'));
+            return const Center(child: CircularProgressIndicator());
+          }
+          _last = data;
+          final (entries, mediaByDate, scanning) = data;
         if (entries.isEmpty) return const Center(child: Text('No entries yet'));
         // group by month, preserve API order (date DESC)
         final groups = <String, List<Entry>>{};
@@ -87,7 +114,15 @@ class _JournalScreenState extends State<JournalScreen> {
           (groups.putIfAbsent(e.date.substring(0, 7), () => [])).add(e);
         }
         return CustomScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
           slivers: [
+            if (scanning)
+              const SliverToBoxAdapter(
+                child: Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 16),
+                  child: LinearProgressIndicator(minHeight: 3),
+                ),
+              ),
             for (final month in groups.keys)
               SliverMainAxisGroup(
                 slivers: [
@@ -135,7 +170,8 @@ class _JournalScreenState extends State<JournalScreen> {
               ),
           ],
         );
-      },
+        },
+      ),
     );
   }
 }

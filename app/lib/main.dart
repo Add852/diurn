@@ -594,6 +594,10 @@ class _MediaScreenState extends State<MediaScreen> {
   Timer? _pollTimer;
   int _polls = 0;
 
+  /// last completed load — polls swap the future, which would otherwise
+  /// flash the whole tab back to a spinner every 3s
+  (List<MediaFile>, String, bool, List<Entry>)? _lastData;
+
   @override
   void initState() {
     super.initState();
@@ -651,10 +655,12 @@ class _MediaScreenState extends State<MediaScreen> {
               Center(child: Text('${snap.error}')),
             ]);
           }
-          if (!snap.hasData) {
+          final data = snap.data ?? _lastData;
+          if (data == null) {
             return const Center(child: CircularProgressIndicator());
           }
-          final (files, folder, scanning, entries) = snap.data!;
+          _lastData = data;
+          final (files, folder, scanning, entries) = data;
           final entryByDate = {for (final e in entries) e.date: e};
           if (files.isEmpty) {
             final message = folder.isEmpty
