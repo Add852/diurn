@@ -481,16 +481,16 @@ async fn media_list(state: State<AppState>, Query(q): Query<MediaListQuery>) -> 
     let Some(profile) = state.db.active_profile() else {
         return Json(json!({ "files": [] })).into_response();
     };
+    let mut scanning = false;
     if !profile.media_folder.is_empty() {
         let folder = PathBuf::from(&profile.media_folder);
         if folder.is_dir() {
             let db = state.db.clone();
             let p = profile.clone();
             // Background scan — never block the response (a big library would
-            // hang the tab for minutes). Cached rows serve now; the next
-            // request (or pull-to-refresh) picks up the scan's results.
-            // The scan only takes the DB lock in short bursts.
-            let _ = tokio::task::spawn_blocking(move || media::scan(&db, &p, &folder));
+            // hang the tab for minutes). The flag is set synchronously, so
+            // this response already reports scanning=true.
+            scanning = media::request_scan(db, p, folder);
         }
     }
     let year_month = match (q.year.as_deref(), q.month.as_deref()) {
@@ -502,7 +502,7 @@ async fn media_list(state: State<AppState>, Query(q): Query<MediaListQuery>) -> 
     Json(json!({
         "files": files,
         "folder": profile.media_folder,
-        "scanning": media::scan_in_progress(),
+        "scanning": scanning || media::scan_in_progress(),
     }))
     .into_response()
 }

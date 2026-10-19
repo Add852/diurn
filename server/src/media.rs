@@ -114,25 +114,31 @@ const SCAN_COOLDOWN: std::time::Duration = std::time::Duration::from_secs(5);
 static LAST_SCAN_DONE: std::sync::Mutex<Option<std::time::Instant>> =
     std::sync::Mutex::new(None);
 
-pub fn scan(db: &crate::db::Db, profile: &Profile, folder: &Path) -> usize {
+/// Fire-and-forget scan kick. Sets the scanning flag SYNCHRONOUSLY so the
+/// response that triggers the scan already reports it — otherwise the first
+/// request after a folder change says scanning=false and clients show an
+/// empty list with no loading state. Returns true (always: kicked or a scan
+/// is already in flight).
+pub fn request_scan(db: std::sync::Arc<crate::db::Db>, profile: Profile, folder: std::path::PathBuf) -> bool {
     use std::sync::atomic::Ordering;
     if SCAN_RUNNING.swap(true, Ordering::SeqCst) {
-        return 0; // a scan is already in flight — skip
+        return true; // already scanning
     }
-    {
-        let last = LAST_SCAN_DONE.lock().unwrap();
-        if let Some(t) = *last {
-            if t.elapsed() < SCAN_COOLDOWN && cache_has_rows(db, profile.id) {
-                drop(last);
-                SCAN_RUNNING.store(false, Ordering::SeqCst);
-                return 0; // just scanned — cache is fresh enough
+    let _ = tokio::task::spawn_blocking(move || {
+        let _guard = ScanGuard;
+        {
+            let last = LAST_SCAN_DONE.lock().unwrap();
+            if let Some(t) = *last {
+                if t.elapsed() < SCAN_COOLDOWN && cache_has_rows(&db, profile.id) {
+                    return 0; // just scanned — cache is fresh enough (guard clears flag)
+                }
             }
         }
-    }
-    let _guard = ScanGuard;
-    let n = scan_inner(db, profile, folder);
-    *LAST_SCAN_DONE.lock().unwrap() = Some(std::time::Instant::now());
-    n
+        let n = scan_inner(&db, &profile, &folder);
+        *LAST_SCAN_DONE.lock().unwrap() = Some(std::time::Instant::now());
+        n
+    });
+    true
 }
 
 fn cache_has_rows(db: &crate::db::Db, profile_id: i64) -> bool {
