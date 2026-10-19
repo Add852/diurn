@@ -502,6 +502,7 @@ async fn media_list(state: State<AppState>, Query(q): Query<MediaListQuery>) -> 
     Json(json!({
         "files": files,
         "folder": profile.media_folder,
+        "scanning": media::scan_in_progress(),
     }))
     .into_response()
 }

@@ -48,7 +48,7 @@ class _JournalScreenState extends State<JournalScreen> {
 
   Future<(List<Entry>, Map<String, List<MediaFile>>)> _load() async {
     final entries = await widget.api.entries();
-    final (files, _) = await widget.api.mediaFiles();
+    final (files, _, _) = await widget.api.mediaFiles();
     // every day's media list feeds the card filmstrip
     final byDate = <String, List<MediaFile>>{};
     for (final f in files) {

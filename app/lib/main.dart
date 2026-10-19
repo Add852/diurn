@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -586,8 +588,10 @@ class MediaScreen extends StatefulWidget {
 }
 
 class _MediaScreenState extends State<MediaScreen> {
-  late Future<(List<MediaFile>, String, List<Entry>)> _files;
+  late Future<(List<MediaFile>, String, bool, List<Entry>)> _files;
   int _retries = 0;
+  Timer? _pollTimer;
+  int _polls = 0;
 
   @override
   void initState() {
@@ -599,27 +603,35 @@ class _MediaScreenState extends State<MediaScreen> {
   @override
   void dispose() {
     widget.refreshSignal?.removeListener(_reload);
+    _pollTimer?.cancel();
     super.dispose();
   }
 
-  Future<(List<MediaFile>, String, List<Entry>)> _load() async {
-    final (files, folder) = await widget.api.mediaFiles();
+  Future<(List<MediaFile>, String, bool, List<Entry>)> _load() async {
+    final (files, folder, scanning) = await widget.api.mediaFiles();
     // entries feed the per-day "view entry" button
     final entries = await widget.api.entries();
-    return (files, folder, entries);
+    return (files, folder, scanning, entries);
   }
 
   Future<void> _reload() async {
     setState(() {
       _files = _load();
     });
-    final (files, folder, _) = await _files;
-    // Server scans in the background: an empty library usually means the
-    // scan is still running — retry a few times automatically.
-    if (files.isEmpty && folder.isNotEmpty && _retries < 3 && mounted) {
+    final (files, folder, scanning, _) = await _files;
+    if (!mounted) return;
+    _pollTimer?.cancel();
+    if (scanning && _polls < 100) {
+      // a scan is in flight — poll every 3s until it lands (cap ≈ 5 min)
+      _polls++;
+      _pollTimer = Timer(const Duration(seconds: 3), _reload);
+    } else if (!scanning) {
+      _polls = 0;
+    }
+    if (files.isEmpty && folder.isNotEmpty && !scanning && _retries < 3) {
+      // empty even after the scan finished — retry a few times automatically
       _retries++;
-      await Future.delayed(const Duration(seconds: 2));
-      if (mounted) _reload();
+      _pollTimer = Timer(const Duration(seconds: 2), _reload);
     } else if (files.isNotEmpty) {
       _retries = 0;
     }
@@ -629,7 +641,7 @@ class _MediaScreenState extends State<MediaScreen> {
   Widget build(BuildContext context) {
     return RefreshIndicator(
       onRefresh: _reload,
-      child: FutureBuilder<(List<MediaFile>, String, List<Entry>)>(
+      child: FutureBuilder<(List<MediaFile>, String, bool, List<Entry>)>(
         future: _files,
         builder: (context, snap) {
           if (snap.hasError) {
@@ -641,18 +653,27 @@ class _MediaScreenState extends State<MediaScreen> {
           if (!snap.hasData) {
             return const Center(child: CircularProgressIndicator());
           }
-          final (files, folder, entries) = snap.data!;
+          final (files, folder, scanning, entries) = snap.data!;
           final entryByDate = {for (final e in entries) e.date: e};
           if (files.isEmpty) {
             final message = folder.isEmpty
                 ? 'Media library folder is not configured'
-                : 'No media found in $folder\n\nPull down to refresh — the server scans in the background';
+                : scanning
+                    ? 'Scanning media library — first results appear here'
+                    : 'No media found in $folder\n\nPull down to refresh — the server scans in the background';
             return ListView(
               children: [
                 const SizedBox(height: 120),
                 Center(
                   child: Column(
                     children: [
+                      if (scanning) ...[
+                        const SizedBox(
+                            width: 28,
+                            height: 28,
+                            child: CircularProgressIndicator(strokeWidth: 3)),
+                        const SizedBox(height: 12),
+                      ],
                       Text(message, textAlign: TextAlign.center),
                       if (folder.isEmpty) ...[
                         const SizedBox(height: 12),
@@ -675,6 +696,13 @@ class _MediaScreenState extends State<MediaScreen> {
         }
         return CustomScrollView(
           slivers: [
+            if (scanning)
+              const SliverToBoxAdapter(
+                child: Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 16),
+                  child: LinearProgressIndicator(minHeight: 3),
+                ),
+              ),
             for (final day in groups.keys)
               SliverMainAxisGroup(
                 slivers: [

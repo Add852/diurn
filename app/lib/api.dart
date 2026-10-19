@@ -228,12 +228,14 @@ class Api {
 
   /// GET /api/media — media cache rows (triggers an incremental scan).
   /// Returns (files, folder) so the UI can explain an empty grid.
-  Future<(List<MediaFile>, String)> mediaFiles() async {
+  /// GET /api/media — cached list + whether a background scan is in flight.
+  Future<(List<MediaFile>, String, bool)> mediaFiles() async {
     final v = await _getJson('/api/media', {});
     final list = (v['files'] as List).cast<Map<String, dynamic>>();
     return (
       list.map(MediaFile.fromJson).toList(),
       v['folder'] as String? ?? '',
+      v['scanning'] as bool? ?? false,
     );
   }
 

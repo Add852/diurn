@@ -101,13 +101,48 @@ pub fn list_files(
 /// request kicks one) would stack up and starve the CPU.
 static SCAN_RUNNING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+/// True while a background scan walks the folder — surfaced via /api/media
+/// so clients can show a scanning indicator.
+pub fn scan_in_progress() -> bool {
+    use std::sync::atomic::Ordering;
+    SCAN_RUNNING.load(Ordering::SeqCst)
+}
+
+/// Finished scans younger than this skip the re-walk (network mounts: every
+/// /api/media request would otherwise stat the whole tree again).
+const SCAN_COOLDOWN: std::time::Duration = std::time::Duration::from_secs(5);
+static LAST_SCAN_DONE: std::sync::Mutex<Option<std::time::Instant>> =
+    std::sync::Mutex::new(None);
+
 pub fn scan(db: &crate::db::Db, profile: &Profile, folder: &Path) -> usize {
     use std::sync::atomic::Ordering;
     if SCAN_RUNNING.swap(true, Ordering::SeqCst) {
         return 0; // a scan is already in flight — skip
     }
+    {
+        let last = LAST_SCAN_DONE.lock().unwrap();
+        if let Some(t) = *last {
+            if t.elapsed() < SCAN_COOLDOWN && cache_has_rows(db, profile.id) {
+                drop(last);
+                SCAN_RUNNING.store(false, Ordering::SeqCst);
+                return 0; // just scanned — cache is fresh enough
+            }
+        }
+    }
     let _guard = ScanGuard;
-    scan_inner(db, profile, folder)
+    let n = scan_inner(db, profile, folder);
+    *LAST_SCAN_DONE.lock().unwrap() = Some(std::time::Instant::now());
+    n
+}
+
+fn cache_has_rows(db: &crate::db::Db, profile_id: i64) -> bool {
+    let conn = db.0.lock().unwrap();
+    conn.query_row(
+        "SELECT 1 FROM media_cache WHERE profile_id = ?1 LIMIT 1",
+        rusqlite::params![profile_id],
+        |_| Ok(()),
+    )
+    .is_ok()
 }
 
 struct ScanGuard;
@@ -146,7 +181,7 @@ fn scan_inner(db: &crate::db::Db, profile: &Profile, folder: &Path) -> usize {
     };
 
     let mut seen: Vec<String> = Vec::new();
-    let mut updates: Vec<(String, Option<String>, i64, i64, Option<String>, String)> = Vec::new(); // path,date,captured_at,mtime,thumb,type
+    let mut todo: Vec<(std::path::PathBuf, i64)> = Vec::new();
     walk(folder, &mut |p, mtime_ms| {
         let path_str = p.to_string_lossy().into_owned();
         seen.push(path_str.clone());
@@ -154,16 +189,54 @@ fn scan_inner(db: &crate::db::Db, profile: &Profile, folder: &Path) -> usize {
         if !MEDIA_EXTS.contains(&ext.as_str()) {
             return;
         }
-        let kind = if VIDEO_EXTS.contains(&ext.as_str()) { "video" } else { "image" };
         if let Some((_, old_mtime, _)) = cached.get(&path_str).map(|(m, t)| ((), *m, t)) {
             if old_mtime == mtime_ms {
                 return; // unchanged
             }
         }
-        let (date, captured_at) = resolve_date(p, mtime_ms);
-        let thumb = generate_thumb(profile.id, p).map(|t| t.to_string_lossy().into_owned());
-        updates.push((path_str, date, captured_at, mtime_ms, thumb, kind.to_string()));
+        todo.push((p.to_path_buf(), mtime_ms));
     });
+
+    // New/changed files in parallel — on network mounts the EXIF read and
+    // thumb encode are latency-bound, so overlap them across cores.
+    let updates: std::sync::Mutex<
+        Vec<(String, Option<String>, i64, i64, Option<String>, String)>,
+    > = std::sync::Mutex::new(Vec::new());
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let workers = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4)
+        .min(8);
+    std::thread::scope(|s| {
+        for _ in 0..workers {
+            s.spawn(|| loop {
+                let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                if i >= todo.len() {
+                    break;
+                }
+                let (p, mtime_ms) = &todo[i];
+                let path_str = p.to_string_lossy().into_owned();
+                let ext = ext_of(p);
+                let kind = if VIDEO_EXTS.contains(&ext.as_str()) {
+                    "video"
+                } else {
+                    "image"
+                };
+                let (date, captured_at) = resolve_date(p, *mtime_ms);
+                let thumb =
+                    generate_thumb(profile.id, p).map(|t| t.to_string_lossy().into_owned());
+                updates.lock().unwrap().push((
+                    path_str,
+                    date,
+                    captured_at,
+                    *mtime_ms,
+                    thumb,
+                    kind.to_string(),
+                ));
+            });
+        }
+    });
+    let updates = updates.into_inner().unwrap();
 
     let mut conn = db.0.lock().unwrap();
     let tx = match conn.transaction() {
