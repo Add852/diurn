@@ -204,9 +204,13 @@ fn scan_inner(db: &crate::db::Db, profile: &Profile, folder: &Path) -> usize {
         if !MEDIA_EXTS.contains(&ext.as_str()) {
             return;
         }
-        if let Some((_, old_mtime, _)) = cached.get(&path_str).map(|(m, t)| ((), *m, t)) {
-            if old_mtime == mtime_ms {
-                return; // unchanged
+        if let Some((_, old_mtime, old_thumb)) =
+            cached.get(&path_str).map(|(m, t)| ((), *m, t))
+        {
+            // unchanged AND already thumbnailed → skip. Rows with no thumb
+            // (e.g. videos from before ffmpeg support) get reprocessed.
+            if old_mtime == mtime_ms && old_thumb.is_some() {
+                return;
             }
         }
         todo.push((p.to_path_buf(), mtime_ms));
