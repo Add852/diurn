@@ -245,18 +245,23 @@ fn scan_inner(db: &crate::db::Db, profile: &Profile, folder: &Path) -> usize {
     let updates = updates.into_inner().unwrap();
 
     let mut conn = db.0.lock().unwrap();
-    let tx = match conn.transaction() {
-        Ok(t) => t,
-        Err(_) => return 0,
-    };
-    for (path, date, captured_at, mtime, thumb, kind) in &updates {
-        let _ = tx.execute(
-            "INSERT INTO media_cache (path, profile_id, date, captured_at, type, mtime, thumb, scanned_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, datetime('now'))
-             ON CONFLICT(path, profile_id) DO UPDATE SET date=?3, captured_at=?4, type=?5, mtime=?6, thumb=?7, scanned_at=datetime('now')",
-            rusqlite::params![path, profile.id, date, captured_at, kind, mtime, thumb],
-        );
+    // commit in batches so rows appear progressively while a long scan (a
+    // 4000-file network mount) is still running
+    for chunk in updates.chunks(200) {
+        let Ok(tx) = conn.transaction() else { break };
+        for (path, date, captured_at, mtime, thumb, kind) in chunk {
+            let _ = tx.execute(
+                "INSERT INTO media_cache (path, profile_id, date, captured_at, type, mtime, thumb, scanned_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, datetime('now'))
+                 ON CONFLICT(path, profile_id) DO UPDATE SET date=?3, captured_at=?4, type=?5, mtime=?6, thumb=?7, scanned_at=datetime('now')",
+                rusqlite::params![path, profile.id, date, captured_at, kind, mtime, thumb],
+            );
+        }
+        let _ = tx.commit();
     }
+    let Ok(tx) = conn.transaction() else {
+        return updates.len();
+    };
     for path in cached.keys() {
         if !seen.contains(path) {
             let _ = tx.execute(

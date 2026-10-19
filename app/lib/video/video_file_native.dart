@@ -20,7 +20,13 @@ class _VideoFileWidgetState extends State<VideoFileWidget> {
     super.initState();
     MediaKit.ensureInitialized();
     _player = Player();
-    _controller = VideoController(_player);
+    // hardware decode renders black on some Android codecs (audio only) —
+    // software decode is reliable; revisit if battery becomes an issue
+    _controller = VideoController(
+      _player,
+      configuration: const VideoControllerConfiguration(
+          enableHardwareAcceleration: false),
+    );
     _player.open(Media(widget.url));
   }
 

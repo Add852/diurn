@@ -12,11 +12,15 @@ class FormScreen extends StatefulWidget {
 
   /// FAB Write on the Today tab — triggers the form save.
   final ValueListenable<int>? saveTrigger;
+
+  /// Shown when the profile has no questions (fresh server).
+  final VoidCallback? onOpenSettings;
   const FormScreen({
     super.key,
     required this.api,
     this.refreshSignal,
     this.saveTrigger,
+    this.onOpenSettings,
   });
 
   @override
@@ -40,10 +44,21 @@ class _FormScreenState extends State<FormScreen> {
   @override
   void initState() {
     super.initState();
-    _future = widget.api.form();
+    _future = _loadForm();
     _loadMedia();
     widget.refreshSignal?.addListener(_reload);
     widget.saveTrigger?.addListener(_onSaveTrigger);
+  }
+
+  /// form() futures that get replaced by a refresh while still pending would
+  /// log unhandled exceptions — attach a no-op listener; FutureBuilder
+  /// surfaces the error for the live future.
+  Future<FormInfo> _loadForm() {
+    final f = widget.api.form();
+    // no-op listener so an orphaned future (refresh while pending) doesn't
+    // log unhandled exceptions; FutureBuilder handles the live one's error
+    f.then<void>((_) {}, onError: (_) {});
+    return f;
   }
 
   void _onSaveTrigger() {
@@ -55,7 +70,7 @@ class _FormScreenState extends State<FormScreen> {
   void _reload() {
     if (!mounted) return;
     setState(() {
-      _future = widget.api.form();
+      _future = _loadForm();
     });
     _loadMedia();
   }
@@ -153,7 +168,36 @@ class _FormScreenState extends State<FormScreen> {
     return FutureBuilder<FormInfo>(
       future: _future,
       builder: (context, snap) {
-        if (snap.hasError) return Center(child: Text('${snap.error}'));
+        if (snap.hasError) {
+          final msg = '${snap.error}';
+          final noQuestions = msg.contains('No questions configured');
+          return Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.help_outline_outlined,
+                    size: 48,
+                    color:
+                        Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.4)),
+                const SizedBox(height: 12),
+                Text(
+                  noQuestions
+                      ? 'No questions configured yet.\nAdd them in Settings → Notes.'
+                      : msg,
+                  textAlign: TextAlign.center,
+                ),
+                if (noQuestions) ...[
+                  const SizedBox(height: 12),
+                  OutlinedButton.icon(
+                    onPressed: widget.onOpenSettings,
+                    icon: const Icon(Icons.settings_outlined),
+                    label: const Text('Open settings'),
+                  ),
+                ],
+              ],
+            ),
+          );
+        }
         if (!snap.hasData) {
           return const Center(child: CircularProgressIndicator());
         }

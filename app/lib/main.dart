@@ -263,6 +263,7 @@ class _HomeScreenState extends State<HomeScreen> {
               api: api,
               refreshSignal: _refreshTick,
               saveTrigger: _writeTrigger,
+              onOpenSettings: () => setState(() => _index = 3),
             ),
             JournalScreen(api: api, refreshSignal: _refreshTick),
             MediaScreen(
@@ -621,8 +622,8 @@ class _MediaScreenState extends State<MediaScreen> {
     final (files, folder, scanning, _) = await _files;
     if (!mounted) return;
     _pollTimer?.cancel();
-    if (scanning && _polls < 100) {
-      // a scan is in flight — poll every 3s until it lands (cap ≈ 5 min)
+    if (scanning && _polls < 600) {
+      // a scan is in flight — poll every 3s until it lands (cap ≈ 30 min)
       _polls++;
       _pollTimer = Timer(const Duration(seconds: 3), _reload);
     } else if (!scanning) {
