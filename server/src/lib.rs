@@ -49,6 +49,13 @@ pub struct AppState {
 }
 
 pub fn build_router(roots: Vec<PathBuf>, db: Arc<Db>) -> Router {
+    // Canonicalize roots so symlinked mounts compare equal after the
+    // content endpoints canonicalize the requested path (/mnt/nas →
+    // /media/…): a raw root string would 403 every thumb/file request.
+    let roots: Vec<PathBuf> = roots
+        .into_iter()
+        .map(|r| r.canonicalize().unwrap_or(r))
+        .collect();
     let state = AppState {
         roots: Arc::new(roots),
         db,
@@ -664,7 +671,8 @@ fn parse_range(header: Option<&str>, size: u64) -> Result<Option<(u64, u64)>, ()
 }
 
 /// Lexically-contained check + canonical containment. Rejects `..` components
-/// outright; canonicalize() in callers resolves symlinks before this runs.
+/// outright; canonicalize() in callers resolves symlinks before this runs, and
+/// build_router canonicalizes the roots to match.
 fn under_any_root(roots: &[PathBuf], path: &Path) -> bool {
     if path.components().any(|c| c == Component::ParentDir) {
         return false;
@@ -710,6 +718,31 @@ mod tests {
         assert!(under_any_root(&roots, &Path::new("/srv/media/a/b.jpg")));
         assert!(!under_any_root(&roots, &Path::new("/srv/media/../etc/passwd")));
         assert!(!under_any_root(&roots, &Path::new("/etc/passwd")));
+    }
+
+    #[test]
+    fn canonicalized_roots_admit_symlinked_paths() {
+        // a media folder reached through a symlink (automounted NAS etc.)
+        let real = std::env::temp_dir().join("diurn-canonical-test");
+        std::fs::create_dir_all(&real).unwrap();
+        let link = std::env::temp_dir().join("diurn-canonical-link");
+        let _ = std::fs::remove_file(&link);
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+
+        // build_router canonicalizes roots, so the real path under the link
+        // is admitted even though the raw root string differs
+        let resolved = link.canonicalize().unwrap();
+        assert_eq!(resolved, real.canonicalize().unwrap());
+        let roots = vec![link.clone()];
+        let canonical_roots: Vec<PathBuf> = roots
+            .iter()
+            .map(|r| r.canonicalize().unwrap())
+            .collect();
+        assert!(under_any_root(&canonical_roots, &resolved));
+        assert!(!under_any_root(&roots, &resolved)); // without canonicalization it 403s
+
+        let _ = std::fs::remove_file(&link);
+        let _ = std::fs::remove_dir_all(&real);
     }
 }
 
