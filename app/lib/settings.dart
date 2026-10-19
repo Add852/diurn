@@ -835,7 +835,8 @@ class _SettingsFormState extends State<_SettingsForm> {
         ListTile(
           leading: const Icon(Icons.dns_outlined),
           title: const Text('Change server'),
-          subtitle: Text(kDefaultUrl, style: const TextStyle(fontSize: 12)),
+          subtitle: Text(widget.api.baseUrl,
+              style: const TextStyle(fontSize: 12)),
           onTap: () => widget.onChangeServer?.call(),
         ),
         const SizedBox(height: 20),

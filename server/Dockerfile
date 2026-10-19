@@ -6,6 +6,9 @@ COPY src ./src
 RUN cargo build --release
 
 FROM debian:bookworm-slim
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
 # HOME under the volume → DB at /data/.diurn/data.db, thumbs at /data/thumbs
 ENV HOME=/data \
     DIURN_CACHE=/data/thumbs

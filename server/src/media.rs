@@ -379,6 +379,9 @@ fn dirs_thumbs() -> PathBuf {
 /// ponytail: image crate only does lossless WebP encode — larger files than
 /// sharp's lossy; swap in libwebp-sys when size matters.
 pub fn generate_thumb(profile_id: i64, file: &Path) -> Option<PathBuf> {
+    if is_video(file) {
+        return generate_video_thumb(profile_id, file);
+    }
     if !is_image_ext(file) {
         return None;
     }
@@ -402,6 +405,53 @@ pub fn generate_thumb(profile_id: i64, file: &Path) -> Option<PathBuf> {
     Some(target)
 }
 
+/// ffmpeg first-frame thumbnail for videos. Missing/broken ffmpeg → None
+/// (no thumb, the app shows its placeholder — same as before).
+fn generate_video_thumb(profile_id: i64, file: &Path) -> Option<PathBuf> {
+    let target = thumb_path(profile_id, file);
+    if target.exists() {
+        return Some(target);
+    }
+    std::fs::create_dir_all(target.parent()?).ok()?;
+    let frame = target.with_extension("frame.png");
+    let mut child = std::process::Command::new("ffmpeg")
+        .args(["-y", "-loglevel", "error", "-i"])
+        .arg(file)
+        .args(["-frames:v", "1", "-vf", "scale=400:-2"])
+        .arg(&frame)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .ok()?;
+    // bounded wait: a stalled network mount must not hang the scan thread
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) if status.success() => break,
+            Ok(Some(_)) => {
+                let _ = std::fs::remove_file(&frame);
+                return None;
+            }
+            Ok(None) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = std::fs::remove_file(&frame);
+                return None;
+            }
+        }
+    }
+    let img = image::open(&frame).ok()?;
+    let _ = std::fs::remove_file(&frame);
+    image::DynamicImage::ImageRgb8(img.to_rgb8())
+        .save_with_format(&target, image::ImageFormat::WebP)
+        .ok()?;
+    Some(target)
+}
+
 fn apply_exif_orientation(file: &Path, img: image::DynamicImage) -> image::DynamicImage {
     let orientation = std::fs::File::open(file).ok().and_then(|f| {
         exif::Reader::new()
@@ -419,5 +469,42 @@ fn apply_exif_orientation(file: &Path, img: image::DynamicImage) -> image::Dynam
         Some(7) => img.fliph().rotate90(),
         Some(8) => img.rotate270(),
         _ => img,
+    }
+}
+
+#[cfg(test)]
+mod video_thumb_tests {
+    use super::*;
+
+    #[test]
+    fn video_thumb_via_ffmpeg() {
+        // skip on machines without ffmpeg (CI/containers without the dep)
+        if std::process::Command::new("ffmpeg")
+            .arg("-version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| !s.success())
+            .unwrap_or(true)
+        {
+            return;
+        }
+        let dir = std::env::temp_dir().join("diurn-video-thumb-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let video = dir.join("test.mp4");
+        let _ = std::fs::remove_file(&video);
+        assert!(std::process::Command::new("ffmpeg")
+            .args(["-y", "-loglevel", "error", "-f", "lavfi",
+                   "-i", "testsrc=duration=1:size=320x240:rate=10"])
+            .arg(&video)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .unwrap()
+            .success());
+        let thumb = generate_thumb(999, &video);
+        assert!(thumb.is_some(), "video thumb should generate when ffmpeg exists");
+        assert!(thumb.unwrap().exists());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

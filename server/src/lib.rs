@@ -583,6 +583,28 @@ async fn thumbnail(state: State<AppState>, Query(q): Query<ThumbQuery>) -> Respo
     if !is_media_file(&name) {
         return (StatusCode::UNSUPPORTED_MEDIA_TYPE, "not a raster image").into_response();
     }
+
+    // videos: serve the scan-generated ffmpeg frame (generated on demand the
+    // first time; the raster path below can't decode videos)
+    if media::is_video(&path) {
+        let pid = state.db.active_profile().map(|p| p.id).unwrap_or(0);
+        let thumb = tokio::task::spawn_blocking(move || media::generate_thumb(pid, &path))
+            .await
+            .ok()
+            .flatten();
+        let Some(tp) = thumb else {
+            return (StatusCode::UNSUPPORTED_MEDIA_TYPE, "no video thumbnail").into_response();
+        };
+        return match tokio::fs::read(&tp).await {
+            Ok(bytes) => Response::builder()
+                .header(header::CONTENT_TYPE, "image/webp")
+                .header(header::CACHE_CONTROL, "max-age=86400")
+                .body(Body::from(bytes))
+                .unwrap(),
+            Err(_) => (StatusCode::NOT_FOUND, "no video thumbnail").into_response(),
+        };
+    }
+
     let size = q.size.unwrap_or(400).clamp(64, 1200);
 
     let Ok(meta) = tokio::fs::metadata(&path).await else {
