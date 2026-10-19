@@ -12,7 +12,7 @@ services:
     volumes:
       - diurn-data:/data           # DB + thumbnail cache live here
       - ${HOME}:${HOME}            # home mounted at its real path, so folder
-      # - /mnt:/mnt                  # give access to mounted partitions
+      - /mnt:/mnt                  # give access to mounted partitions
                                    # settings match bare-metal paths exactly
       # optional: reuse the host's existing diurn DB (HOME=/data puts the DB
       # at /data/.diurn/data.db, so this mount slots right in):
