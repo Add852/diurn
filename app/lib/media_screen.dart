@@ -234,25 +234,6 @@ class _MediaScreenState extends State<MediaScreen> {
                                   child: const Icon(Icons.movie_outlined,
                                       size: 40),
                                 ),
-                              Positioned(
-                                left: 6,
-                                right: 6,
-                                bottom: 6,
-                                child: Text(
-                                  f.name,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                      fontSize: 11,
-                                      color: Colors.white,
-                                      shadows: [
-                                        Shadow(
-                                            color: Color(0xd9000000),
-                                            blurRadius: 5,
-                                            offset: Offset(0, 1))
-                                      ]),
-                                ),
-                              ),
                             ],
                           ),
                         ),
