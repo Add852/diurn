@@ -172,6 +172,8 @@ impl Drop for ScanGuard {
 }
 
 fn scan_inner(db: &crate::db::Db, profile: &Profile, folder: &Path) -> usize {
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
     // Short lock: read the cache, then release — the walk + EXIF + thumbnail
     // work below must not block journal/entry requests behind the mutex.
     let cached: HashMap<String, (i64, Option<String>)> = {
@@ -195,96 +197,151 @@ fn scan_inner(db: &crate::db::Db, profile: &Profile, folder: &Path) -> usize {
         map
     };
 
-    let mut seen: Vec<String> = Vec::new();
-    let mut todo: Vec<(std::path::PathBuf, i64)> = Vec::new();
-    walk(folder, &mut |p, mtime_ms| {
-        let path_str = p.to_string_lossy().into_owned();
-        seen.push(path_str.clone());
-        let ext = ext_of(p);
-        if !MEDIA_EXTS.contains(&ext.as_str()) {
-            return;
-        }
-        if let Some((_, old_mtime, old_thumb)) =
-            cached.get(&path_str).map(|(m, t)| ((), *m, t))
-        {
-            // unchanged AND already thumbnailed → skip. Rows with no thumb
-            // (e.g. videos from before ffmpeg support) get reprocessed.
-            if old_mtime == mtime_ms && old_thumb.is_some() {
-                return;
-            }
-        }
-        todo.push((p.to_path_buf(), mtime_ms));
-    });
+    // Stream: workers process files AS the walk discovers them (network
+    // mounts: first rows land in the cache within seconds, not after the
+    // whole walk). Each worker commits its own short batches.
+    let todo: std::sync::Mutex<std::collections::VecDeque<(std::path::PathBuf, i64)>> =
+        std::sync::Mutex::new(std::collections::VecDeque::new());
+    let seen: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+    let walk_done = AtomicBool::new(false);
+    let written = AtomicUsize::new(0);
 
-    // New/changed files in parallel — on network mounts the EXIF read and
-    // thumb encode are latency-bound, so overlap them across cores.
-    let updates: std::sync::Mutex<
-        Vec<(String, Option<String>, i64, i64, Option<String>, String)>,
-    > = std::sync::Mutex::new(Vec::new());
-    let next = std::sync::atomic::AtomicUsize::new(0);
-    let workers = std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(4)
-        .min(8);
     std::thread::scope(|s| {
+        let workers = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(4)
+            .min(8);
         for _ in 0..workers {
-            s.spawn(|| loop {
-                let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                if i >= todo.len() {
-                    break;
+            s.spawn(|| {
+                let mut batch: Vec<(
+                    String,
+                    Option<String>,
+                    i64,
+                    i64,
+                    Option<String>,
+                    String,
+                )> = Vec::new();
+                loop {
+                    // pop_front claims each item exactly once — polling never
+                    // burns queue slots
+                    let item = todo.lock().unwrap().pop_front();
+                    match item {
+                        Some((p, mtime_ms)) => {
+                            let path_str = p.to_string_lossy().into_owned();
+                            let ext = ext_of(&p);
+                            let kind = if VIDEO_EXTS.contains(&ext.as_str()) {
+                                "video"
+                            } else {
+                                "image"
+                            };
+                            let (date, captured_at) = resolve_date(&p, mtime_ms);
+                            let thumb = generate_thumb(profile.id, &p)
+                                .map(|t| t.to_string_lossy().into_owned());
+                            batch.push((
+                                path_str,
+                                date,
+                                captured_at,
+                                mtime_ms,
+                                thumb,
+                                kind.to_string(),
+                            ));
+                            if batch.len() >= 25 {
+                                written.fetch_add(
+                                    flush_batch(db, profile.id, &mut batch),
+                                    Ordering::Relaxed,
+                                );
+                            }
+                        }
+                        None => {
+                            if walk_done.load(Ordering::SeqCst) {
+                                break;
+                            }
+                            std::thread::sleep(std::time::Duration::from_millis(2));
+                        }
+                    }
                 }
-                let (p, mtime_ms) = &todo[i];
-                let path_str = p.to_string_lossy().into_owned();
-                let ext = ext_of(p);
-                let kind = if VIDEO_EXTS.contains(&ext.as_str()) {
-                    "video"
-                } else {
-                    "image"
-                };
-                let (date, captured_at) = resolve_date(p, *mtime_ms);
-                let thumb =
-                    generate_thumb(profile.id, p).map(|t| t.to_string_lossy().into_owned());
-                updates.lock().unwrap().push((
-                    path_str,
-                    date,
-                    captured_at,
-                    *mtime_ms,
-                    thumb,
-                    kind.to_string(),
-                ));
+                if !batch.is_empty() {
+                    written.fetch_add(flush_batch(db, profile.id, &mut batch), Ordering::Relaxed);
+                }
             });
         }
+        // the scan thread itself walks and feeds the queue
+        walk(folder, &mut |p, mtime_ms| {
+            let path_str = p.to_string_lossy().into_owned();
+            seen.lock().unwrap().push(path_str.clone());
+            let ext = ext_of(p);
+            if !MEDIA_EXTS.contains(&ext.as_str()) {
+                return;
+            }
+            if let Some((_, old_mtime, old_thumb)) =
+                cached.get(&path_str).map(|(m, t)| ((), *m, t))
+            {
+                // unchanged AND already thumbnailed → skip. Rows with no thumb
+                // (e.g. videos from before ffmpeg support) get reprocessed.
+                if old_mtime == mtime_ms && old_thumb.is_some() {
+                    return;
+                }
+            }
+            todo.lock().unwrap().push_back((p.to_path_buf(), mtime_ms));
+        });
+        walk_done.store(true, Ordering::SeqCst);
     });
-    let updates = updates.into_inner().unwrap();
 
+    // prune: files gone from the walk, or no longer classified as media
+    // (stale rows from older binaries, e.g. svg listings)
+    let seen_set: std::collections::HashSet<String> =
+        seen.into_inner().unwrap().into_iter().collect();
+    let written = written.load(Ordering::Relaxed);
     let mut conn = db.0.lock().unwrap();
-    // commit in batches so rows appear progressively while a long scan (a
-    // 4000-file network mount) is still running
-    for chunk in updates.chunks(200) {
-        let Ok(tx) = conn.transaction() else { break };
-        for (path, date, captured_at, mtime, thumb, kind) in chunk {
-            let _ = tx.execute(
-                "INSERT INTO media_cache (path, profile_id, date, captured_at, type, mtime, thumb, scanned_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, datetime('now'))
-                 ON CONFLICT(path, profile_id) DO UPDATE SET date=?3, captured_at=?4, type=?5, mtime=?6, thumb=?7, scanned_at=datetime('now')",
-                rusqlite::params![path, profile.id, date, captured_at, kind, mtime, thumb],
-            );
-        }
-        let _ = tx.commit();
-    }
     let Ok(tx) = conn.transaction() else {
-        return updates.len();
+        return written;
     };
-    for path in cached.keys() {
-        if !seen.contains(path) {
-            let _ = tx.execute(
-                "DELETE FROM media_cache WHERE path = ?1 AND profile_id = ?2",
-                rusqlite::params![path, profile.id],
-            );
-        }
+    let stale: Vec<String> = cached
+        .keys()
+        .filter(|p| {
+            !seen_set.contains(*p) || !MEDIA_EXTS.contains(&ext_of(Path::new(p)).as_str())
+        })
+        .cloned()
+        .collect();
+    for path in &stale {
+        let _ = tx.execute(
+            "DELETE FROM media_cache WHERE path = ?1 AND profile_id = ?2",
+            rusqlite::params![path, profile.id],
+        );
     }
     let _ = tx.commit();
-    updates.len()
+    written
+}
+
+/// Commit a worker's batch in one short transaction; clears the batch.
+fn flush_batch(
+    db: &crate::db::Db,
+    profile_id: i64,
+    batch: &mut Vec<(
+        String,
+        Option<String>,
+        i64,
+        i64,
+        Option<String>,
+        String,
+    )>,
+) -> usize {
+    let mut conn = db.0.lock().unwrap();
+    let Ok(tx) = conn.transaction() else { return 0 };
+    for (path, date, captured_at, mtime, thumb, kind) in batch.iter() {
+        if let Err(e) = tx.execute(
+            "INSERT INTO media_cache (path, profile_id, date, captured_at, type, mtime, thumb, scanned_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, datetime('now'))
+             ON CONFLICT(path, profile_id) DO UPDATE SET date=?3, captured_at=?4, type=?5, mtime=?6, thumb=?7, scanned_at=datetime('now')",
+            rusqlite::params![path, profile_id, date, captured_at, kind, mtime, thumb],
+            ) {
+                eprintln!("[flush err] {e}");
+            }
+    }
+    let _ = tx.commit();
+    let n = batch.len();
+    batch.clear();
+    n
 }
 
 fn walk(dir: &Path, f: &mut impl FnMut(&Path, i64)) {
@@ -518,6 +575,41 @@ mod video_thumb_tests {
         let thumb = generate_thumb(999, &video);
         assert!(thumb.is_some(), "video thumb should generate when ffmpeg exists");
         assert!(thumb.unwrap().exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod scan_tests {
+    use super::*;
+
+    #[test]
+    fn scan_streams_rows() {
+        let dir = std::env::temp_dir().join("diurn-scan-stream-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        image::DynamicImage::ImageRgb8(image::ImageBuffer::from_pixel(
+            80,
+            40,
+            image::Rgb([1, 2, 3]),
+        ))
+        .save(dir.join("a.jpg"))
+        .unwrap();
+
+        let db = crate::db::Db::open(&dir.join("db.sqlite")).unwrap();
+        let profile = Profile {
+            id: 1,
+            name: "t".into(),
+            daily_note_folder: String::new(),
+            template_note_path: String::new(),
+            media_folder: dir.to_string_lossy().into_owned(),
+            timezone: "UTC".into(),
+            day_offset_hours: 0,
+            theme_mode: "system".into(),
+            accent_color: "#22c55e".into(),
+        };
+        let n = scan_inner(&db, &profile, &dir);
+        assert_eq!(n, 1, "scan should index the jpg");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
