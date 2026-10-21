@@ -57,7 +57,7 @@ class _JournalScreenState extends State<JournalScreen> {
 
   Future<(List<Entry>, Map<String, List<MediaFile>>, bool)> _load() async {
     final entries = await widget.api.entries();
-    final (files, _, scanning) = await widget.api.mediaFiles();
+    final (files, _, scanning, _) = await widget.api.mediaFiles();
     // every day's media list feeds the card backgrounds
     final byDate = <String, List<MediaFile>>{};
     for (final f in files) {
@@ -286,7 +286,17 @@ class _EntryCard extends StatelessWidget {
                       : api.mediaUrl(dayMedia.first.path),
                   errorWidget: const SizedBox.shrink(),
                 ),
-                Container(color: Colors.black.withValues(alpha: 0.55)),
+                // gradient scrim: dark behind the text, clear at the top
+                Container(
+                  decoration: const BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.bottomCenter,
+                      end: Alignment.topCenter,
+                      colors: [Color(0xCC000000), Color(0x00000000)],
+                      stops: [0.0, 0.6],
+                    ),
+                  ),
+                ),
               ] else
                 // themed placeholder for entries without media that day
                 Icon(Icons.notes_outlined,

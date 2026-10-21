@@ -72,6 +72,14 @@ class _LoadingImageState extends State<LoadingImage> {
 
 /// Animated sweep placeholder — clearly visible movement while the bytes
 /// travel (no external package).
+/// Animated shimmer tile for "not yet indexed" grid slots.
+class ShimmerBox extends StatelessWidget {
+  const ShimmerBox({super.key});
+
+  @override
+  Widget build(BuildContext context) => const _Shimmer();
+}
+
 class _Shimmer extends StatefulWidget {
   const _Shimmer();
 

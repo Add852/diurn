@@ -77,7 +77,7 @@ class _FormScreenState extends State<FormScreen> {
 
   Future<void> _loadMedia() async {
     try {
-      final (files, _, _) = await widget.api.mediaFiles();
+      final (files, _, _, _) = await widget.api.mediaFiles();
       if (!mounted) return;
       setState(() => _allMedia = files);
     } catch (_) {
