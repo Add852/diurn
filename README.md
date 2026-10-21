@@ -40,7 +40,6 @@ cargo run                    # default port 12321, DB at ~/.diurn/data.db
 | `DIURN_PORT` | `12321` | listen port |
 | `DIURN_DB` | `~/.diurn/data.db` | SQLite path (shared with the old app) |
 | `DIURN_ROOTS` | `$HOME` | `:`-separated allowed roots — anything outside is 403 |
-| `DIURN_CACHE` | system temp | thumbnail cache dir |
 
 ## Run the app
 
@@ -86,7 +85,7 @@ existing DB — see the comments in `docker-compose.yml`.
 | `GET /api/template-content?path=` | read a `.md` file for the template editor |
 | `GET /api/media` | `{files:[…], folder}` cached list; kicks the incremental scan |
 | `GET /api/media/file?path=<abs>` | file stream; `Range` supported (206/416) |
-| `GET /api/thumbnail?path=<abs>&size=` | JPEG thumb (longest edge, default 400) |
+| `GET /api/thumbnail?path=<abs>` | 400px webp thumb from the scan cache (generated on demand) |
 | `GET /api/fs?dir=…&filter=…` / `?check=…` | server-side browser used by the path pickers |
 
 Auth: single admin over HTTP Basic. First run is open — create the admin via

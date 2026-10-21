@@ -217,7 +217,7 @@ async fn media_rejects_outside_root() {
 #[tokio::test]
 async fn thumbnail_resizes_and_caches() {
     let root = tmp_root("thumb");
-    // 1200x600 red PNG -> 400x200 JPEG thumb
+    // 1200x600 red PNG -> 400x200 webp thumb (single scan pipeline)
     let img = image::RgbaImage::from_pixel(1200, 600, image::Rgba([255u8, 0, 0, 255]));
     img.save(root.join("big.png")).unwrap();
 
@@ -230,12 +230,12 @@ async fn thumbnail_resizes_and_caches() {
         .await
         .unwrap();
     assert_eq!(res.status(), StatusCode::OK);
-    assert_eq!(res.headers()["content-type"], "image/jpeg");
+    assert_eq!(res.headers()["content-type"], "image/webp");
     let body = res.into_body().collect().await.unwrap().to_bytes();
     let decoded = image::load_from_memory(&body).unwrap();
     assert_eq!((decoded.width(), decoded.height()), (400, 200));
 
-    // non-image -> 415
+    // non-media -> 415
     std::fs::write(root.join("note.txt"), b"x").unwrap();
     let res = app(&root)
         .oneshot(

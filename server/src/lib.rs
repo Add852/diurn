@@ -575,11 +575,13 @@ async fn media(state: State<AppState>, Query(q): Query<MediaQuery>, headers: Hea
 #[derive(Deserialize)]
 struct ThumbQuery {
     path: String,
-    size: Option<u32>,
 }
 
 /// Server-side thumbnail: longest edge resized to ?size= (default 400),
 /// JPEG-encoded, cached on disk keyed by path+mtime+size.
+/// GET /api/thumbnail?path= — serve the scan-generated 400px webp thumbnail
+/// (generated on demand if missing). One pipeline for images and videos;
+/// the original is never re-decoded per request.
 async fn thumbnail(state: State<AppState>, Query(q): Query<ThumbQuery>) -> Response {
     let Ok(path) = Path::new(&q.path).canonicalize() else {
         return (StatusCode::NOT_FOUND, "no such file").into_response();
@@ -592,86 +594,25 @@ async fn thumbnail(state: State<AppState>, Query(q): Query<ThumbQuery>) -> Respo
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
     if !is_media_file(&name) {
-        return (StatusCode::UNSUPPORTED_MEDIA_TYPE, "not a raster image").into_response();
+        return (StatusCode::UNSUPPORTED_MEDIA_TYPE, "not a media file").into_response();
     }
 
-    // videos: serve the scan-generated ffmpeg frame (generated on demand the
-    // first time; the raster path below can't decode videos)
-    if media::is_video(&path) {
-        let pid = state.db.active_profile().map(|p| p.id).unwrap_or(0);
-        let thumb = tokio::task::spawn_blocking(move || media::generate_thumb(pid, &path))
-            .await
-            .ok()
-            .flatten();
-        let Some(tp) = thumb else {
-            return (StatusCode::UNSUPPORTED_MEDIA_TYPE, "no video thumbnail").into_response();
-        };
-        return match tokio::fs::read(&tp).await {
-            Ok(bytes) => Response::builder()
-                .header(header::CONTENT_TYPE, "image/webp")
-                .header(header::CACHE_CONTROL, "max-age=86400")
-                .body(Body::from(bytes))
-                .unwrap(),
-            Err(_) => (StatusCode::NOT_FOUND, "no video thumbnail").into_response(),
-        };
-    }
-
-    let size = q.size.unwrap_or(400).clamp(64, 1200);
-
-    let Ok(meta) = tokio::fs::metadata(&path).await else {
-        return (StatusCode::NOT_FOUND, "no such file").into_response();
-    };
-    let mtime = meta
-        .modified()
+    let pid = state.db.active_profile().map(|p| p.id).unwrap_or(0);
+    let thumb = tokio::task::spawn_blocking(move || media::generate_thumb(pid, &path))
+        .await
         .ok()
-        .and_then(|m| m.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    use std::hash::Hasher;
-    hasher.write(path.to_string_lossy().as_bytes());
-    hasher.write(&mtime.to_le_bytes());
-    hasher.write_u32(size);
-    let key = format!("{:016x}.jpg", hasher.finish());
-
-    let cache_dir = std::env::var("DIURN_CACHE")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| std::env::temp_dir().join("diurn-thumbs"));
-    let cache_path = cache_dir.join(key);
-
-    if let Ok(bytes) = tokio::fs::read(&cache_path).await {
-        return jpeg_response(bytes);
+        .flatten();
+    let Some(tp) = thumb else {
+        return (StatusCode::UNPROCESSABLE_ENTITY, "cannot decode image").into_response();
+    };
+    match tokio::fs::read(&tp).await {
+        Ok(bytes) => Response::builder()
+            .header(header::CONTENT_TYPE, "image/webp")
+            .header(header::CACHE_CONTROL, "max-age=86400")
+            .body(Body::from(bytes))
+            .unwrap(),
+        Err(_) => (StatusCode::NOT_FOUND, "no thumbnail").into_response(),
     }
-
-    let src = path.clone();
-    let generated = tokio::task::spawn_blocking(move || generate_thumb(&src, size)).await;
-    match generated {
-        Ok(Ok(bytes)) => {
-            let _ = tokio::fs::create_dir_all(&cache_dir).await;
-            let _ = tokio::fs::write(&cache_path, &bytes).await;
-            jpeg_response(bytes)
-        }
-        _ => (StatusCode::UNPROCESSABLE_ENTITY, "cannot decode image").into_response(),
-    }
-}
-
-fn generate_thumb(src: &Path, size: u32) -> Result<Vec<u8>, ()> {
-    let img = image::open(src).map_err(|_| ())?;
-    let thumb = img.thumbnail(size, size);
-    let mut out = std::io::Cursor::new(Vec::new());
-    thumb
-        .write_to(&mut out, image::ImageFormat::Jpeg)
-        .map_err(|_| ())?;
-    Ok(out.into_inner())
-}
-
-fn jpeg_response(bytes: Vec<u8>) -> Response {
-    (
-        [(header::CONTENT_TYPE, "image/jpeg")],
-        bytes,
-    )
-        .into_response()
 }
 
 /// Ok(None): no Range header -> serve whole file (200).
