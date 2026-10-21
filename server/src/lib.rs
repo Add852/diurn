@@ -494,16 +494,10 @@ async fn media_list(state: State<AppState>, Query(q): Query<MediaListQuery>) -> 
     let conn = state.db.0.lock().unwrap();
     let files = media::list_files(&conn, profile.id, q.date.as_deref(), year_month.as_deref());
     let scanning = scanning || media::scan_in_progress();
-    let total = if scanning {
-        files.len().max(media::scan_total())
-    } else {
-        files.len()
-    };
     Json(json!({
         "files": files,
         "folder": profile.media_folder,
         "scanning": scanning,
-        "total": total,
     }))
     .into_response()
 }

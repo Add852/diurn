@@ -26,14 +26,14 @@ class MediaScreen extends StatefulWidget {
 }
 
 class _MediaScreenState extends State<MediaScreen> {
-  late Future<(List<MediaFile>, String, bool, int, List<Entry>)> _files;
+  late Future<(List<MediaFile>, String, bool, List<Entry>)> _files;
   int _retries = 0;
   Timer? _pollTimer;
   int _polls = 0;
 
   /// last completed load — polls swap the future, which would otherwise
   /// flash the whole tab back to a spinner every 3s
-  (List<MediaFile>, String, bool, int, List<Entry>)? _lastData;
+  (List<MediaFile>, String, bool, List<Entry>)? _lastData;
 
   @override
   void initState() {
@@ -49,18 +49,18 @@ class _MediaScreenState extends State<MediaScreen> {
     super.dispose();
   }
 
-  Future<(List<MediaFile>, String, bool, int, List<Entry>)> _load() async {
-    final (files, folder, scanning, total) = await widget.api.mediaFiles();
+  Future<(List<MediaFile>, String, bool, List<Entry>)> _load() async {
+    final (files, folder, scanning) = await widget.api.mediaFiles();
     // entries feed the per-day "view entry" button
     final entries = await widget.api.entries();
-    return (files, folder, scanning, total, entries);
+    return (files, folder, scanning, entries);
   }
 
   Future<void> _reload() async {
     setState(() {
       _files = _load();
     });
-    final (files, folder, scanning, _, _) = await _files;
+    final (files, folder, scanning, _) = await _files;
     if (!mounted) return;
     _pollTimer?.cancel();
     if (scanning && _polls < 600) {
@@ -83,7 +83,7 @@ class _MediaScreenState extends State<MediaScreen> {
   Widget build(BuildContext context) {
     return RefreshIndicator(
       onRefresh: _reload,
-      child: FutureBuilder<(List<MediaFile>, String, bool, int, List<Entry>)>(
+      child: FutureBuilder<(List<MediaFile>, String, bool, List<Entry>)>(
         future: _files,
         builder: (context, snap) {
           if (snap.hasError) {
@@ -97,7 +97,7 @@ class _MediaScreenState extends State<MediaScreen> {
             return const Center(child: CircularProgressIndicator());
           }
           _lastData = data;
-          final (files, folder, scanning, total, entries) = data;
+          final (files, folder, scanning, entries) = data;
           final entryByDate = {for (final e in entries) e.date: e};
           if (files.isEmpty) {
             final message = folder.isEmpty
@@ -145,24 +145,6 @@ class _MediaScreenState extends State<MediaScreen> {
                 child: Padding(
                   padding: EdgeInsets.symmetric(horizontal: 16),
                   child: LinearProgressIndicator(minHeight: 3),
-                ),
-              ),
-            if (scanning && total > files.length)
-              SliverPadding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
-                sliver: SliverGrid.builder(
-                  itemCount: total - files.length,
-                  gridDelegate:
-                      const SliverGridDelegateWithMaxCrossAxisExtent(
-                    maxCrossAxisExtent: 180,
-                    mainAxisSpacing: 8,
-                    crossAxisSpacing: 8,
-                    childAspectRatio: 1,
-                  ),
-                  itemBuilder: (context, i) => ClipRRect(
-                    borderRadius: BorderRadius.circular(10),
-                    child: const ShimmerBox(),
-                  ),
                 ),
               ),
             for (final day in groups.keys)
@@ -234,12 +216,19 @@ class _MediaScreenState extends State<MediaScreen> {
                           child: Stack(
                             fit: StackFit.expand,
                             children: [
-                              if (f.isImage)
+                              if (f.isImage && f.hasThumb)
                                 LoadingImage(
-                                  url: f.hasThumb
-                                      ? widget.api.thumbUrl(f.path)
-                                      : widget.api.mediaUrl(f.path),
+                                  url: widget.api.thumbUrl(f.path),
                                 )
+                              else if (f.isImage)
+                                // thumb pending during a scan → shimmer;
+                                // scan finished without one → full image
+                                // (platform decoders cover what we can't)
+                                scanning
+                                    ? const ShimmerBox()
+                                    : LoadingImage(
+                                        url: widget.api.mediaUrl(f.path),
+                                      )
                               else
                                 ColoredBox(
                                   color: Theme.of(context)

@@ -118,15 +118,6 @@ pub fn scan_in_progress() -> bool {
     SCAN_RUNNING.load(Ordering::SeqCst)
 }
 
-/// Media files discovered by the in-flight scan's walk (all of them, even
-/// not-yet-processed ones) — lets clients render the full grid skeleton.
-static SCAN_TOTAL: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-
-pub fn scan_total() -> usize {
-    use std::sync::atomic::Ordering;
-    SCAN_TOTAL.load(Ordering::SeqCst)
-}
-
 /// Finished scans younger than this skip the re-walk (network mounts: every
 /// /api/media request would otherwise stat the whole tree again).
 const SCAN_COOLDOWN: std::time::Duration = std::time::Duration::from_secs(5);
@@ -225,7 +216,6 @@ fn scan_inner(db: &crate::db::Db, profile: &Profile, folder: &Path) -> usize {
     let walk_done = AtomicBool::new(false);
     let written = AtomicUsize::new(0);
 
-    SCAN_TOTAL.store(0, Ordering::SeqCst);
     std::thread::scope(|s| {
         let workers = std::thread::available_parallelism()
             .map(|n| n.get())
@@ -280,7 +270,6 @@ fn scan_inner(db: &crate::db::Db, profile: &Profile, folder: &Path) -> usize {
             if !MEDIA_EXTS.contains(&ext.as_str()) {
                 return;
             }
-            SCAN_TOTAL.fetch_add(1, Ordering::SeqCst);
             if let Some((_, old_mtime, old_thumb)) =
                 cached.get(&path_str).map(|(m, t)| ((), *m, t))
             {

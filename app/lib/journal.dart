@@ -57,7 +57,7 @@ class _JournalScreenState extends State<JournalScreen> {
 
   Future<(List<Entry>, Map<String, List<MediaFile>>, bool)> _load() async {
     final entries = await widget.api.entries();
-    final (files, _, scanning, _) = await widget.api.mediaFiles();
+    final (files, _, scanning) = await widget.api.mediaFiles();
     // every day's media list feeds the card backgrounds
     final byDate = <String, List<MediaFile>>{};
     for (final f in files) {
@@ -161,6 +161,7 @@ class _JournalScreenState extends State<JournalScreen> {
                           api: widget.api,
                           entry: e,
                           dayMedia: mediaByDate[e.date] ?? const [],
+                          scanning: scanning,
                           fm: fm,
                           onChanged: _reload,
                         );
@@ -183,12 +184,16 @@ class _EntryCard extends StatelessWidget {
   final Api api;
   final Entry entry;
   final List<MediaFile> dayMedia;
+
+  /// while a scan runs, media without a thumbnail render as shimmer
+  final bool scanning;
   final Map<String, String> fm;
   final VoidCallback onChanged;
   const _EntryCard({
     required this.api,
     required this.entry,
     required this.dayMedia,
+    required this.scanning,
     required this.fm,
     required this.onChanged,
   });
@@ -280,12 +285,15 @@ class _EntryCard extends StatelessWidget {
           fit: StackFit.expand,
           children: [
               if (onPhoto) ...[
-                LoadingImage(
-                  url: dayMedia.first.hasThumb
-                      ? api.thumbUrl(dayMedia.first.path)
-                      : api.mediaUrl(dayMedia.first.path),
-                  errorWidget: const SizedBox.shrink(),
-                ),
+                if (dayMedia.first.hasThumb)
+                  LoadingImage(url: api.thumbUrl(dayMedia.first.path))
+                else if (scanning)
+                  const ShimmerBox()
+                else
+                  LoadingImage(
+                    url: api.mediaUrl(dayMedia.first.path),
+                    errorWidget: const SizedBox.shrink(),
+                  ),
                 // gradient scrim: dark behind the text, clear at the top
                 Container(
                   decoration: const BoxDecoration(
