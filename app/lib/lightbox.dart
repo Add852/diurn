@@ -113,6 +113,7 @@ class _MediaViewerScreenState extends State<MediaViewerScreen> {
               final f = files[i];
               return ViewerScreen(
                 url: widget.api.mediaUrl(f.path),
+                previewUrl: f.hasThumb ? widget.api.thumbUrl(f.path) : null,
                 name: f.name,
                 video: f.isVideo,
                 embedded: true,
