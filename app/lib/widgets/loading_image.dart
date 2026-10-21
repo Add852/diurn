@@ -29,17 +29,7 @@ class _LoadingImageState extends State<LoadingImage> {
     return Stack(
       fit: StackFit.expand,
       children: [
-        if (!_loaded && !_failed)
-          const ColoredBox(
-            color: Color(0x3327272a),
-            child: Center(
-              child: SizedBox(
-                width: 22,
-                height: 22,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              ),
-            ),
-          ),
+        if (!_loaded && !_failed) const _Shimmer(),
         if (_failed)
           Center(
             child: widget.errorWidget ??
@@ -76,6 +66,50 @@ class _LoadingImageState extends State<LoadingImage> {
             ),
           ),
       ],
+    );
+  }
+}
+
+/// Animated sweep placeholder — clearly visible movement while the bytes
+/// travel (no external package).
+class _Shimmer extends StatefulWidget {
+  const _Shimmer();
+
+  @override
+  State<_Shimmer> createState() => _ShimmerState();
+}
+
+class _ShimmerState extends State<_Shimmer>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1400),
+  )..repeat();
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    const base = Color(0xff27272a);
+    const highlight = Color(0xff3f3f46);
+    return AnimatedBuilder(
+      animation: _c,
+      builder: (context, _) {
+        final t = _c.value;
+        return Container(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment(-1.0 + 2 * t, 0),
+              end: Alignment(0.0 + 2 * t, 0),
+              colors: const [base, highlight, base],
+            ),
+          ),
+        );
+      },
     );
   }
 }

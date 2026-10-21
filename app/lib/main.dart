@@ -107,17 +107,50 @@ class _HomeScreenState extends State<HomeScreen> {
   /// Today tab: the FAB becomes Write — triggers the form save.
   final ValueNotifier<int> _writeTrigger = ValueNotifier(0);
 
+  /// Settings form has unsaved changes — ask before navigating away.
+  final ValueNotifier<bool> _settingsDirty = ValueNotifier(false);
+
   @override
   void dispose() {
     _refreshTick.dispose();
     _saveTrigger.dispose();
     _writeTrigger.dispose();
+    _settingsDirty.dispose();
     super.dispose();
   }
 
   /// Single navigation entry point: entering OR leaving Settings bumps the
-  /// refresh signal — the tab always loads the last saved settings.
-  void _select(int i) {
+  /// refresh signal — the tab always loads the last saved settings. Leaving
+  /// with unsaved changes asks first (Save / Discard / Cancel).
+  Future<void> _select(int i) async {
+    if (_index == 3 && i != 3 && _settingsDirty.value && mounted) {
+      final action = await showDialog<String>(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => AlertDialog(
+          title: const Text('Unsaved changes'),
+          content: const Text(
+              'Your settings have changes that were not saved yet. Save them '
+              'before leaving?'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, 'cancel'),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context, 'discard'),
+              child: const Text('Discard changes'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, 'save'),
+              child: const Text('Save'),
+            ),
+          ],
+        ),
+      );
+      if (!mounted || action == null) return; // cancel — stay on settings
+      if (action == 'save') _saveTrigger.value++;
+    }
     if (i == _index) return;
     if (i == 3 || _index == 3) _refreshTick.value++;
     setState(() => _index = i);
@@ -278,6 +311,7 @@ class _HomeScreenState extends State<HomeScreen> {
               refreshSignal: _refreshTick,
               onCredentialsChanged: _setCredentials,
               onAppearanceChanged: widget.onAppearance,
+              dirtyNotifier: _settingsDirty,
             ),
           ],
         ),

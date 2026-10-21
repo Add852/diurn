@@ -22,6 +22,10 @@ class SettingsScreen extends StatefulWidget {
 
   /// Called with the saved profile after a settings save (theme + accent).
   final void Function(Map<String, dynamic> profile)? onAppearanceChanged;
+
+  /// True while the form has unsaved changes — the shell asks before
+  /// navigating away.
+  final ValueNotifier<bool>? dirtyNotifier;
   final VoidCallback? onSaved;
   final ValueListenable<int>? saveTrigger;
   final ValueListenable<int>? refreshSignal;
@@ -32,6 +36,7 @@ class SettingsScreen extends StatefulWidget {
     this.onChangeServer,
     this.onCredentialsChanged,
     this.onAppearanceChanged,
+    this.dirtyNotifier,
     this.onSaved,
     this.saveTrigger,
     this.refreshSignal,
@@ -67,6 +72,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           onChangeServer: widget.onChangeServer,
           onCredentialsChanged: widget.onCredentialsChanged,
           onAppearanceChanged: widget.onAppearanceChanged,
+          dirtyNotifier: widget.dirtyNotifier,
           saveTrigger: widget.saveTrigger,
           refreshSignal: widget.refreshSignal,
         );
@@ -82,6 +88,7 @@ class _SettingsForm extends StatefulWidget {
   final VoidCallback? onChangeServer;
   final void Function(String? username, String? password)? onCredentialsChanged;
   final void Function(Map<String, dynamic> profile)? onAppearanceChanged;
+  final ValueNotifier<bool>? dirtyNotifier;
   final ValueListenable<int>? saveTrigger;
   final ValueListenable<int>? refreshSignal;
   const _SettingsForm({
@@ -91,6 +98,7 @@ class _SettingsForm extends StatefulWidget {
     this.onChangeServer,
     this.onCredentialsChanged,
     this.onAppearanceChanged,
+    this.dirtyNotifier,
     this.saveTrigger,
     this.refreshSignal,
   });
@@ -105,7 +113,7 @@ class _SettingsFormState extends State<_SettingsForm> {
   final _fields = <String, TextEditingController>{};
   late final TextEditingController _templateCtrl = TextEditingController(
     text: widget.data['template_content'] as String? ?? '',
-  );
+  )..addListener(() => _setDirty(true));
   late final TextEditingController _usernameCtrl = TextEditingController(
     text: (widget.data['user'] as Map?)?['username'] as String? ?? 'admin',
   );
@@ -113,6 +121,14 @@ class _SettingsFormState extends State<_SettingsForm> {
   String? _error;
   String? _savedFlash;
   Timer? _flashTimer;
+
+  /// suppresses dirty-marking while server values are loaded into fields
+  bool _applyingFresh = false;
+
+  void _setDirty(bool v) {
+    if (_applyingFresh) return;
+    widget.dirtyNotifier?.value = v;
+  }
 
   void _flash(String msg) {
     setState(() {
@@ -136,10 +152,11 @@ class _SettingsFormState extends State<_SettingsForm> {
     });
   }
 
-  TextEditingController _ctrl(String key) => _fields.putIfAbsent(
-    key,
-    () => TextEditingController(text: '${_profile[key] ?? ''}'),
-  );
+  TextEditingController _ctrl(String key) => _fields.putIfAbsent(key, () {
+    final c = TextEditingController(text: '${_profile[key] ?? ''}');
+    c.addListener(() => _setDirty(true));
+    return c;
+  });
 
   String _txt(String key) => _fields[key]?.text ?? '${_profile[key] ?? ''}';
 
@@ -168,6 +185,8 @@ class _SettingsFormState extends State<_SettingsForm> {
   }
 
   void _applyFresh(Map<String, dynamic> fresh) {
+    _applyingFresh = true;
+    _setDirty(false);
     _profile.clear();
     _profile.addAll(fresh['profile'] as Map<String, dynamic>);
     _questions = (fresh['questions'] as List)
@@ -179,6 +198,7 @@ class _SettingsFormState extends State<_SettingsForm> {
     for (final key in _fields.keys.toList()) {
       _fields[key]!.text = '${freshProfile[key] ?? ''}';
     }
+    _applyingFresh = false;
   }
 
   @override
@@ -218,6 +238,7 @@ class _SettingsFormState extends State<_SettingsForm> {
         templateContent: _templateCtrl.text,
       );
       if (!mounted) return;
+      _setDirty(false);
       _flash('Settings saved');
       widget.onSaved?.call();
       widget.onAppearanceChanged?.call(profile);
@@ -566,6 +587,20 @@ class _SettingsFormState extends State<_SettingsForm> {
     );
   }
 
+  void _setThemeMode(String mode) {
+    setState(() {
+      _profile['theme_mode'] = mode;
+      _setDirty(true);
+    });
+  }
+
+  void _setAccent(String hex) {
+    setState(() {
+      _profile['accent_color'] = hex;
+      _setDirty(true);
+    });
+  }
+
   Widget _themeModeField() {
     final mode = (_profile['theme_mode'] as String?) ?? 'system';
     return Padding(
@@ -590,7 +625,7 @@ class _SettingsFormState extends State<_SettingsForm> {
         ],
         selected: {mode},
         onSelectionChanged: (s) =>
-            setState(() => _profile['theme_mode'] = s.first),
+            setState(() => _setThemeMode(s.first)),
       ),
     );
   }
@@ -618,7 +653,7 @@ class _SettingsFormState extends State<_SettingsForm> {
         children: [
           for (final e in _accentChoices.entries)
             InkWell(
-              onTap: () => setState(() => _profile['accent_color'] = e.key),
+              onTap: () => _setAccent(e.key),
               customBorder: const CircleBorder(),
               child: Container(
                 width: 34,
@@ -665,6 +700,7 @@ class _SettingsFormState extends State<_SettingsForm> {
               for (var i = 0; i < _questions.length; i++) {
                 _questions[i]['sort_order'] = i;
               }
+              _setDirty(true);
             });
           },
           itemBuilder: (context, i) => Card(
@@ -1070,7 +1106,10 @@ class _SettingsFormState extends State<_SettingsForm> {
         ),
       );
       if (yes == true && mounted) {
-        setState(() => _questions.removeAt(index!));
+        setState(() {
+          _questions.removeAt(index!);
+          _setDirty(true);
+        });
       }
       return;
     }
@@ -1088,6 +1127,7 @@ class _SettingsFormState extends State<_SettingsForm> {
       } else {
         _questions[index] = result;
       }
+      _setDirty(true);
     });
   }
 }
