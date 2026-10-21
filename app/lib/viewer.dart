@@ -34,39 +34,17 @@ class ViewerScreen extends StatelessWidget {
           ? VideoFileWidget(url: url)
           : InteractiveViewer(
               maxScale: 8,
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  if (previewUrl != null)
-                    ImageFiltered(
-                      imageFilter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
-                      child: Image.network(
-                        previewUrl!,
-                        fit: BoxFit.contain,
-                        gaplessPlayback: true,
-                        filterQuality: FilterQuality.low,
+              child: previewUrl != null
+                  ? _ImageWithPreview(url: url, previewUrl: previewUrl!)
+                  : Image.network(
+                      url,
+                      fit: BoxFit.contain,
+                      errorBuilder: (_, _, _) => const Icon(
+                        Icons.broken_image_outlined,
+                        color: Colors.white38,
+                        size: 64,
                       ),
                     ),
-                  Image.network(
-                    url,
-                    fit: BoxFit.contain,
-                    gaplessPlayback: true,
-                    frameBuilder: (context, child, frame, wasSync) {
-                      final loaded = wasSync || frame != null;
-                      return AnimatedOpacity(
-                        opacity: loaded ? 1 : 0,
-                        duration: const Duration(milliseconds: 250),
-                        child: child,
-                      );
-                    },
-                    errorBuilder: (_, _, _) => const Icon(
-                      Icons.broken_image_outlined,
-                      color: Colors.white38,
-                      size: 64,
-                    ),
-                  ),
-                ],
-              ),
             ),
     );
     if (embedded) return body;
@@ -78,6 +56,64 @@ class ViewerScreen extends StatelessWidget {
         title: Text(name),
       ),
       body: body,
+    );
+  }
+}
+
+
+/// Full image over its blurred preview; the preview layer is removed once
+/// the full image decodes so its blur can't bleed past the edges.
+class _ImageWithPreview extends StatefulWidget {
+  final String url;
+  final String previewUrl;
+  const _ImageWithPreview({required this.url, required this.previewUrl});
+
+  @override
+  State<_ImageWithPreview> createState() => _ImageWithPreviewState();
+}
+
+class _ImageWithPreviewState extends State<_ImageWithPreview> {
+  bool _fullLoaded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        if (!_fullLoaded)
+          ImageFiltered(
+            imageFilter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+            child: Image.network(
+              widget.previewUrl,
+              fit: BoxFit.contain,
+              gaplessPlayback: true,
+              filterQuality: FilterQuality.low,
+            ),
+          ),
+        Image.network(
+          widget.url,
+          fit: BoxFit.contain,
+          gaplessPlayback: true,
+          frameBuilder: (context, child, frame, wasSync) {
+            final loaded = wasSync || frame != null;
+            if (loaded != _fullLoaded) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (mounted) setState(() => _fullLoaded = loaded);
+              });
+            }
+            return AnimatedOpacity(
+              opacity: loaded ? 1 : 0,
+              duration: const Duration(milliseconds: 250),
+              child: child,
+            );
+          },
+          errorBuilder: (_, _, _) => const Icon(
+            Icons.broken_image_outlined,
+            color: Colors.white38,
+            size: 64,
+          ),
+        ),
+      ],
     );
   }
 }

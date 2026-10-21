@@ -147,6 +147,24 @@ class _MediaScreenState extends State<MediaScreen> {
                   child: LinearProgressIndicator(minHeight: 3),
                 ),
               ),
+            if (scanning && total > files.length)
+              SliverPadding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+                sliver: SliverGrid.builder(
+                  itemCount: total - files.length,
+                  gridDelegate:
+                      const SliverGridDelegateWithMaxCrossAxisExtent(
+                    maxCrossAxisExtent: 180,
+                    mainAxisSpacing: 8,
+                    crossAxisSpacing: 8,
+                    childAspectRatio: 1,
+                  ),
+                  itemBuilder: (context, i) => ClipRRect(
+                    borderRadius: BorderRadius.circular(10),
+                    child: const ShimmerBox(),
+                  ),
+                ),
+              ),
             for (final day in groups.keys)
               SliverMainAxisGroup(
                 slivers: [
@@ -238,24 +256,6 @@ class _MediaScreenState extends State<MediaScreen> {
                   ),
                   ),
                 ],
-              ),
-            if (scanning && total > files.length)
-              SliverPadding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
-                sliver: SliverGrid.builder(
-                  itemCount: total - files.length,
-                  gridDelegate:
-                      const SliverGridDelegateWithMaxCrossAxisExtent(
-                    maxCrossAxisExtent: 180,
-                    mainAxisSpacing: 8,
-                    crossAxisSpacing: 8,
-                    childAspectRatio: 1,
-                  ),
-                  itemBuilder: (context, i) => ClipRRect(
-                    borderRadius: BorderRadius.circular(10),
-                    child: const ShimmerBox(),
-                  ),
-                ),
               ),
           ],
         );
