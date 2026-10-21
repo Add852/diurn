@@ -10,9 +10,10 @@ use rusqlite::Connection;
 
 use crate::db::Profile;
 
+// no svg: Flutter can't decode it via Image.network and the image crate can't
+// thumbnail it — the prune deletes stale svg rows on the next scan
 const MEDIA_EXTS: &[&str] = &[
-    "jpg", "jpeg", "png", "gif", "webp", "svg", "mp4", "webm", "mov", "mkv", "avi", "heic",
-    "heif",
+    "jpg", "jpeg", "png", "gif", "webp", "mp4", "webm", "mov", "mkv", "avi", "heic", "heif",
 ];
 const VIDEO_EXTS: &[&str] = &["mp4", "webm", "mov", "mkv", "avi"];
 const IMAGE_EXTS: &[&str] = &["jpg", "jpeg", "png", "heic", "heif", "webp"];
