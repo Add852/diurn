@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'api.dart';
 import 'journal.dart';
 import 'lightbox.dart';
+import 'widgets/loading_image.dart';
 
 /// Media tab: media_cache rows grouped by capture day (parity with the old
 /// media-view: newest day on top, day headers, thumbs from the scan).
@@ -216,15 +217,10 @@ class _MediaScreenState extends State<MediaScreen> {
                             fit: StackFit.expand,
                             children: [
                               if (f.isImage)
-                                Image.network(
-                                  f.hasThumb
+                                LoadingImage(
+                                  url: f.hasThumb
                                       ? widget.api.thumbUrl(f.path)
                                       : widget.api.mediaUrl(f.path),
-                                  fit: BoxFit.cover,
-                                  // thumb missing/undecodable -> full image
-                                  errorBuilder: (_, _, _) => Image.network(
-                                      widget.api.mediaUrl(f.path),
-                                      fit: BoxFit.cover),
                                 )
                               else
                                 ColoredBox(

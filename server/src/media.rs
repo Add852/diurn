@@ -24,6 +24,19 @@ fn ext_of(path: &Path) -> String {
         .unwrap_or_default()
 }
 
+/// Remove this profile's generated thumbnails (and the shared /api/thumbnail
+/// request cache) — regenerates on the next scan.
+pub fn clear_thumbs(profile_id: i64) -> usize {
+    let dir = dirs_thumbs().join(profile_id.to_string());
+    let n = std::fs::read_dir(&dir).map(|rd| rd.flatten().count()).unwrap_or(0);
+    let _ = std::fs::remove_dir_all(&dir);
+    let cache = std::env::var("DIURN_CACHE")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| std::env::temp_dir().join("diurn-thumbs"));
+    let _ = std::fs::remove_dir_all(&cache);
+    n
+}
+
 pub fn is_video(path: &Path) -> bool {
     VIDEO_EXTS.contains(&ext_of(path).as_str())
 }

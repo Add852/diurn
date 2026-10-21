@@ -229,6 +229,39 @@ class _SettingsFormState extends State<_SettingsForm> {
     }
   }
 
+  Future<void> _clearMediaCache() async {
+    final yes = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Clear media cache?'),
+        content: const Text(
+            'Removes cached media entries and generated thumbnails. Journal '
+            'notes and the original files are untouched — everything '
+            're-indexes on the next visit to the Media tab.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel')),
+          FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Clear')),
+        ],
+      ),
+    );
+    if (yes != true) return;
+    setState(() => _saving = true);
+    try {
+      final n = await widget.api.clearMediaCache();
+      if (!mounted) return;
+      _flash('Cleared $n cached media entries');
+    } catch (e) {
+      if (!mounted) return;
+      _fail('$e');
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
   Future<void> _saveAccount() async {
     final username = _usernameCtrl.text;
     final password = _txt('accountPassword');
@@ -830,6 +863,12 @@ class _SettingsFormState extends State<_SettingsForm> {
           onPressed: _saving ? null : _restoreDefaults,
           icon: const Icon(Icons.restart_alt_outlined),
           label: const Text('Restore defaults'),
+        ),
+        const SizedBox(height: 8),
+        OutlinedButton.icon(
+          onPressed: _saving ? null : _clearMediaCache,
+          icon: const Icon(Icons.image_not_supported_outlined),
+          label: const Text('Clear media cache'),
         ),
         const SizedBox(height: 20),
         _section('Server'),

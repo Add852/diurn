@@ -76,6 +76,7 @@ pub fn build_router(roots: Vec<PathBuf>, db: Arc<Db>) -> Router {
         .route("/api/template-content", get(template_content))
         .route("/api/media", get(media_list))
         .route("/api/media/file", get(media))
+        .route("/api/media/cache/clear", post(media_cache_clear))
         .route("/api/thumbnail", get(thumbnail))
         .route("/api/auth/account", put(auth_account))
         .route("/api/auth/reset", post(auth_reset))
@@ -498,6 +499,23 @@ async fn media_list(state: State<AppState>, Query(q): Query<MediaListQuery>) -> 
         "scanning": scanning || media::scan_in_progress(),
     }))
     .into_response()
+}
+
+/// POST /api/media/cache/clear — drop cached media rows + generated thumbs.
+async fn media_cache_clear(state: State<AppState>) -> Response {
+    let Some(profile) = state.db.active_profile() else {
+        return (StatusCode::BAD_REQUEST, "No active profile").into_response();
+    };
+    let cleared = {
+        let conn = state.db.0.lock().unwrap();
+        conn.execute(
+            "DELETE FROM media_cache WHERE profile_id = ?1",
+            rusqlite::params![profile.id],
+        )
+        .unwrap_or(0)
+    };
+    let thumbs = media::clear_thumbs(profile.id);
+    Json(json!({ "cleared": cleared, "thumbs": thumbs })).into_response()
 }
 
 async fn media(state: State<AppState>, Query(q): Query<MediaQuery>, headers: HeaderMap) -> Response {

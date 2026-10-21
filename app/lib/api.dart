@@ -239,6 +239,13 @@ class Api {
     );
   }
 
+  /// POST /api/media/cache/clear — drop cached media rows + generated thumbs.
+  /// Returns the number of cleared cache rows.
+  Future<int> clearMediaCache() async {
+    final v = await _send('POST', '/api/media/cache/clear', {}, null);
+    return (v is Map ? v['cleared'] : 0) as int? ?? 0;
+  }
+
   /// GET /api/form
   Future<FormInfo> form() async {
     final v = await _getJson('/api/form', {});

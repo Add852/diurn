@@ -6,6 +6,7 @@ import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 
 import 'api.dart';
 import 'lightbox.dart';
+import 'widgets/loading_image.dart';
 
 /// Shadow for text sitting on photo backgrounds (journal cards, media tiles).
 const _photoTextShadow = Shadow(
@@ -279,12 +280,11 @@ class _EntryCard extends StatelessWidget {
           fit: StackFit.expand,
           children: [
               if (onPhoto) ...[
-                Image.network(
-                  dayMedia.first.hasThumb
+                LoadingImage(
+                  url: dayMedia.first.hasThumb
                       ? api.thumbUrl(dayMedia.first.path)
                       : api.mediaUrl(dayMedia.first.path),
-                  fit: BoxFit.cover,
-                  errorBuilder: (_, _, _) => const SizedBox.shrink(),
+                  errorWidget: const SizedBox.shrink(),
                 ),
                 Container(color: Colors.black.withValues(alpha: 0.55)),
               ] else
