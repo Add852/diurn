@@ -211,20 +211,14 @@ fn scan_inner(db: &crate::db::Db, profile: &Profile, folder: &Path) -> usize {
         let workers = std::thread::available_parallelism()
             .map(|n| n.get())
             .unwrap_or(4)
-            .min(8);
+            .min(16);
         for _ in 0..workers {
             s.spawn(|| {
-                let mut batch: Vec<(
-                    String,
-                    Option<String>,
-                    i64,
-                    i64,
-                    Option<String>,
-                    String,
-                )> = Vec::new();
                 loop {
                     // pop_front claims each item exactly once — polling never
-                    // burns queue slots
+                    // burns queue slots. Each processed file flushes instantly:
+                    // the row is a few bytes, while thumbnailing a big image is
+                    // seconds — batching only delays visibility.
                     let item = todo.lock().unwrap().pop_front();
                     match item {
                         Some((p, mtime_ms)) => {
@@ -238,20 +232,16 @@ fn scan_inner(db: &crate::db::Db, profile: &Profile, folder: &Path) -> usize {
                             let (date, captured_at) = resolve_date(&p, mtime_ms);
                             let thumb = generate_thumb(profile.id, &p)
                                 .map(|t| t.to_string_lossy().into_owned());
-                            batch.push((
+                            let mut one = vec![(
                                 path_str,
                                 date,
                                 captured_at,
                                 mtime_ms,
                                 thumb,
                                 kind.to_string(),
-                            ));
-                            if batch.len() >= 25 {
-                                written.fetch_add(
-                                    flush_batch(db, profile.id, &mut batch),
-                                    Ordering::Relaxed,
-                                );
-                            }
+                            )];
+                            written
+                                .fetch_add(flush_batch(db, profile.id, &mut one), Ordering::Relaxed);
                         }
                         None => {
                             if walk_done.load(Ordering::SeqCst) {
@@ -260,9 +250,6 @@ fn scan_inner(db: &crate::db::Db, profile: &Profile, folder: &Path) -> usize {
                             std::thread::sleep(std::time::Duration::from_millis(2));
                         }
                     }
-                }
-                if !batch.is_empty() {
-                    written.fetch_add(flush_batch(db, profile.id, &mut batch), Ordering::Relaxed);
                 }
             });
         }
@@ -327,8 +314,15 @@ fn flush_batch(
         String,
     )>,
 ) -> usize {
+    eprintln!("[flush] called with {} rows", batch.len());
     let mut conn = db.0.lock().unwrap();
-    let Ok(tx) = conn.transaction() else { return 0 };
+    let tx = match conn.transaction() {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("[flush] transaction error: {e}");
+            return 0;
+        }
+    };
     for (path, date, captured_at, mtime, thumb, kind) in batch.iter() {
         if let Err(e) = tx.execute(
             "INSERT INTO media_cache (path, profile_id, date, captured_at, type, mtime, thumb, scanned_at)
