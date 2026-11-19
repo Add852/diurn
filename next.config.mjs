@@ -29,13 +29,14 @@ export default withPWA({
   runtimeCaching: [
     {
       // Media files (immutable, ETagged) — cache what the user viewed so
-      // revisits and offline browsing are instant. Bounded so a huge library
-      // can't balloon storage; LRU evicts oldest.
+      // revisits and offline browsing are instant. Thumbs are ~15-40KB WebP,
+      // so 2000 entries ≈ 30-80MB; below a tile count this size the LRU was
+      // evicting early tiles on scroll-back, forcing network refetches.
       urlPattern: /\/api\/media\/file.*/i,
       handler: "CacheFirst",
       options: {
         cacheName: "diurn-media",
-        expiration: { maxEntries: 300, maxAgeSeconds: 60 * 60 * 24 * 30 },
+        expiration: { maxEntries: 2000, maxAgeSeconds: 60 * 60 * 24 * 30 },
         cacheableResponse: { statuses: [0, 200] },
       },
     },

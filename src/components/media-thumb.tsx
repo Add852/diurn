@@ -5,17 +5,23 @@ import { useState } from "react";
 // Shimmer overlay shared with MediaSkeleton (media-skeleton.tsx) — one visual
 // language for all media loading.
 
+// URLs whose bitmap is already in the service-worker/HTTP cache. Component
+// state dies on every unmount (route revisit, day re-expand), but this
+// module-level set survives, so a re-mounted image with a known-loaded URL
+// initializes as loaded and paints from cache with no shimmer flash.
+const knownLoaded = new Set<string>();
+
 // Image with reserved-space placeholder: while loading (or on error), the
 // img's box (callers give it aspect/w/h) shows a subtle pulse instead of
 // alt text or filename. The bitmap paints over it once loaded.
 export function MediaImage({ src, className = "", ...rest }: React.ImgHTMLAttributes<HTMLImageElement>) {
-  const [loaded, setLoaded] = useState(false);
+  const [loaded, setLoaded] = useState(() => !!src && knownLoaded.has(src));
   return (
     <img
       {...rest}
       src={src}
       alt={rest.alt ?? ""}
-      onLoad={() => setLoaded(true)}
+      onLoad={() => { if (src) knownLoaded.add(src); setLoaded(true); }}
       onError={() => setLoaded(true)}
       className={`${className} ${loaded ? "" : "media-loading"}`}
     />
@@ -24,14 +30,14 @@ export function MediaImage({ src, className = "", ...rest }: React.ImgHTMLAttrib
 
 // Video thumbnail: same pulse until metadata loads (poster frame appears).
 export function MediaThumb({ src, iconClass = "w-4 h-4" }: { src: string; iconClass?: string }) {
-  const [loaded, setLoaded] = useState(false);
+  const [loaded, setLoaded] = useState(() => knownLoaded.has(src));
   return (
     <div className="relative w-full h-full bg-zinc-950">
       <video
         src={src}
         muted
         preload="metadata"
-        onLoadedMetadata={() => setLoaded(true)}
+        onLoadedMetadata={() => { knownLoaded.add(src); setLoaded(true); }}
         className={`w-full h-full object-cover ${loaded ? "" : "media-loading"}`}
       />
       <div className="absolute inset-0 flex items-center justify-center bg-black/30">
