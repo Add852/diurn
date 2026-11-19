@@ -94,6 +94,12 @@ class _ImageWithPreviewState extends State<_ImageWithPreview> {
           widget.url,
           fit: BoxFit.contain,
           gaplessPlayback: true,
+          // Cap the decode: a 12MP photo is ~48MB decoded and 2-3 of those
+          // evict the entire image cache (the grid refetches on return).
+          // 2048px still zooms cleanly on phone screens.
+          // ponytail: width-only cap — portrait photos decode ~22MB; cap the
+          // long side instead if memory pressure shows up.
+          cacheWidth: 2048,
           frameBuilder: (context, child, frame, wasSync) {
             final loaded = wasSync || frame != null;
             if (loaded != _fullLoaded) {

@@ -216,7 +216,8 @@ class _MediaScreenState extends State<MediaScreen> {
                           child: Stack(
                             fit: StackFit.expand,
                             children: [
-                              if (f.isImage && f.hasThumb)
+                              if (f.hasThumb)
+                                // images and videos (ffmpeg first frame)
                                 LoadingImage(
                                   url: widget.api.thumbUrl(f.path),
                                 )

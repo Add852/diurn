@@ -566,7 +566,10 @@ async fn media(state: State<AppState>, Query(q): Query<MediaQuery>, headers: Hea
         .status(status)
         .header(header::CONTENT_TYPE, content_type)
         .header(header::ACCEPT_RANGES, "bytes")
-        .header(header::CONTENT_LENGTH, len);
+        .header(header::CONTENT_LENGTH, len)
+        // originals are effectively immutable at a given path; the web build
+        // is the only client with an HTTP cache (dart:io doesn't cache)
+        .header(header::CACHE_CONTROL, "public, max-age=604800, immutable");
     if status == StatusCode::PARTIAL_CONTENT {
         builder = builder.header(header::CONTENT_RANGE, format!("bytes {start}-{end}/{size}"));
     }
@@ -609,7 +612,7 @@ async fn thumbnail(state: State<AppState>, Query(q): Query<ThumbQuery>) -> Respo
     match tokio::fs::read(&tp).await {
         Ok(bytes) => Response::builder()
             .header(header::CONTENT_TYPE, "image/webp")
-            .header(header::CACHE_CONTROL, "max-age=86400")
+            .header(header::CACHE_CONTROL, "public, max-age=604800, immutable")
             .body(Body::from(bytes))
             .unwrap(),
         Err(_) => (StatusCode::NOT_FOUND, "no thumbnail").into_response(),

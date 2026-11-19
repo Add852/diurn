@@ -16,6 +16,13 @@ const _kPrefPass = 'server_pass';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
+  // Default is 1000 entries / 100 MiB — a 400px thumb decodes to ~640KB, so
+  // only ~160 tiles fit and scrolling back refetches them. Raised so a
+  // scrolled-through library stays cached (the lightbox's full-res decodes
+  // still churn this — they're capped in viewer.dart).
+  final cache = PaintingBinding.instance.imageCache;
+  cache.maximumSize = 2000;
+  cache.maximumSizeBytes = 256 << 20;
   runApp(const DiurnApp());
 }
 
