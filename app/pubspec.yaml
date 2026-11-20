@@ -42,6 +42,8 @@ dependencies:
   media_kit_libs_video: ^1.0.5
   video_player: ^2.14.1
   file_selector: ^1.1.0
+  path_provider: ^2.1.6
+  crypto: ^3.0.8
 
 dev_dependencies:
   flutter_test:

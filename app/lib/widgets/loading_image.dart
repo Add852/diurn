@@ -1,7 +1,11 @@
 import 'package:flutter/material.dart';
 
+import 'disk_image.dart';
+
 /// Network image with a loading placeholder: muted background + spinner
-/// until the first frame arrives, then a quick fade-in.
+/// until the first frame arrives, then a quick fade-in. Bytes go through
+/// the disk cache (MediaBytesCache) so remounts after memory eviction are
+/// local reads, not network refetches.
 class LoadingImage extends StatefulWidget {
   final String url;
   final BoxFit fit;
@@ -39,8 +43,9 @@ class _LoadingImageState extends State<LoadingImage> {
           )
         else
           Positioned.fill(
-            child: Image.network(
-              widget.url,
+            child: Image(
+              image: MediaImageProvider(widget.url),
+              gaplessPlayback: true,
               fit: widget.fit,
               frameBuilder: (context, child, frame, wasSynchronous) {
                 final done = wasSynchronous || frame != null;

@@ -3,6 +3,7 @@ import 'dart:ui' show ImageFilter;
 import 'package:flutter/material.dart';
 
 import 'video/video_file.dart';
+import 'widgets/disk_image.dart';
 
 /// Fullscreen viewer for one media URL. Images get pinch/pan via
 /// InteractiveViewer; video plays through the platform player facade
@@ -36,8 +37,11 @@ class ViewerScreen extends StatelessWidget {
               maxScale: 8,
               child: previewUrl != null
                   ? _ImageWithPreview(url: url, previewUrl: previewUrl!)
-                  : Image.network(
-                      url,
+                  : Image(
+                      // Same decode cap as the preview path below.
+                      image: ResizeImage(MediaImageProvider(url),
+                          width: 2048, allowUpscaling: false),
+                      gaplessPlayback: true,
                       fit: BoxFit.contain,
                       errorBuilder: (_, _, _) => const Icon(
                         Icons.broken_image_outlined,
@@ -83,15 +87,14 @@ class _ImageWithPreviewState extends State<_ImageWithPreview> {
         if (!_fullLoaded)
           ImageFiltered(
             imageFilter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
-            child: Image.network(
-              widget.previewUrl,
+            child: Image(
+              image: MediaImageProvider(widget.previewUrl),
               fit: BoxFit.contain,
               gaplessPlayback: true,
               filterQuality: FilterQuality.low,
             ),
           ),
-        Image.network(
-          widget.url,
+        Image(
           fit: BoxFit.contain,
           gaplessPlayback: true,
           // Cap the decode: a 12MP photo is ~48MB decoded and 2-3 of those
@@ -99,7 +102,8 @@ class _ImageWithPreviewState extends State<_ImageWithPreview> {
           // 2048px still zooms cleanly on phone screens.
           // ponytail: width-only cap — portrait photos decode ~22MB; cap the
           // long side instead if memory pressure shows up.
-          cacheWidth: 2048,
+          image: ResizeImage(MediaImageProvider(widget.url),
+              width: 2048, allowUpscaling: false),
           frameBuilder: (context, child, frame, wasSync) {
             final loaded = wasSync || frame != null;
             if (loaded != _fullLoaded) {

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'api.dart';
 import 'viewer.dart';
+import 'widgets/disk_image.dart';
 
 /// Horizontal strip of one day's media; tap a thumb for the lightbox.
 class MediaStrip extends StatelessWidget {
@@ -33,8 +34,10 @@ class MediaStrip extends StatelessWidget {
               padding: EdgeInsets.only(right: 8),
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(8),
-                child: Image.network(
-                  f.hasThumb ? api.thumbUrl(f.path) : api.mediaUrl(f.path),
+                child: Image(
+                  image: MediaImageProvider(
+                    f.hasThumb ? api.thumbUrl(f.path) : api.mediaUrl(f.path),
+                  ),
                   fit: BoxFit.cover,
                   width: size,
                   height: size,

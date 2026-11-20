@@ -238,6 +238,17 @@ class _MediaScreenState extends State<MediaScreen> {
                                   child: const Icon(Icons.movie_outlined,
                                       size: 40),
                                 ),
+                              if (f.isVideo)
+                                const Center(
+                                  child: Icon(
+                                    Icons.play_circle_fill,
+                                    size: 44,
+                                    color: Colors.white70,
+                                    shadows: [
+                                      Shadow(color: Colors.black38, blurRadius: 8)
+                                    ],
+                                  ),
+                                ),
                             ],
                           ),
                         ),
