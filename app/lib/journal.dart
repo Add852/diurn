@@ -28,6 +28,38 @@ const _photoTextShadow = Shadow(
   return (data, m.group(2)!);
 }
 
+/// Pure entry-search core (testable without widget bindings): keep entries
+/// where every metadata filter matches exactly (frontmatter key == value)
+/// and every whitespace-separated query token appears in the date, note
+/// body, or metadata values, case-insensitively.
+List<Entry> filterEntries(
+  List<Entry> entries, {
+  String query = '',
+  Map<String, String> filters = const {},
+}) {
+  final tokens = query
+      .trim()
+      .toLowerCase()
+      .split(RegExp(r'\s+'))
+      .where((t) => t.isNotEmpty)
+      .toList();
+  return [
+    for (final e in entries)
+      if (() {
+        final (fm, body) = parseFrontmatter(e.markdown);
+        for (final f in filters.entries) {
+          if (fm[f.key] != f.value) return false;
+        }
+        if (tokens.isNotEmpty) {
+          final hay = '${e.date}\n$body\n${fm.values.join('\n')}'.toLowerCase();
+          if (!tokens.every(hay.contains)) return false;
+        }
+        return true;
+      }())
+        e,
+  ];
+}
+
 /// Journal tab: entries grouped by month, newest first (parity with the old
 /// journal-view masonry, as a plain list).
 class JournalScreen extends StatefulWidget {
@@ -44,9 +76,18 @@ class _JournalScreenState extends State<JournalScreen> {
   Timer? _pollTimer;
   int _polls = 0;
 
+  // search/filter — client-side over the already-loaded entries
+  final TextEditingController _search = TextEditingController();
+  String _query = '';
+  final Map<String, String> _filters = {}; // frontmatter key -> value
+
   /// last completed load — polls swap the future, which would otherwise
   /// flash the whole tab back to a spinner every 3s
   (List<Entry>, Map<String, List<MediaFile>>, bool)? _last;
+
+  /// frontmatter key/value counts from the last build — feeds the filter
+  /// picker even while a filter is active
+  Map<String, Map<String, int>> _lastKeyValues = {};
 
   @override
   void initState() {
@@ -91,7 +132,168 @@ class _JournalScreenState extends State<JournalScreen> {
   void dispose() {
     widget.refreshSignal?.removeListener(_reload);
     _pollTimer?.cancel();
+    _search.dispose();
     super.dispose();
+  }
+
+  /// Filter the entries by the active metadata filters + free-text query.
+  /// Also returns the distinct frontmatter keys -> value counts across ALL
+  /// entries, for the filter picker.
+  (List<Entry>, Map<String, Map<String, int>>) _filtered(List<Entry> entries) {
+    final keyValues = <String, Map<String, int>>{};
+    for (final e in entries) {
+      final (fm, _) = parseFrontmatter(e.markdown);
+      for (final k in fm.keys) {
+        final v = fm[k]!;
+        (keyValues[k] ??= {})[v] = (keyValues[k]?[v] ?? 0) + 1;
+      }
+    }
+    return (filterEntries(entries, query: _query, filters: _filters), keyValues);
+  }
+
+  /// Bottom sheet: pick a metadata key, then a value; tapping a value
+  /// toggles that filter. Values show how many entries carry each.
+  Future<void> _openFilters(Map<String, Map<String, int>> keyValues) async {
+    await showModalBottomSheet(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetCtx) {
+        String? activeKey;
+        return StatefulBuilder(
+          builder: (sheetCtx, setSheet) {
+            if (activeKey == null) {
+              final keys = keyValues.keys.toList()..sort();
+              return SizedBox(
+                height: 400,
+                child: ListView(
+                  children: [
+                    for (final k in keys)
+                      ListTile(
+                        title: Text(k),
+                        trailing: _filters.containsKey(k)
+                            ? const Icon(Icons.check_circle, size: 18)
+                            : Text('${keyValues[k]!.length} values'),
+                        onTap: () => setSheet(() => activeKey = k),
+                      ),
+                    if (keys.isEmpty)
+                      const Padding(
+                        padding: EdgeInsets.all(24),
+                        child: Text('No metadata found in entries'),
+                      ),
+                  ],
+                ),
+              );
+            }
+            final key = activeKey!;
+            final values = keyValues[key]!;
+            final sorted = values.keys.toList()..sort();
+            return SizedBox(
+              height: 400,
+              child: ListView(
+                children: [
+                  ListTile(
+                    leading: const Icon(Icons.arrow_back),
+                    title: Text(key,
+                        style: const TextStyle(fontWeight: FontWeight.w700)),
+                    onTap: () => setSheet(() => activeKey = null),
+                  ),
+                  for (final v in sorted)
+                    ListTile(
+                      title: Text(v.isEmpty ? '(empty)' : v),
+                      trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+                        Text('${values[v]}'),
+                        if (_filters[key] == v) ...[
+                          const SizedBox(width: 8),
+                          const Icon(Icons.check_circle, size: 18),
+                        ],
+                      ]),
+                      onTap: () {
+                        setState(() {
+                          if (_filters[key] == v) {
+                            _filters.remove(key);
+                          } else {
+                            _filters[key] = v;
+                          }
+                        });
+                        Navigator.pop(sheetCtx);
+                      },
+                    ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _searchField(BuildContext context, int total, int shown) {
+    final cs = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _search,
+                  onChanged: (v) => setState(() => _query = v),
+                  decoration: InputDecoration(
+                    isDense: true,
+                    prefixIcon: const Icon(Icons.search, size: 20),
+                    suffixIcon: _query.isEmpty
+                        ? null
+                        : IconButton(
+                            icon: const Icon(Icons.close, size: 18),
+                            onPressed: () {
+                              _search.clear();
+                              setState(() => _query = '');
+                            },
+                          ),
+                    hintText: _query.isEmpty && _filters.isEmpty
+                        ? 'Search notes, dates, metadata…'
+                        : '$shown/$total entries',
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(24),
+                    ),
+                  ),
+                ),
+              ),
+              IconButton(
+                icon: Icon(
+                  Icons.filter_list,
+                  color: _filters.isEmpty
+                      ? null
+                      : cs.primary,
+                ),
+                tooltip: 'Filter by metadata',
+                onPressed: () => _openFilters(_lastKeyValues),
+              ),
+            ],
+          ),
+          if (_filters.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Wrap(
+                  spacing: 6,
+                  children: [
+                    for (final f in _filters.entries)
+                      InputChip(
+                        label: Text('${f.key}: ${f.value}'),
+                        visualDensity: VisualDensity.compact,
+                        onDeleted: () =>
+                            setState(() => _filters.remove(f.key)),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -109,9 +311,11 @@ class _JournalScreenState extends State<JournalScreen> {
           _last = data;
           final (entries, mediaByDate, scanning) = data;
         if (entries.isEmpty) return const Center(child: Text('No entries yet'));
+        final (filtered, keyValues) = _filtered(entries);
+        _lastKeyValues = keyValues;
         // group by month, preserve API order (date DESC)
         final groups = <String, List<Entry>>{};
-        for (final e in entries) {
+        for (final e in filtered) {
           (groups.putIfAbsent(e.date.substring(0, 7), () => [])).add(e);
         }
         return CustomScrollView(
@@ -122,6 +326,15 @@ class _JournalScreenState extends State<JournalScreen> {
                 child: Padding(
                   padding: EdgeInsets.symmetric(horizontal: 16),
                   child: LinearProgressIndicator(minHeight: 3),
+                ),
+              ),
+            SliverToBoxAdapter(
+                child: _searchField(context, entries.length, filtered.length)),
+            if (filtered.isEmpty)
+              const SliverToBoxAdapter(
+                child: Padding(
+                  padding: EdgeInsets.all(32),
+                  child: Center(child: Text('No entries match')),
                 ),
               ),
             for (final month in groups.keys)

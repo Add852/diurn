@@ -3,7 +3,48 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:diurn/api.dart';
 import 'package:diurn/journal.dart';
 
+Entry _entry(String date, String note) => Entry(
+      id: 1,
+      date: date,
+      markdown: note,
+      fsOnly: false,
+    );
+
 void main() {
+  test('filterEntries: query matches body, date, and metadata values', () {
+    final entries = [
+      _entry('2026-01-10', '---\nrating: 5\n---\nA long walk in the park'),
+      _entry('2026-01-11', '---\nrating: 2\n---\nStayed home, read a book'),
+      _entry('2026-01-12', 'No frontmatter, mentioned Saturday plans'),
+    ];
+    expect(filterEntries(entries, query: 'walk').length, 1);
+    expect(filterEntries(entries, query: '2026-01-11').length, 1);
+    // metadata values are searchable text too
+    expect(filterEntries(entries, query: 'saturday').length, 1);
+    // multiple tokens: all must match (AND)
+    expect(filterEntries(entries, query: 'walk park').length, 1);
+    expect(filterEntries(entries, query: 'walk book').length, 0);
+    // case-insensitive
+    expect(filterEntries(entries, query: 'WALK').length, 1);
+  });
+
+  test('filterEntries: exact key=value filters, combined with query', () {
+    final entries = [
+      _entry('2026-01-10', '---\nrating: 5\n---\nwalk'),
+      _entry('2026-01-11', '---\nrating: 2\n---\nwalk'),
+    ];
+    expect(
+        filterEntries(entries, filters: {'rating': '5'}).map((e) => e.date),
+        ['2026-01-10']);
+    // filter AND query combine
+    expect(
+        filterEntries(entries,
+            query: 'book', filters: {'rating': '5'}).length,
+        0);
+    // unknown key never matches
+    expect(filterEntries(entries, filters: {'mood': 'good'}).length, 0);
+  });
+
   test('FsEntry.fromJson parses camelCase payload', () {
     final e = FsEntry.fromJson({
       'name': 'a.jpg',
