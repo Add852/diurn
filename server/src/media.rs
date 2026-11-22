@@ -734,6 +734,7 @@ mod scan_tests {
             theme_mode: "system".into(),
             accent_color: "#22c55e".into(),
             grid_scale: 100,
+            journal_grid_scale: 100,
         };
         let n = scan_inner(&db, &profile, &dir);
         assert_eq!(n, 1, "scan should index the jpg");

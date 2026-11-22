@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS profiles (
   theme_mode TEXT NOT NULL DEFAULT 'system',
   accent_color TEXT NOT NULL DEFAULT '#22c55e',
   grid_scale INTEGER NOT NULL DEFAULT 100,
+  journal_grid_scale INTEGER NOT NULL DEFAULT 100,
   media_enabled INTEGER NOT NULL DEFAULT 0,
   media_folder TEXT NOT NULL DEFAULT '',
   obsidian_enabled INTEGER NOT NULL DEFAULT 0,

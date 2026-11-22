@@ -111,8 +111,9 @@ class _HomeScreenState extends State<HomeScreen> {
   /// Bumped when the FAB asks the Settings tab to save itself.
   final ValueNotifier<int> _saveTrigger = ValueNotifier(0);
 
-  /// Grid density percent (50-200) for journal cards + media tiles.
+  /// Grid density percent (50-200): media tiles, journal cards.
   final ValueNotifier<int> _gridScale = ValueNotifier(100);
+  final ValueNotifier<int> _journalGridScale = ValueNotifier(100);
 
   /// Today tab: the FAB becomes Write — triggers the form save.
   final ValueNotifier<int> _writeTrigger = ValueNotifier(0);
@@ -127,13 +128,17 @@ class _HomeScreenState extends State<HomeScreen> {
     _writeTrigger.dispose();
     _settingsDirty.dispose();
     _gridScale.dispose();
+    _journalGridScale.dispose();
     super.dispose();
   }
 
-  /// Keeps the grid-scale notifier in sync with a saved/fetched profile.
+  /// Keeps the grid-scale notifiers in sync with a saved/fetched profile.
   void _applyGridScale(Map<String, dynamic>? profile) {
     final v = (profile?['grid_scale'] as num?)?.toInt() ?? 100;
     _gridScale.value = v.clamp(50, 200);
+    final j =
+        (profile?['journal_grid_scale'] as num?)?.toInt() ?? 100;
+    _journalGridScale.value = j.clamp(50, 200);
   }
 
   /// Single navigation entry point: entering OR leaving Settings bumps the
@@ -316,7 +321,11 @@ class _HomeScreenState extends State<HomeScreen> {
               saveTrigger: _writeTrigger,
               onOpenSettings: () => setState(() => _index = 3),
             ),
-            JournalScreen(api: api, refreshSignal: _refreshTick),
+            JournalScreen(
+              api: api,
+              refreshSignal: _refreshTick,
+              gridScale: _journalGridScale,
+            ),
             MediaScreen(
               api: api,
               refreshSignal: _refreshTick,

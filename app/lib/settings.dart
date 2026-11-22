@@ -231,6 +231,8 @@ class _SettingsFormState extends State<_SettingsForm> {
       'theme_mode': _profile['theme_mode'] ?? 'system',
       'accent_color': _profile['accent_color'] ?? '#22c55e',
       'grid_scale': (_profile['grid_scale'] as num?)?.toInt() ?? 100,
+      'journal_grid_scale':
+          (_profile['journal_grid_scale'] as num?)?.toInt() ?? 100,
     };
     try {
       await widget.api.saveSettings(
@@ -441,6 +443,8 @@ class _SettingsFormState extends State<_SettingsForm> {
         if (profile['accent_color'] != null)
           'accent_color': profile['accent_color'],
         if (profile['grid_scale'] != null) 'grid_scale': profile['grid_scale'],
+        if (profile['journal_grid_scale'] != null)
+          'journal_grid_scale': profile['journal_grid_scale'],
       };
       await widget.api.saveSettings(safe, questions);
       applied.addAll([
@@ -452,6 +456,7 @@ class _SettingsFormState extends State<_SettingsForm> {
           'theme_mode',
           'accent_color',
           'grid_scale',
+          'journal_grid_scale',
         ])
           if (safe[k] != null) k,
       ]);
@@ -587,21 +592,23 @@ class _SettingsFormState extends State<_SettingsForm> {
         const Text('Accent color'),
         _accentField(),
         const SizedBox(height: 8),
-        _gridScaleField(),
+        _gridScaleField('journal_grid_scale', 'Journal card size'),
+        _gridScaleField('grid_scale', 'Media tile size'),
       ],
     );
   }
 
-  void _setGridScale(int v) {
+  void _setGridScale(String key, int v) {
     setState(() {
-      _profile['grid_scale'] = v;
+      _profile[key] = v;
       _setDirty(true);
     });
   }
 
-  /// Grid density for journal cards + media tiles (50-200%).
-  Widget _gridScaleField() {
-    final v = ((_profile['grid_scale'] as num?)?.toInt() ?? 100)
+  /// Grid density sliders (50-200%) — one for journal cards, one for media
+  /// tiles.
+  Widget _gridScaleField(String key, String label) {
+    final v = ((_profile[key] as num?)?.toInt() ?? 100)
         .clamp(50, 200)
         .toDouble();
     return Padding(
@@ -609,15 +616,14 @@ class _SettingsFormState extends State<_SettingsForm> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('Grid size — $v%',
-              style: const TextStyle(fontSize: 13)),
+          Text('$label — $v%', style: const TextStyle(fontSize: 13)),
           Slider(
             value: v,
             min: 50,
             max: 200,
             divisions: 15,
             label: '$v%',
-            onChanged: (d) => _setGridScale(d.round()),
+            onChanged: (d) => _setGridScale(key, d.round()),
           ),
         ],
       ),
