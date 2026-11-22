@@ -230,6 +230,7 @@ class _SettingsFormState extends State<_SettingsForm> {
       'day_offset_hours': int.tryParse(_txt('day_offset_hours')) ?? 0,
       'theme_mode': _profile['theme_mode'] ?? 'system',
       'accent_color': _profile['accent_color'] ?? '#22c55e',
+      'grid_scale': (_profile['grid_scale'] as num?)?.toInt() ?? 100,
     };
     try {
       await widget.api.saveSettings(
@@ -439,6 +440,7 @@ class _SettingsFormState extends State<_SettingsForm> {
         if (profile['theme_mode'] != null) 'theme_mode': profile['theme_mode'],
         if (profile['accent_color'] != null)
           'accent_color': profile['accent_color'],
+        if (profile['grid_scale'] != null) 'grid_scale': profile['grid_scale'],
       };
       await widget.api.saveSettings(safe, questions);
       applied.addAll([
@@ -449,6 +451,7 @@ class _SettingsFormState extends State<_SettingsForm> {
           'day_offset_hours',
           'theme_mode',
           'accent_color',
+          'grid_scale',
         ])
           if (safe[k] != null) k,
       ]);
@@ -583,7 +586,41 @@ class _SettingsFormState extends State<_SettingsForm> {
         const SizedBox(height: 8),
         const Text('Accent color'),
         _accentField(),
+        const SizedBox(height: 8),
+        _gridScaleField(),
       ],
+    );
+  }
+
+  void _setGridScale(int v) {
+    setState(() {
+      _profile['grid_scale'] = v;
+      _setDirty(true);
+    });
+  }
+
+  /// Grid density for journal cards + media tiles (50-200%).
+  Widget _gridScaleField() {
+    final v = ((_profile['grid_scale'] as num?)?.toInt() ?? 100)
+        .clamp(50, 200)
+        .toDouble();
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Grid size — $v%',
+              style: const TextStyle(fontSize: 13)),
+          Slider(
+            value: v,
+            min: 50,
+            max: 200,
+            divisions: 15,
+            label: '$v%',
+            onChanged: (d) => _setGridScale(d.round()),
+          ),
+        ],
+      ),
     );
   }
 

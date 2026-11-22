@@ -14,11 +14,15 @@ import 'widgets/loading_image.dart';
 class MediaScreen extends StatefulWidget {
   final Api api;
   final ValueListenable<int>? refreshSignal;
+
+  /// Grid density percent (50-200); 100 = the default tile size.
+  final ValueListenable<int>? gridScale;
   final VoidCallback? onOpenSettings;
   const MediaScreen({
     super.key,
     required this.api,
     this.refreshSignal,
+    this.gridScale,
     this.onOpenSettings,
   });
 
@@ -41,11 +45,19 @@ class _MediaScreenState extends State<MediaScreen> {
     super.initState();
     _files = _load();
     widget.refreshSignal?.addListener(_reload);
+    widget.gridScale?.addListener(_onScale);
   }
+
+  void _onScale() {
+    if (mounted) setState(() {});
+  }
+
+  int get _scale => widget.gridScale?.value ?? 100;
 
   @override
   void dispose() {
     widget.refreshSignal?.removeListener(_reload);
+    widget.gridScale?.removeListener(_onScale);
     _pollTimer?.cancel();
     super.dispose();
   }
@@ -194,8 +206,8 @@ class _MediaScreenState extends State<MediaScreen> {
                     padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
                     sliver: SliverGrid.builder(
                     itemCount: groups[day]!.length,
-                    gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-                      maxCrossAxisExtent: 180,
+                    gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
+                      maxCrossAxisExtent: 180 * _scale / 100,
                       mainAxisSpacing: 8,
                       crossAxisSpacing: 8,
                       childAspectRatio: 1,

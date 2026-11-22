@@ -111,6 +111,9 @@ class _HomeScreenState extends State<HomeScreen> {
   /// Bumped when the FAB asks the Settings tab to save itself.
   final ValueNotifier<int> _saveTrigger = ValueNotifier(0);
 
+  /// Grid density percent (50-200) for journal cards + media tiles.
+  final ValueNotifier<int> _gridScale = ValueNotifier(100);
+
   /// Today tab: the FAB becomes Write — triggers the form save.
   final ValueNotifier<int> _writeTrigger = ValueNotifier(0);
 
@@ -123,7 +126,14 @@ class _HomeScreenState extends State<HomeScreen> {
     _saveTrigger.dispose();
     _writeTrigger.dispose();
     _settingsDirty.dispose();
+    _gridScale.dispose();
     super.dispose();
+  }
+
+  /// Keeps the grid-scale notifier in sync with a saved/fetched profile.
+  void _applyGridScale(Map<String, dynamic>? profile) {
+    final v = (profile?['grid_scale'] as num?)?.toInt() ?? 100;
+    _gridScale.value = v.clamp(50, 200);
   }
 
   /// Single navigation entry point: entering OR leaving Settings bumps the
@@ -242,7 +252,9 @@ class _HomeScreenState extends State<HomeScreen> {
     try {
       final s = await _api!.settings();
       if (!mounted) return;
-      widget.onAppearance?.call(s['profile'] as Map<String, dynamic>?);
+      final profile = s['profile'] as Map<String, dynamic>?;
+      widget.onAppearance?.call(profile);
+      _applyGridScale(profile);
     } catch (_) {
       // appearance is cosmetic — never block the connect flow
     }
@@ -308,6 +320,7 @@ class _HomeScreenState extends State<HomeScreen> {
             MediaScreen(
               api: api,
               refreshSignal: _refreshTick,
+              gridScale: _gridScale,
               onOpenSettings: () => setState(() => _index = 3),
             ),
             SettingsScreen(
@@ -317,7 +330,10 @@ class _HomeScreenState extends State<HomeScreen> {
               saveTrigger: _saveTrigger,
               refreshSignal: _refreshTick,
               onCredentialsChanged: _setCredentials,
-              onAppearanceChanged: widget.onAppearance,
+              onAppearanceChanged: (p) {
+                widget.onAppearance?.call(p);
+                _applyGridScale(p);
+              },
               dirtyNotifier: _settingsDirty,
             ),
           ],

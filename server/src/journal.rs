@@ -344,6 +344,7 @@ pub struct SettingsProfile {
     pub day_offset_hours: i64,
     pub theme_mode: String,
     pub accent_color: String,
+    pub grid_scale: i64,
 }
 
 #[derive(serde::Serialize)]
@@ -398,6 +399,7 @@ pub fn get_settings(
             day_offset_hours: profile.day_offset_hours,
             theme_mode: profile.theme_mode.clone(),
             accent_color: profile.accent_color.clone(),
+            grid_scale: profile.grid_scale,
         },
         "questions": questions,
         "template_content": template_content,
@@ -415,6 +417,7 @@ pub struct ProfileIn {
     pub day_offset_hours: Option<i64>,
     pub theme_mode: Option<String>,
     pub accent_color: Option<String>,
+    pub grid_scale: Option<i64>,
 }
 
 #[derive(serde::Deserialize)]
@@ -468,9 +471,9 @@ pub fn put_settings(
     questions: Option<&Vec<QuestionIn>>,
     template_content: Option<&str>,
 ) -> Result<(), String> {
-    let current: (String, String, String, i64, String, String, String) = conn
+    let current: (String, String, String, i64, String, String, String, i64) = conn
         .query_row(
-            "SELECT daily_note_folder, template_note_path, media_folder, day_offset_hours, timezone, theme_mode, accent_color
+            "SELECT daily_note_folder, template_note_path, media_folder, day_offset_hours, timezone, theme_mode, accent_color, grid_scale
              FROM profiles WHERE id = ?1",
             rusqlite::params![profile_id],
             |r| {
@@ -482,6 +485,7 @@ pub fn put_settings(
                     r.get(4)?,
                     r.get(5)?,
                     r.get(6)?,
+                    r.get(7)?,
                 ))
             },
         )
@@ -500,6 +504,7 @@ pub fn put_settings(
     if !is_hex_color(&accent_color) {
         accent_color = "#22c55e".into();
     }
+    let grid_scale = p.grid_scale.unwrap_or(current.7).clamp(50, 200);
 
     // Filesystem validation (empty = unset, allowed)
     assert_dir("Daily note folder", &daily)?;
@@ -534,8 +539,9 @@ pub fn put_settings(
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     tx.execute(
         "UPDATE profiles SET name = ?1, daily_note_folder = ?2, template_note_path = ?3,
-         media_folder = ?4, day_offset_hours = ?5, timezone = ?6, theme_mode = ?7, accent_color = ?8
-         WHERE id = ?9",
+         media_folder = ?4, day_offset_hours = ?5, timezone = ?6, theme_mode = ?7, accent_color = ?8,
+         grid_scale = ?9
+         WHERE id = ?10",
         rusqlite::params![
             p.name.clone().unwrap_or_default(),
             daily,
@@ -545,6 +551,7 @@ pub fn put_settings(
             timezone,
             theme_mode,
             accent_color,
+            grid_scale,
             profile_id
         ],
     )

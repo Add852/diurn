@@ -66,7 +66,15 @@ List<Entry> filterEntries(
 class JournalScreen extends StatefulWidget {
   final Api api;
   final ValueListenable<int>? refreshSignal;
-  const JournalScreen({super.key, required this.api, this.refreshSignal});
+
+  /// Grid density percent (50-200); 100 = the default card size.
+  final ValueListenable<int>? gridScale;
+  const JournalScreen({
+    super.key,
+    required this.api,
+    this.refreshSignal,
+    this.gridScale,
+  });
 
   @override
   State<JournalScreen> createState() => _JournalScreenState();
@@ -95,7 +103,14 @@ class _JournalScreenState extends State<JournalScreen> {
     super.initState();
     _future = _load();
     widget.refreshSignal?.addListener(_reload);
+    widget.gridScale?.addListener(_onScale);
   }
+
+  void _onScale() {
+    if (mounted) setState(() {});
+  }
+
+  int get _scale => widget.gridScale?.value ?? 100;
 
   Future<(List<Entry>, Map<String, List<MediaFile>>, bool)> _load() async {
     final entries = await widget.api.entries();
@@ -132,6 +147,7 @@ class _JournalScreenState extends State<JournalScreen> {
   @override
   void dispose() {
     widget.refreshSignal?.removeListener(_reload);
+    widget.gridScale?.removeListener(_onScale);
     _pollTimer?.cancel();
     _search.dispose();
     super.dispose();
@@ -362,8 +378,8 @@ class _JournalScreenState extends State<JournalScreen> {
                     sliver: SliverGrid.builder(
                       itemCount: groups[month]!.length,
                       gridDelegate:
-                          const SliverGridDelegateWithMaxCrossAxisExtent(
-                        maxCrossAxisExtent: 380,
+                          SliverGridDelegateWithMaxCrossAxisExtent(
+                        maxCrossAxisExtent: 380 * _scale / 100,
                         mainAxisSpacing: 8,
                         crossAxisSpacing: 8,
                         childAspectRatio: 1.35,

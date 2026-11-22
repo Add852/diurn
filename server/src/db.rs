@@ -37,6 +37,7 @@ fn migrate_columns(conn: &Connection) {
             ("day_offset_hours", "INTEGER NOT NULL DEFAULT 0"),
             ("theme_mode", "TEXT NOT NULL DEFAULT 'system'"),
             ("accent_color", "TEXT NOT NULL DEFAULT '#22c55e'"),
+            ("grid_scale", "INTEGER NOT NULL DEFAULT 100"),
         ],
     );
     let _ = ensure_columns(
@@ -98,7 +99,7 @@ impl Db {
     pub fn active_profile(&self) -> Option<Profile> {
         let conn = self.0.lock().ok()?;
         conn.query_row(
-            "SELECT id, name, daily_note_folder, template_note_path, media_folder, timezone, day_offset_hours, theme_mode, accent_color
+            "SELECT id, name, daily_note_folder, template_note_path, media_folder, timezone, day_offset_hours, theme_mode, accent_color, grid_scale
              FROM profiles WHERE is_active = 1 LIMIT 1",
             [],
             |r| {
@@ -112,6 +113,7 @@ impl Db {
                     day_offset_hours: r.get(6)?,
                     theme_mode: r.get(7)?,
                     accent_color: r.get(8)?,
+                    grid_scale: r.get(9)?,
                 })
             },
         )
@@ -130,4 +132,6 @@ pub struct Profile {
     pub day_offset_hours: i64,
     pub theme_mode: String,
     pub accent_color: String,
+    /// grid density percent for journal cards + media tiles (50-200)
+    pub grid_scale: i64,
 }
