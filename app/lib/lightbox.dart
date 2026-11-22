@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'api.dart';
+import 'format.dart';
 import 'viewer.dart';
 import 'widgets/disk_image.dart';
 
@@ -92,8 +93,12 @@ class _MediaViewerScreenState extends State<MediaViewerScreen> {
   Widget build(BuildContext context) {
     final files = widget.files;
     final f = files[_index];
+    final when = [
+      if (f.date != null) longDate(f.date!),
+      if (f.takenAt != null) timeLabel(f.takenAt),
+    ].join(', ');
     final caption = [
-      if (f.date != null) f.date,
+      if (when.isNotEmpty) when,
       f.name,
     ].join(' · ');
     return Scaffold(

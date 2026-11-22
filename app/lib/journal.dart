@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 
 import 'api.dart';
+import 'format.dart';
 import 'lightbox.dart';
 import 'widgets/loading_image.dart';
 
@@ -344,7 +345,7 @@ class _JournalScreenState extends State<JournalScreen> {
                     child: Padding(
                       padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
                       child: Text(
-                        month,
+                        monthTitle(month),
                         style: TextStyle(
                           fontWeight: FontWeight.w700,
                           fontSize: 16,
@@ -530,7 +531,7 @@ class _EntryCard extends StatelessWidget {
                   children: [
                     Row(
                       children: [
-                        Text(entry.date,
+                        Text(dayLabel(entry.date),
                             style: TextStyle(
                                 fontWeight: FontWeight.w700,
                                 fontSize: 15,
@@ -682,7 +683,7 @@ class _EntryScreenState extends State<EntryScreen> {
     final (fm, body) = parseFrontmatter(_current);
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.entry.date),
+        title: Text(longDate(widget.entry.date)),
         actions: [
           IconButton(
             icon: Icon(_editing ? Icons.close : Icons.edit_outlined),

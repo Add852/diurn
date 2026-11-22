@@ -492,7 +492,8 @@ async fn media_list(state: State<AppState>, Query(q): Query<MediaListQuery>) -> 
         _ => None,
     };
     let conn = state.db.0.lock().unwrap();
-    let files = media::list_files(&conn, profile.id, q.date.as_deref(), year_month.as_deref());
+    let files =
+        media::list_files(&conn, profile.id, q.date.as_deref(), year_month.as_deref(), &profile.timezone);
     let scanning = scanning || media::scan_in_progress();
     Json(json!({
         "files": files,

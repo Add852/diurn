@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:diurn/api.dart';
+import 'package:diurn/format.dart';
 import 'package:diurn/journal.dart';
 
 Entry _entry(String date, String note) => Entry(
@@ -43,6 +44,25 @@ void main() {
         0);
     // unknown key never matches
     expect(filterEntries(entries, filters: {'mood': 'good'}).length, 0);
+  });
+
+  test('friendly date formatting', () {
+    expect(monthTitle('2026-01'), 'January 2026');
+    expect(monthTitle('2026-12'), 'December 2026');
+    expect(monthTitle('Undated'), 'Undated');
+    expect(dayLabel('2026-01-05'), '5');
+    expect(dayLabel('2026-01-15'), '15');
+    expect(dayLabel('weird'), 'weird');
+    // 2026-01-10 is a Saturday
+    expect(longDate('2026-01-10'), 'Sat, 10 Jan 2026');
+    expect(dayTitle('2026-01-10'), 'Saturday, 10 January');
+    expect(dayTitle('Undated'), 'Undated');
+    expect(timeLabel('2026-01-10 01:42'), '1:42 AM');
+    expect(timeLabel('2026-01-10 13:05'), '1:05 PM');
+    expect(timeLabel('2026-01-10 00:00'), '12:00 AM');
+    expect(timeLabel('2026-01-10 12:00'), '12:00 PM');
+    expect(timeLabel(null), '');
+    expect(timeLabel('date-only'), '');
   });
 
   test('FsEntry.fromJson parses camelCase payload', () {

@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'api.dart';
+import 'format.dart';
 import 'journal.dart';
 import 'lightbox.dart';
 import 'widgets/loading_image.dart';
@@ -157,7 +158,7 @@ class _MediaScreenState extends State<MediaScreen> {
                         children: [
                           Expanded(
                             child: Text(
-                              day,
+                              dayTitle(day),
                               style: TextStyle(
                                 fontWeight: FontWeight.w700,
                                 fontSize: 16,

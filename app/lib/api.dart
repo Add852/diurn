@@ -74,12 +74,17 @@ class MediaFile {
   final String name;
   final String path;
   final String? date;
+
+  /// "YYYY-MM-DD HH:MM" wall-clock capture time in the profile timezone
+  /// (null when only a date is known).
+  final String? takenAt;
   final String type; // image | video
   final bool hasThumb;
   const MediaFile({
     required this.name,
     required this.path,
     required this.date,
+    this.takenAt,
     required this.type,
     required this.hasThumb,
   });
@@ -88,6 +93,7 @@ class MediaFile {
         name: j['name'] as String,
         path: j['path'] as String,
         date: j['date'] as String?,
+        takenAt: j['takenAt'] as String?,
         type: j['type'] as String,
         hasThumb: j['hasThumb'] as bool? ?? false,
       );

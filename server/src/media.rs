@@ -50,6 +50,10 @@ pub struct MediaFile {
     pub has_thumb: bool,
     #[serde(rename = "type")]
     pub kind: String,
+    /// "YYYY-MM-DD HH:MM" wall-clock capture time in the profile tz
+    /// (None when only a date is known).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub taken_at: Option<String>,
 }
 
 /// GET /api/media rows, old ordering: newest day first, oldest capture first
@@ -59,9 +63,10 @@ pub fn list_files(
     profile_id: i64,
     date: Option<&str>,
     year_month: Option<&str>,
+    tz: &str,
 ) -> Vec<MediaFile> {
     let mut sql = String::from(
-        "SELECT path, date, thumb, type FROM media_cache WHERE profile_id = ?1",
+        "SELECT path, date, thumb, type, captured_at, mtime FROM media_cache WHERE profile_id = ?1",
     );
     if date.is_some() {
         sql.push_str(" AND date = ?2");
@@ -78,8 +83,17 @@ pub fn list_files(
         Ok(s) => s,
         Err(_) => return Vec::new(),
     };
-    let map_row = |r: &rusqlite::Row| -> rusqlite::Result<(String, Option<String>, Option<String>, String)> {
-        Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+    let map_row = |r: &rusqlite::Row| -> rusqlite::Result<
+        (String, Option<String>, Option<String>, String, i64, i64),
+    > {
+        Ok((
+            r.get(0)?,
+            r.get(1)?,
+            r.get(2)?,
+            r.get(3)?,
+            r.get(4)?,
+            r.get(5)?,
+        ))
     };
     let rows = match (date, year_month) {
         (Some(d), Some(ym)) => stmt.query_map(rusqlite::params![profile_id, d, format!("{ym}%")], map_row),
@@ -90,10 +104,11 @@ pub fn list_files(
     let mut out = Vec::new();
     if let Ok(rows) = rows {
         for r in rows.flatten() {
-            let (path, date, thumb, kind) = r;
+            let (path, date, thumb, kind, captured_at, mtime) = r;
             let p = Path::new(&path);
             out.push(MediaFile {
                 name: p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
+                taken_at: taken_at_wall(captured_at, mtime, tz),
                 path,
                 date,
                 has_thumb: thumb.is_some(),
@@ -401,6 +416,29 @@ fn resolve_date(path: &Path, mtime_ms: i64, tz: &str, offset_hours: i64) -> (Opt
     )
 }
 
+/// Display wall time for the lightbox: "YYYY-MM-DD HH:MM" in the profile tz.
+/// captured_at semantics differ per row: EXIF wall times are stored as
+/// naive-wall-as-UTC (format as UTC to recover the wall clock), while
+/// mtime-origin rows hold a real instant (format in the profile tz). A row
+/// is mtime-origin exactly when captured_at == mtime; captured_at <= 0
+/// means date-only EXIF — no meaningful time. The day offset shifts the
+/// journal day, not the clock, so it does NOT apply here.
+fn taken_at_wall(captured_ms: i64, mtime_ms: i64, tz: &str) -> Option<String> {
+    if captured_ms <= 0 {
+        return None;
+    }
+    let utc = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(captured_ms)?;
+    let naive = if captured_ms == mtime_ms {
+        match tz.parse::<chrono_tz::Tz>() {
+            Ok(t) => utc.with_timezone(&t).naive_local(),
+            Err(_) => utc.naive_utc(),
+        }
+    } else {
+        utc.naive_utc()
+    };
+    Some(naive.format("%Y-%m-%d %H:%M").to_string())
+}
+
 /// Journal day for an EXIF wall-clock timestamp: interpret it in the profile
 /// tz (UTC fallback for an unknown tz name), then local_date() applies the
 /// day offset. Unknown tz still gets the offset via the UTC fallback.
@@ -489,6 +527,28 @@ mod tests {
         let (date, captured) = resolve_date(Path::new("/nonexistent/x.jpg"), ms, "UTC", 7);
         assert_eq!(date.as_deref(), Some("2026-01-14"));
         assert_eq!(captured, ms);
+    }
+
+    #[test]
+    fn taken_at_formats_wall_time_per_origin() {
+        let ms = wall(2026, 1, 15, 1).and_utc().timestamp_millis();
+        // EXIF wall-as-UTC origin (captured != mtime): UTC format recovers 01:00
+        assert_eq!(
+            taken_at_wall(ms, ms + 5_000, "UTC").as_deref(),
+            Some("2026-01-15 01:00")
+        );
+        // mtime-origin real instant: formatted in the profile tz (UTC+2 → 03:00)
+        assert_eq!(
+            taken_at_wall(ms, ms, "Etc/GMT-2").as_deref(),
+            Some("2026-01-15 03:00")
+        );
+        // date-only EXIF: captured_at 0 → no time
+        assert_eq!(taken_at_wall(0, 5_000, "UTC"), None);
+        // unknown tz: UTC fallback
+        assert_eq!(
+            taken_at_wall(ms, ms + 5_000, "Bogus/Zone").as_deref(),
+            Some("2026-01-15 01:00")
+        );
     }
 }
 
