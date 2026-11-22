@@ -238,7 +238,12 @@ fn scan_inner(db: &crate::db::Db, profile: &Profile, folder: &Path) -> usize {
                             } else {
                                 "image"
                             };
-                            let (date, captured_at) = resolve_date(&p, mtime_ms);
+                            let (date, captured_at) = resolve_date(
+                                &p,
+                                mtime_ms,
+                                &profile.timezone,
+                                profile.day_offset_hours,
+                            );
                             let thumb = generate_thumb(profile.id, &p)
                                 .map(|t| t.to_string_lossy().into_owned());
                             let mut one = vec![(
@@ -378,22 +383,45 @@ fn walk(dir: &Path, f: &mut impl FnMut(&Path, i64)) {
     }
 }
 
-/// EXIF DateTimeOriginal -> (date, epoch ms); fallback: FS mtime local date.
-/// ponytail: profile timezone/day_offset ignored for now (default 0/UTC-ish);
-/// EXIF naive datetime treated as-is — add jiff + tz conversion when needed.
-fn resolve_date(path: &Path, mtime_ms: i64) -> (Option<String>, i64) {
-    use chrono::TimeZone;
-    if let Some((date, ms)) = exif_date(path) {
-        return (Some(date), ms);
+/// EXIF DateTimeOriginal -> (journal day, epoch ms); fallback: FS mtime.
+/// Journal day = local_date(): shift by day_offset, format in profile tz —
+/// with offset 7, a 1 AM photo lands on the prior journal day, like entries.
+/// The mtime fallback also uses the profile tz (not the server's), so a UTC
+/// NAS buckets correctly for a user in another zone.
+fn resolve_date(path: &Path, mtime_ms: i64, tz: &str, offset_hours: i64) -> (Option<String>, i64) {
+    if let Some((naive, date, ms)) = exif_datetime(path) {
+        let Some(naive) = naive else {
+            return (Some(date), ms); // date-only EXIF: no time to shift
+        };
+        return (Some(journal_day_of_wall(naive, tz, offset_hours)), ms);
     }
-    let date = chrono::Local
-        .timestamp_millis_opt(mtime_ms)
-        .single()
-        .map(|d| d.format("%Y-%m-%d").to_string());
-    (date, mtime_ms)
+    (
+        Some(crate::journal::local_date(mtime_ms, tz, offset_hours)),
+        mtime_ms,
+    )
 }
 
-fn exif_date(path: &Path) -> Option<(String, i64)> {
+/// Journal day for an EXIF wall-clock timestamp: interpret it in the profile
+/// tz (UTC fallback for an unknown tz name), then local_date() applies the
+/// day offset. Unknown tz still gets the offset via the UTC fallback.
+fn journal_day_of_wall(
+    naive: chrono::NaiveDateTime,
+    tz: &str,
+    offset_hours: i64,
+) -> String {
+    let epoch = tz
+        .parse::<chrono_tz::Tz>()
+        .ok()
+        .and_then(|t| naive.and_local_timezone(t).earliest())
+        .map(|dt| dt.timestamp_millis())
+        .unwrap_or_else(|| naive.and_utc().timestamp_millis());
+    crate::journal::local_date(epoch, tz, offset_hours)
+}
+
+/// (Some(naive wall datetime) for a full timestamp | None for date-only,
+/// date string, captured_at epoch ms — naive wall time as UTC, stable
+/// within-day ordering).
+fn exif_datetime(path: &Path) -> Option<(Option<chrono::NaiveDateTime>, String, i64)> {
     if !is_image_ext(path) {
         return None;
     }
@@ -409,25 +437,59 @@ fn exif_date(path: &Path) -> Option<(String, i64)> {
             .map(|b| String::from_utf8_lossy(b).into_owned())?,
         _ => return None,
     };
-    // "2024:01:31 18:22:33" -> "2024-01-31" + naive ms (stable within-day order)
+    // "2024:01:31 18:22:33"
     let (d, t) = raw.trim().split_once(' ')?;
     let date = d.replace(':', "-");
-    let parts: Vec<u64> = t.split(':').filter_map(|x| x.trim().parse().ok()).collect();
-    if parts.len() < 3 {
-        return Some((date, 0));
-    }
-    let midnight = chrono::NaiveDate::from_ymd_opt(
+    let day = chrono::NaiveDate::from_ymd_opt(
         date.get(0..4)?.parse().ok()?,
         date.get(5..7)?.parse().ok()?,
         date.get(8..10)?.parse().ok()?,
-    )?
-    .and_hms_opt(0, 0, 0)?
-    .and_utc()
-    .timestamp_millis();
-    Some((
-        date,
-        midnight + (parts[0] * 3_600_000 + parts[1] * 60_000 + parts[2] * 1000) as i64,
-    ))
+    )?;
+    let parts: Vec<u64> = t.split(':').filter_map(|x| x.trim().parse().ok()).collect();
+    if parts.len() < 3 {
+        return Some((None, date, 0));
+    }
+    let naive = day.and_hms_opt(
+        parts[0].try_into().ok()?,
+        parts[1].try_into().ok()?,
+        parts[2].try_into().ok()?,
+    )?;
+    let midnight = day.and_hms_opt(0, 0, 0)?.and_utc().timestamp_millis();
+    let captured_ms =
+        midnight + (parts[0] * 3_600_000 + parts[1] * 60_000 + parts[2] * 1000) as i64;
+    Some((Some(naive), date, captured_ms))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn wall(y: i32, mo: u32, d: u32, h: u32) -> chrono::NaiveDateTime {
+        chrono::NaiveDate::from_ymd_opt(y, mo, d)
+            .unwrap()
+            .and_hms_opt(h, 0, 0)
+            .unwrap()
+    }
+
+    #[test]
+    fn day_offset_buckets_early_morning_into_previous_journal_day() {
+        // 1 AM with offset 7: the journal day started 7 AM the prior day
+        assert_eq!(journal_day_of_wall(wall(2026, 1, 15, 1), "UTC", 7), "2026-01-14");
+        // 10 AM stays on its own day
+        assert_eq!(journal_day_of_wall(wall(2026, 1, 15, 10), "UTC", 7), "2026-01-15");
+        // offset 0: plain calendar day
+        assert_eq!(journal_day_of_wall(wall(2026, 1, 15, 1), "UTC", 0), "2026-01-15");
+        // unknown tz: UTC fallback, offset still applied
+        assert_eq!(journal_day_of_wall(wall(2026, 1, 15, 1), "Bogus/Zone", 7), "2026-01-14");
+    }
+
+    #[test]
+    fn mtime_fallback_uses_profile_tz_and_offset() {
+        let ms = wall(2026, 1, 15, 1).and_utc().timestamp_millis();
+        let (date, captured) = resolve_date(Path::new("/nonexistent/x.jpg"), ms, "UTC", 7);
+        assert_eq!(date.as_deref(), Some("2026-01-14"));
+        assert_eq!(captured, ms);
+    }
 }
 
 /// Old thumb layout: ~/.diurn/thumbs/<profileId>/<sha1(path)[..24]>.webp —
