@@ -63,6 +63,12 @@ void main() {
     expect(timeLabel('2026-01-10 12:00'), '12:00 PM');
     expect(timeLabel(null), '');
     expect(timeLabel('date-only'), '');
+    // capture date comes from takenAt, not the offset-bucketed journal date
+    expect(whenLabel('2026-01-10 03:41', '2026-01-09'),
+        'Sat, 10 Jan 2026, 3:41 AM');
+    // no capture time: fall back to the journal date
+    expect(whenLabel(null, '2026-01-10'), 'Sat, 10 Jan 2026');
+    expect(whenLabel(null, null), '');
   });
 
   test('FsEntry.fromJson parses camelCase payload', () {

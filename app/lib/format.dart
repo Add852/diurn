@@ -65,3 +65,17 @@ String timeLabel(String? takenAt) {
   if (h == 0) h = 12;
   return '$h:$min $ampm';
 }
+
+/// Lightbox date+time: the ACTUAL capture moment — takenAt's own date, not
+/// the journal-bucketed day — falling back to the journal date when no
+/// capture time is known. E.g. takenAt '2026-01-10 03:41' with journal date
+/// '2026-01-09' (offset 7) → 'Sat, 10 Jan 2026, 3:41 AM'.
+String whenLabel(String? takenAt, String? date) {
+  if (takenAt != null && takenAt.length >= 10) {
+    final d = longDate(takenAt.substring(0, 10));
+    final t = timeLabel(takenAt);
+    return t.isEmpty ? d : '$d, $t';
+  }
+  if (date != null) return longDate(date);
+  return '';
+}

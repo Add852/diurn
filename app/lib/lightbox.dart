@@ -93,10 +93,7 @@ class _MediaViewerScreenState extends State<MediaViewerScreen> {
   Widget build(BuildContext context) {
     final files = widget.files;
     final f = files[_index];
-    final when = [
-      if (f.date != null) longDate(f.date!),
-      if (f.takenAt != null) timeLabel(f.takenAt),
-    ].join(', ');
+    final when = whenLabel(f.takenAt, f.date);
     final caption = [
       if (when.isNotEmpty) when,
       f.name,
