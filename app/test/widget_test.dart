@@ -50,9 +50,18 @@ void main() {
     expect(monthTitle('2026-01'), 'January 2026');
     expect(monthTitle('2026-12'), 'December 2026');
     expect(monthTitle('Undated'), 'Undated');
-    expect(dayLabel('2026-01-05'), '5');
-    expect(dayLabel('2026-01-15'), '15');
-    expect(dayLabel('weird'), 'weird');
+    expect(ordinalSuffix(1), 'st');
+    expect(ordinalSuffix(2), 'nd');
+    expect(ordinalSuffix(3), 'rd');
+    expect(ordinalSuffix(4), 'th');
+    expect(ordinalSuffix(11), 'th');
+    expect(ordinalSuffix(12), 'th');
+    expect(ordinalSuffix(13), 'th');
+    expect(ordinalSuffix(21), 'st');
+    expect(ordinalSuffix(22), 'nd');
+    expect(ordinalSuffix(23), 'rd');
+    expect(ordinalSuffix(30), 'th');
+    expect(ordinalSuffix(31), 'st');
     // 2026-01-10 is a Saturday
     expect(longDate('2026-01-10'), 'Sat, 10 Jan 2026');
     expect(dayTitle('2026-01-10'), 'Saturday, 10 January');

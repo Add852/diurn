@@ -502,6 +502,20 @@ class _EntryCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final onPhoto = dayMedia.isNotEmpty;
+    final day = int.tryParse(entry.date.length >= 10
+            ? entry.date.substring(8, 10)
+            : '') ??
+        0;
+    final numeralColor = onPhoto
+        ? Colors.white.withValues(alpha: 0.32)
+        : cs.onSurface.withValues(alpha: 0.12);
+    final suffixColor = onPhoto
+        ? Colors.white.withValues(alpha: 0.55)
+        : cs.onSurface.withValues(alpha: 0.28);
+    // card width drives the numeral size (LayoutBuilder must sit above the
+    // Stack so the numeral's Positioned stays a direct Stack child)
+    return LayoutBuilder(builder: (context, card) {
+    final fs = card.maxWidth * 0.46;
     return Card(
       margin: EdgeInsets.zero,
       clipBehavior: Clip.antiAlias,
@@ -535,41 +549,70 @@ class _EntryCard extends StatelessWidget {
                     ),
                   ),
                 ),
-              ] else
-                // themed placeholder for entries without media that day
-                Icon(Icons.notes_outlined,
-                    size: 72, color: cs.onSurface.withValues(alpha: 0.12)),
+              ],
+              // Ghost day numeral: big, transparent, anchored top-right and
+              // deliberately pushed past the card edge — the card's clip
+              // crops it, showing just enough to read the day.
+              if (day > 0)
+                Positioned(
+                  top: -fs * 0.26,
+                  right: -fs * 0.14,
+                  child: Text.rich(
+                    TextSpan(
+                      children: [
+                        TextSpan(
+                          text: '$day',
+                          style: TextStyle(
+                            fontSize: fs,
+                            height: 1.1,
+                            fontWeight: FontWeight.w800,
+                            color: numeralColor,
+                            shadows: onPhoto
+                                ? const [
+                                    Shadow(
+                                        color: Color(0x44000000),
+                                        blurRadius: 12),
+                                  ]
+                                : null,
+                          ),
+                        ),
+                        TextSpan(
+                          text: ordinalSuffix(day),
+                          style: TextStyle(
+                            fontSize: fs * 0.30,
+                            fontWeight: FontWeight.w700,
+                            color: suffixColor,
+                            shadows: onPhoto
+                                ? const [
+                                    Shadow(
+                                        color: Color(0x44000000),
+                                        blurRadius: 8),
+                                  ]
+                                : null,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              if (entry.fsOnly)
+                Positioned(
+                  top: 10,
+                  left: 12,
+                  child: Icon(Icons.description_outlined,
+                      size: 16,
+                      color: onPhoto
+                          ? Colors.white70
+                          : cs.onSurface.withValues(alpha: 0.45),
+                      shadows:
+                          onPhoto ? const [_photoTextShadow] : null),
+                ),
               Padding(
                 padding: const EdgeInsets.all(14),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisAlignment: MainAxisAlignment.end,
                   children: [
-                    Row(
-                      children: [
-                        Text(dayLabel(entry.date),
-                            style: TextStyle(
-                                fontWeight: FontWeight.w700,
-                                fontSize: 15,
-                                color: onPhoto ? Colors.white : cs.onSurface,
-                                shadows: onPhoto
-                                    ? const [_photoTextShadow]
-                                    : null)),
-                        if (entry.fsOnly)
-                          Padding(
-                            padding: const EdgeInsets.only(left: 6),
-                            child: Icon(Icons.description_outlined,
-                                size: 14,
-                                color: onPhoto
-                                    ? Colors.white70
-                                    : cs.onSurface.withValues(alpha: 0.55),
-                                shadows: onPhoto
-                                    ? const [_photoTextShadow]
-                                    : null),
-                          ),
-                      ],
-                    ),
-                    const SizedBox(height: 4),
                     if (fm.isNotEmpty)
                       LayoutBuilder(builder: (context, c) => _fitChips(c))
                     else
@@ -590,6 +633,7 @@ class _EntryCard extends StatelessWidget {
         ),
       ),
     );
+    });
   }
 }
 

@@ -30,11 +30,15 @@ String monthTitle(String yearMonth) {
   return '${_months[mo - 1]} ${m.group(1)}';
 }
 
-/// "2026-01-10" → "10" (journal card dates; month/year live in the header).
-String dayLabel(String ymd) {
-  final d = _parseYmd(ymd);
-  if (d == null) return ymd;
-  return '${d.day}';
+/// English ordinal suffix: 1st, 2nd, 3rd, 4th… 11th/12th/13th, 21st, 22nd…
+String ordinalSuffix(int day) {
+  if (day % 100 >= 11 && day % 100 <= 13) return 'th';
+  return switch (day % 10) {
+    1 => 'st',
+    2 => 'nd',
+    3 => 'rd',
+    _ => 'th',
+  };
 }
 
 /// "2026-01-10" → "Sat, 10 Jan 2026" (entry screen app bar, lightbox).
