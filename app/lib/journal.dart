@@ -483,7 +483,7 @@ class _EntryCard extends StatelessWidget {
     }
 
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.end,
       children: [
         for (final row in rows)
           if (row.isNotEmpty)
@@ -491,7 +491,10 @@ class _EntryCard extends StatelessWidget {
               padding: const EdgeInsets.only(bottom: 4),
               child: SizedBox(
                 height: rowH,
-                child: Wrap(spacing: gap, children: row),
+                child: Wrap(
+                    spacing: gap,
+                    alignment: WrapAlignment.end,
+                    children: row),
               ),
             ),
       ],
@@ -550,13 +553,13 @@ class _EntryCard extends StatelessWidget {
                   ),
                 ),
               ],
-              // Ghost day numeral: big, transparent, anchored top-right and
-              // deliberately pushed past the card edge — the card's clip
-              // crops it, showing just enough to read the day.
+              // Ghost day numeral: big, transparent, anchored bottom-left
+              // and deliberately pushed past the card edge — the card's
+              // clip crops it, showing just enough to read the day.
               if (day > 0)
                 Positioned(
-                  top: -fs * 0.26,
-                  right: -fs * 0.14,
+                  bottom: -fs * 0.26,
+                  left: -fs * 0.14,
                   child: Text.rich(
                     TextSpan(
                       children: [
@@ -595,22 +598,10 @@ class _EntryCard extends StatelessWidget {
                     ),
                   ),
                 ),
-              if (entry.fsOnly)
-                Positioned(
-                  top: 10,
-                  left: 12,
-                  child: Icon(Icons.description_outlined,
-                      size: 16,
-                      color: onPhoto
-                          ? Colors.white70
-                          : cs.onSurface.withValues(alpha: 0.45),
-                      shadows:
-                          onPhoto ? const [_photoTextShadow] : null),
-                ),
               Padding(
                 padding: const EdgeInsets.all(14),
                 child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                  crossAxisAlignment: CrossAxisAlignment.end,
                   mainAxisAlignment: MainAxisAlignment.end,
                   children: [
                     if (fm.isNotEmpty)
