@@ -8,6 +8,7 @@ import 'format.dart';
 import 'journal.dart';
 import 'lightbox.dart';
 import 'widgets/loading_image.dart';
+import 'widgets/sticky_header.dart';
 
 /// Media tab: media_cache rows grouped by capture day (parity with the old
 /// media-view: newest day on top, day headers, thumbs from the scan).
@@ -163,42 +164,53 @@ class _MediaScreenState extends State<MediaScreen> {
             for (final day in groups.keys)
               SliverMainAxisGroup(
                 slivers: [
-                  SliverToBoxAdapter(
-                    child: Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              dayTitle(day),
-                              style: TextStyle(
-                                fontWeight: FontWeight.w700,
-                                fontSize: 16,
-                                color: Theme.of(context)
-                                    .colorScheme
-                                    .onSurface
-                                    .withValues(alpha: 0.7),
-                              ),
-                            ),
-                          ),
-                          if (entryByDate[day] != null)
-                            IconButton(
-                              icon: const Icon(Icons.description_outlined),
-                              tooltip: 'View entry for $day',
-                              visualDensity: VisualDensity.compact,
-                              onPressed: () =>
-                                  Navigator.of(context).push(MaterialPageRoute(
-                                builder: (_) => EntryScreen(
-                                  api: widget.api,
-                                  entry: entryByDate[day]!,
-                                  media: files
-                                      .where((f) => f.date == day)
-                                      .toList(),
-                                  onChanged: _reload,
+                  // pinned day header: sticks at the top while its day's
+                  // tiles scroll; the next day's header pushes it out
+                  SliverPersistentHeader(
+                    pinned: true,
+                    delegate: StickyHeaderDelegate(
+                      extent: 48,
+                      child: SizedBox(
+                        height: 48,
+                        child: Padding(
+                          padding:
+                              const EdgeInsets.symmetric(horizontal: 16),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  dayTitle(day),
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.w700,
+                                    fontSize: 16,
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .onSurface
+                                        .withValues(alpha: 0.7),
+                                  ),
                                 ),
-                              )),
-                            ),
-                        ],
+                              ),
+                              if (entryByDate[day] != null)
+                                IconButton(
+                                  icon:
+                                      const Icon(Icons.description_outlined),
+                                  tooltip: 'View entry for $day',
+                                  visualDensity: VisualDensity.compact,
+                                  onPressed: () => Navigator.of(context)
+                                      .push(MaterialPageRoute(
+                                    builder: (_) => EntryScreen(
+                                      api: widget.api,
+                                      entry: entryByDate[day]!,
+                                      media: files
+                                          .where((f) => f.date == day)
+                                          .toList(),
+                                      onChanged: _reload,
+                                    ),
+                                  )),
+                                ),
+                            ],
+                          ),
+                        ),
                       ),
                     ),
                   ),

@@ -8,6 +8,7 @@ import 'api.dart';
 import 'format.dart';
 import 'lightbox.dart';
 import 'widgets/loading_image.dart';
+import 'widgets/sticky_header.dart';
 
 /// Shadow for text sitting on photo backgrounds (journal cards, media tiles).
 const _photoTextShadow = Shadow(
@@ -111,6 +112,9 @@ class _JournalScreenState extends State<JournalScreen> {
   }
 
   int get _scale => widget.gridScale?.value ?? 100;
+
+  /// pinned search header height: field row + optional filter chips row
+  double get _searchExtent => _filters.isEmpty ? 62 : 110;
 
   Future<(List<Entry>, Map<String, List<MediaFile>>, bool)> _load() async {
     final entries = await widget.api.entries();
@@ -345,8 +349,18 @@ class _JournalScreenState extends State<JournalScreen> {
                   child: LinearProgressIndicator(minHeight: 3),
                 ),
               ),
-            SliverToBoxAdapter(
-                child: _searchField(context, entries.length, filtered.length)),
+            // pinned: the search bar stays at the top of the tab
+            SliverPersistentHeader(
+              pinned: true,
+              delegate: StickyHeaderDelegate(
+                extent: _searchExtent,
+                child: SizedBox(
+                  height: _searchExtent,
+                  child: _searchField(
+                      context, entries.length, filtered.length),
+                ),
+              ),
+            ),
             if (filtered.isEmpty)
               const SliverToBoxAdapter(
                 child: Padding(
@@ -357,18 +371,31 @@ class _JournalScreenState extends State<JournalScreen> {
             for (final month in groups.keys)
               SliverMainAxisGroup(
                 slivers: [
-                  SliverToBoxAdapter(
-                    child: Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-                      child: Text(
-                        monthTitle(month),
-                        style: TextStyle(
-                          fontWeight: FontWeight.w700,
-                          fontSize: 16,
-                          color: Theme.of(context)
-                              .colorScheme
-                              .onSurface
-                              .withValues(alpha: 0.7),
+                  // pinned month header: sticks under the search bar while
+                  // its month scrolls; the next month's header pushes it out
+                  SliverPersistentHeader(
+                    pinned: true,
+                    delegate: StickyHeaderDelegate(
+                      extent: 40,
+                      child: SizedBox(
+                        height: 40,
+                        child: Padding(
+                          padding:
+                              const EdgeInsets.symmetric(horizontal: 16),
+                          child: Align(
+                            alignment: Alignment.centerLeft,
+                            child: Text(
+                              monthTitle(month),
+                              style: TextStyle(
+                                fontWeight: FontWeight.w700,
+                                fontSize: 16,
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .onSurface
+                                    .withValues(alpha: 0.7),
+                              ),
+                            ),
+                          ),
                         ),
                       ),
                     ),
