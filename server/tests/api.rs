@@ -365,6 +365,71 @@ async fn media_scan_lists_and_thumbs() {
 }
 
 #[tokio::test]
+async fn media_days_and_status_endpoints() {
+    let root = tmp_root("mediadays");
+    let router = app_with_profile(&root);
+    for i in 0..3 {
+        let img = image::RgbaImage::from_pixel(80, 40, image::Rgba([10u8, 20, 30, 255]));
+        image::DynamicImage::ImageRgb8(image::DynamicImage::ImageRgba8(img).to_rgb8())
+            .save(root.join(format!("p{}.jpg", i)))
+            .unwrap();
+    }
+
+    // kick a scan and wait for the rows
+    let res = router
+        .clone()
+        .oneshot(Request::get("/api/media").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let dbfile = std::env::temp_dir()
+        .join(format!("diurn-db-{}", root.file_name().unwrap().to_string_lossy()));
+    let mut n = 0i64;
+    for _ in 0..100 {
+        let conn = rusqlite::Connection::open(&dbfile).unwrap();
+        n = conn
+            .query_row("SELECT COUNT(*) FROM media_cache", [], |r| r.get(0))
+            .unwrap_or(0);
+        if n == 3 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    assert_eq!(n, 3, "background scan did not index the images in time");
+
+    // ?days=1 → one cover per capture day (all three share an mtime here,
+    // so this is at most one row per day and never more than the full list)
+    let res = router
+        .clone()
+        .oneshot(Request::get("/api/media?days=1").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = res.into_body().collect().await.unwrap().to_bytes();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let days = v["files"].as_array().unwrap();
+    assert!(!days.is_empty());
+    assert!(days.len() <= 3);
+    for d in days {
+        assert!(d["date"].as_str().is_some());
+        assert!(d["path"].as_str().is_some());
+    }
+
+    // ?status=1 → {scanning,count} with no file list
+    let res = router
+        .clone()
+        .oneshot(Request::get("/api/media?status=1").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = res.into_body().collect().await.unwrap().to_bytes();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert!(v.get("files").is_none(), "status mode must not include files");
+    assert_eq!(v["count"].as_i64().unwrap(), 3);
+    assert!(v["scanning"].as_bool().is_some());
+}
+
+#[tokio::test]
 async fn form_create_update_delete_roundtrip() {
     let root = tmp_root("form");
     let router = app_with_profile(&root);

@@ -99,6 +99,10 @@ class _JournalScreenState extends State<JournalScreen> {
   /// picker even while a filter is active
   Map<String, Map<String, int>> _lastKeyValues = {};
 
+  /// media row count from the last cheap status poll — a change means the
+  /// scan indexed new files and the list needs refetching
+  int _lastMediaCount = -1;
+
   @override
   void initState() {
     super.initState();
@@ -117,8 +121,19 @@ class _JournalScreenState extends State<JournalScreen> {
   double get _searchExtent => _filters.isEmpty ? 62 : 110;
 
   Future<(List<Entry>, Map<String, List<MediaFile>>, bool)> _load() async {
-    final entries = await widget.api.entries();
-    final (files, _, scanning) = await widget.api.mediaFiles();
+    // entries and media covers are fetched in parallel — they were
+    // sequential, so every load paid two round trips back to back
+    final results = await Future.wait([
+      widget.api.entries(),
+      widget.api.mediaDays(),
+      widget.api.mediaStatus(),
+    ]);
+    final entries = results[0] as List<Entry>;
+    final files = results[1] as List<MediaFile>;
+    final scanning = (results[2] as (bool, int)).$1;
+    // ONE cover photo per day — the cards only use the day's first media as
+    // a background. Fetching every file made the journal tab download the
+    // whole media library (megabytes on a big library) just to draw cards.
     // every day's media list feeds the card backgrounds
     final byDate = <String, List<MediaFile>>{};
     for (final f in files) {
@@ -142,10 +157,57 @@ class _JournalScreenState extends State<JournalScreen> {
     _pollTimer?.cancel();
     if (scanning && _polls < 600) {
       _polls++;
-      _pollTimer = Timer(const Duration(seconds: 3), _reload);
+      // cheap status poll: refetching the full list (entries + media covers)
+      // every 3s re-downloaded megabytes while a scan ran
+      _pollTimer = Timer(const Duration(seconds: 3), _pollStatus);
     } else if (!scanning) {
       _polls = 0;
     }
+  }
+
+  /// Cheap poll while the server scans: ask only for the row count and
+  /// refetch the media covers when new media actually landed. The entries
+  /// themselves don't change during a media scan, so they are NOT refetched.
+  Future<void> _pollStatus() async {
+    if (!mounted) return;
+    try {
+      final (scanning, count) = await widget.api.mediaStatus();
+      if (!mounted) return;
+      if (count != _lastMediaCount) {
+        _lastMediaCount = count;
+        await _reloadCovers();
+        return;
+      }
+      if (!scanning) {
+        _polls = 0;
+        return;
+      }
+      if (_polls < 600) {
+        _polls++;
+        _pollTimer = Timer(const Duration(seconds: 3), _pollStatus);
+      }
+    } catch (_) {
+      _pollTimer = Timer(const Duration(seconds: 3), _reload);
+    }
+  }
+
+  /// Refresh only the per-day media covers (card backgrounds) — keeps the
+  /// existing entries in place.
+  Future<void> _reloadCovers() async {
+    final covers = await widget.api.mediaDays();
+    if (!mounted) return;
+    final byDate = <String, List<MediaFile>>{};
+    for (final f in covers) {
+      if (f.date != null) (byDate[f.date!] ??= []).add(f);
+    }
+    setState(() {
+      final current = _last;
+      if (current != null) {
+        _last = (current.$1, byDate, current.$3);
+        _future = Future.value(_last);
+      }
+    });
+    _poll();
   }
 
   @override

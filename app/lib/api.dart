@@ -232,17 +232,47 @@ class Api {
     return list.map(Entry.fromJson).toList();
   }
 
+  /// Just the dates that have entries — no markdown. The media tab uses this
+  /// to decide which days get an "view entry" button.
+  Future<List<String>> entryDates() async {
+    final v = await _getJson('/api/entries', {'dates': '1'});
+    return ((v as Map)['dates'] as List).cast<String>();
+  }
+
   /// GET /api/media — media cache rows (triggers an incremental scan).
   /// Returns (files, folder) so the UI can explain an empty grid.
   /// GET /api/media — cached list + whether a background scan is in flight.
-  Future<(List<MediaFile>, String, bool)> mediaFiles() async {
-    final v = await _getJson('/api/media', {});
+  ///
+  /// [refresh] forces the server to re-walk the folder now, ignoring its
+  /// scan cooldown (pull-to-refresh).
+  Future<(List<MediaFile>, String, bool)> mediaFiles({bool refresh = false}) async {
+    final v = await _getJson('/api/media', {
+      if (refresh) 'refresh': '1',
+    });
     final list = (v['files'] as List).cast<Map<String, dynamic>>();
     return (
       list.map(MediaFile.fromJson).toList(),
       v['folder'] as String? ?? '',
       v['scanning'] as bool? ?? false,
     );
+  }
+
+  /// Cheap scan status — no file list, no scan kick. Polling this while a
+  /// scan runs avoids re-downloading the whole library every few seconds.
+  Future<(bool scanning, int count)> mediaStatus() async {
+    final v = await _getJson('/api/media', {'status': '1'});
+    return (
+      v['scanning'] as bool? ?? false,
+      (v['count'] as num?)?.toInt() ?? 0,
+    );
+  }
+
+  /// One representative media file per capture day — the journal cards and
+  /// the form strip only need a cover per day, not every file.
+  Future<List<MediaFile>> mediaDays() async {
+    final v = await _getJson('/api/media', {'days': '1'});
+    final list = (v['files'] as List).cast<Map<String, dynamic>>();
+    return list.map(MediaFile.fromJson).toList();
   }
 
   /// POST /api/media/cache/clear — drop cached media rows + generated thumbs.

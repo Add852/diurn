@@ -32,14 +32,18 @@ class MediaScreen extends StatefulWidget {
 }
 
 class _MediaScreenState extends State<MediaScreen> {
-  late Future<(List<MediaFile>, String, bool, List<Entry>)> _files;
+  late Future<(List<MediaFile>, String, bool, List<String>)> _files;
   int _retries = 0;
   Timer? _pollTimer;
   int _polls = 0;
 
   /// last completed load — polls swap the future, which would otherwise
   /// flash the whole tab back to a spinner every 3s
-  (List<MediaFile>, String, bool, List<Entry>)? _lastData;
+  (List<MediaFile>, String, bool, List<String>)? _lastData;
+
+  /// row count from the last cheap status poll — a change means the scan
+  /// indexed new files and the list needs refetching
+  int _lastCount = -1;
 
   @override
   void initState() {
@@ -63,24 +67,32 @@ class _MediaScreenState extends State<MediaScreen> {
     super.dispose();
   }
 
-  Future<(List<MediaFile>, String, bool, List<Entry>)> _load() async {
-    final (files, folder, scanning) = await widget.api.mediaFiles();
-    // entries feed the per-day "view entry" button
-    final entries = await widget.api.entries();
-    return (files, folder, scanning, entries);
+  Future<(List<MediaFile>, String, bool, List<String>)> _load({bool refresh = false}) async {
+    // parallel — these were sequential, so every load paid two round trips
+    final results = await Future.wait([
+      widget.api.mediaFiles(refresh: refresh),
+      widget.api.entryDates(),
+    ]);
+    final (files, folder, scanning) = results[0] as (List<MediaFile>, String, bool);
+    // dates only feed the per-day "view entry" button — the full note is
+    // fetched on demand when the button is tapped
+    final dates = results[1] as List<String>;
+    return (files, folder, scanning, dates);
   }
 
-  Future<void> _reload() async {
+  Future<void> _reload({bool refresh = false}) async {
     setState(() {
-      _files = _load();
+      _files = _load(refresh: refresh);
     });
     final (files, folder, scanning, _) = await _files;
     if (!mounted) return;
     _pollTimer?.cancel();
     if (scanning && _polls < 600) {
-      // a scan is in flight — poll every 3s until it lands (cap ≈ 30 min)
+      // a scan is in flight — poll the cheap status endpoint and refetch
+      // the file list only when new rows actually landed
       _polls++;
-      _pollTimer = Timer(const Duration(seconds: 3), _reload);
+      _lastCount = files.length;
+      _pollTimer = Timer(const Duration(seconds: 3), _pollStatus);
     } else if (!scanning) {
       _polls = 0;
     }
@@ -93,11 +105,61 @@ class _MediaScreenState extends State<MediaScreen> {
     }
   }
 
+  /// Open the note for [day] — fetched on demand, so the media list only
+  /// carries the set of days that have an entry.
+  Future<void> _openEntry(String day) async {
+    try {
+      final entries = await widget.api.entries(date: day);
+      if (entries.isEmpty || !mounted) return;
+      await Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) => EntryScreen(
+          api: widget.api,
+          entry: entries.first,
+          media: _lastData?.$1.where((f) => f.date == day).toList() ?? const [],
+          onChanged: _reload,
+        ),
+      ));
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not open the entry: $e')),
+      );
+    }
+  }
+
+  /// Cheap poll used while the server is scanning: asks only for
+  /// {scanning,count} and refetches the (large) file list only when the
+  /// scan actually indexed new rows. Polling the full list every 3s
+  /// re-downloaded the entire library — megabytes per poll on a big library.
+  Future<void> _pollStatus() async {
+    if (!mounted) return;
+    try {
+      final (scanning, count) = await widget.api.mediaStatus();
+      if (!mounted) return;
+      if (count != _lastCount) {
+        _lastCount = count;
+        await _reload();
+        return;
+      }
+      if (!scanning) {
+        _polls = 0;
+        return;
+      }
+      if (_polls < 600) {
+        _polls++;
+        _pollTimer = Timer(const Duration(seconds: 3), _pollStatus);
+      }
+    } catch (_) {
+      // transient failure — back off and retry the full reload path
+      _pollTimer = Timer(const Duration(seconds: 3), _reload);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return RefreshIndicator(
-      onRefresh: _reload,
-      child: FutureBuilder<(List<MediaFile>, String, bool, List<Entry>)>(
+      onRefresh: () async => _reload(refresh: true),
+      child: FutureBuilder<(List<MediaFile>, String, bool, List<String>)>(
         future: _files,
         builder: (context, snap) {
           if (snap.hasError) {
@@ -111,8 +173,8 @@ class _MediaScreenState extends State<MediaScreen> {
             return const Center(child: CircularProgressIndicator());
           }
           _lastData = data;
-          final (files, folder, scanning, entries) = data;
-          final entryByDate = {for (final e in entries) e.date: e};
+          final (files, folder, scanning, entryDates) = data;
+          final entryByDate = {for (final d in entryDates) d: true};
           if (files.isEmpty) {
             final message = folder.isEmpty
                 ? 'Media library folder is not configured'
@@ -196,17 +258,9 @@ class _MediaScreenState extends State<MediaScreen> {
                                       const Icon(Icons.description_outlined),
                                   tooltip: 'View entry for $day',
                                   visualDensity: VisualDensity.compact,
-                                  onPressed: () => Navigator.of(context)
-                                      .push(MaterialPageRoute(
-                                    builder: (_) => EntryScreen(
-                                      api: widget.api,
-                                      entry: entryByDate[day]!,
-                                      media: files
-                                          .where((f) => f.date == day)
-                                          .toList(),
-                                      onChanged: _reload,
-                                    ),
-                                  )),
+                                  // fetch the note on demand — the list only
+                                  // knows which days have one
+                                  onPressed: () => _openEntry(day),
                                 ),
                             ],
                           ),

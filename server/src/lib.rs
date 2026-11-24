@@ -27,6 +27,7 @@ use axum::{
 use serde::Deserialize;
 use serde_json::json;
 use tokio_util::io::ReaderStream;
+use tower_http::compression::CompressionLayer;
 use tower_http::cors::CorsLayer;
 
 pub mod auth;
@@ -85,7 +86,13 @@ pub fn build_router(roots: Vec<PathBuf>, db: Arc<Db>) -> Router {
     // ponytail: permissive CORS is fine pre-auth for LAN dev, but it lets any
     // webpage you visit read the API (files on this box) — restrict to known
     // origins when this faces the internet.
-    public.merge(protected).layer(CorsLayer::permissive())
+    public
+        .merge(protected)
+        .layer(CorsLayer::permissive())
+        // gzip the JSON API payloads: /api/media on a 10k library is 1.6 MB
+        // raw and ~60 KB gzipped. Images/videos are already compressed and
+        // Range responses are skipped by the layer.
+        .layer(CompressionLayer::new().gzip(true))
 }
 
 /// Bearer/session gate for every protected /api route.
@@ -301,12 +308,18 @@ struct EntriesQuery {
     year: Option<String>,
     month: Option<String>,
     date: Option<String>,
+    /// "1" → dates only (no markdown) — the media tab's entry-button map.
+    dates: Option<String>,
 }
 
 async fn entries(state: State<AppState>, Query(q): Query<EntriesQuery>) -> Response {
     let Some(profile) = state.db.active_profile() else {
         return Json::<Vec<journal::Entry>>(vec![]).into_response();
     };
+    if q.dates.as_deref() == Some("1") {
+        let conn = state.db.0.lock().unwrap();
+        return Json(json!({ "dates": journal::list_entry_dates(&conn, &profile) })).into_response();
+    }
     let year_month = match (q.year.as_deref(), q.month.as_deref()) {
         (Some(y), Some(m)) => Some(format!("{y}-{:0>2}", m)),
         _ => None,
@@ -469,12 +482,36 @@ struct MediaListQuery {
     year: Option<String>,
     month: Option<String>,
     date: Option<String>,
+    /// "1" → cheap status only ({scanning,count}) — no file list, no scan
+    /// kick. The client polls this while a scan runs instead of re-downloading
+    /// the whole library every few seconds.
+    status: Option<String>,
+    /// "1" → ignore the scan cooldown and re-walk now (pull-to-refresh).
+    refresh: Option<String>,
+    /// "1" → one representative file per capture day (journal card covers)
+    /// instead of every file.
+    days: Option<String>,
 }
 
 async fn media_list(state: State<AppState>, Query(q): Query<MediaListQuery>) -> Response {
     let Some(profile) = state.db.active_profile() else {
         return Json(json!({ "files": [] })).into_response();
     };
+    if q.status.as_deref() == Some("1") {
+        let conn = state.db.0.lock().unwrap();
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM media_cache WHERE profile_id = ?1",
+                rusqlite::params![profile.id],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        return Json(json!({
+            "scanning": media::scan_in_progress(),
+            "count": count,
+        }))
+        .into_response();
+    }
     let mut scanning = false;
     if !profile.media_folder.is_empty() {
         let folder = PathBuf::from(&profile.media_folder);
@@ -484,7 +521,7 @@ async fn media_list(state: State<AppState>, Query(q): Query<MediaListQuery>) -> 
             // Background scan — never block the response (a big library would
             // hang the tab for minutes). The flag is set synchronously, so
             // this response already reports scanning=true.
-            scanning = media::request_scan(db, p, folder);
+            scanning = media::request_scan(db, p, folder, q.refresh.as_deref() == Some("1"));
         }
     }
     let year_month = match (q.year.as_deref(), q.month.as_deref()) {
@@ -492,8 +529,17 @@ async fn media_list(state: State<AppState>, Query(q): Query<MediaListQuery>) -> 
         _ => None,
     };
     let conn = state.db.0.lock().unwrap();
-    let files =
-        media::list_files(&conn, profile.id, q.date.as_deref(), year_month.as_deref(), &profile.timezone);
+    let files = if q.days.as_deref() == Some("1") {
+        media::list_days(&conn, profile.id, &profile.timezone)
+    } else {
+        media::list_files(
+            &conn,
+            profile.id,
+            q.date.as_deref(),
+            year_month.as_deref(),
+            &profile.timezone,
+        )
+    };
     let scanning = scanning || media::scan_in_progress();
     Json(json!({
         "files": files,

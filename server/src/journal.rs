@@ -103,6 +103,37 @@ pub fn list_entries(
     out
 }
 
+/// Just the dates that have entries (DB + fs-only notes) — the media tab
+/// only needs to know WHICH days have an entry to show its "view entry"
+/// button, not the full markdown of every note.
+pub fn list_entry_dates(
+    conn: &rusqlite::Connection,
+    profile: &Profile,
+) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    if let Ok(mut stmt) =
+        conn.prepare("SELECT date FROM entries WHERE profile_id = ?1 ORDER BY date DESC")
+    {
+        if let Ok(rows) = stmt.query_map(rusqlite::params![profile.id], |r| r.get::<_, String>(0)) {
+            out.extend(rows.flatten());
+        }
+    }
+    if !profile.daily_note_folder.is_empty() {
+        if let Ok(read_dir) = std::fs::read_dir(&profile.daily_note_folder) {
+            for e in read_dir.flatten() {
+                let name = e.file_name().to_string_lossy().into_owned();
+                let Some(date) = date_from_filename(&name) else { continue };
+                if !out.contains(&date) {
+                    out.push(date);
+                }
+            }
+        }
+    }
+    out.sort();
+    out.reverse();
+    out
+}
+
 fn date_from_filename(name: &str) -> Option<String> {
     let base = Path::new(name).file_name()?.to_string_lossy();
     if !base.ends_with(".md") || base.len() < 13 {

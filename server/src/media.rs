@@ -65,6 +65,63 @@ pub fn list_files(
     year_month: Option<&str>,
     tz: &str,
 ) -> Vec<MediaFile> {
+    let parsed_tz = tz.parse::<chrono_tz::Tz>().ok();
+    list_files_inner(conn, profile_id, date, year_month, parsed_tz)
+}
+
+/// One representative file per capture day — the journal cards only need a
+/// cover photo per day, not every file. Keeps the journal tab's payload at
+/// one row per day instead of one row per file.
+pub fn list_days(
+    conn: &Connection,
+    profile_id: i64,
+    tz: &str,
+) -> Vec<MediaFile> {
+    let parsed_tz = tz.parse::<chrono_tz::Tz>().ok();
+    let sql = "SELECT path, date, thumb, type, captured_at, mtime FROM (
+                 SELECT path, date, thumb, type, captured_at, mtime,
+                        ROW_NUMBER() OVER (
+                          PARTITION BY date
+                          ORDER BY COALESCE(captured_at, mtime) ASC, path ASC
+                        ) AS rn
+                 FROM media_cache
+                 WHERE profile_id = ?1 AND date IS NOT NULL
+               ) WHERE rn = 1 ORDER BY date DESC";
+    let mut stmt = match conn.prepare(sql) {
+        Ok(s) => s,
+        Err(_) => return Vec::new(),
+    };
+    let rows = stmt.query_map(rusqlite::params![profile_id], |r| {
+        Ok(MediaFile {
+            name: String::new(),
+            path: r.get(0)?,
+            date: r.get(1)?,
+            has_thumb: r.get::<_, Option<String>>(2)?.is_some(),
+            kind: r.get(3)?,
+            taken_at: taken_at_wall(r.get(4)?, r.get(5)?, parsed_tz),
+        })
+    });
+    let mut out = Vec::new();
+    if let Ok(rows) = rows {
+        for mut f in rows.flatten() {
+            let p = Path::new(&f.path);
+            f.name = p
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            out.push(f);
+        }
+    }
+    out
+}
+
+fn list_files_inner(
+    conn: &Connection,
+    profile_id: i64,
+    date: Option<&str>,
+    year_month: Option<&str>,
+    parsed_tz: Option<chrono_tz::Tz>,
+) -> Vec<MediaFile> {
     let mut sql = String::from(
         "SELECT path, date, thumb, type, captured_at, mtime FROM media_cache WHERE profile_id = ?1",
     );
@@ -108,7 +165,7 @@ pub fn list_files(
             let p = Path::new(&path);
             out.push(MediaFile {
                 name: p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
-                taken_at: taken_at_wall(captured_at, mtime, tz),
+                taken_at: taken_at_wall(captured_at, mtime, parsed_tz),
                 path,
                 date,
                 has_thumb: thumb.is_some(),
@@ -134,8 +191,11 @@ pub fn scan_in_progress() -> bool {
 }
 
 /// Finished scans younger than this skip the re-walk (network mounts: every
-/// /api/media request would otherwise stat the whole tree again).
-const SCAN_COOLDOWN: std::time::Duration = std::time::Duration::from_secs(5);
+/// /api/media request would otherwise stat the whole tree again). The scan
+/// walks the entire library, so on a big NAS this is expensive — 5s turned
+/// into a near-continuous re-walk. 60s keeps new files showing up on their
+/// own; pull-to-refresh (refresh=1) forces one immediately.
+const SCAN_COOLDOWN: std::time::Duration = std::time::Duration::from_secs(60);
 static LAST_SCAN_DONE: std::sync::Mutex<Option<std::time::Instant>> =
     std::sync::Mutex::new(None);
 
@@ -148,6 +208,7 @@ pub fn request_scan(
     db: std::sync::Arc<crate::db::Db>,
     profile: Profile,
     folder: std::path::PathBuf,
+    force: bool,
 ) -> bool {
     use std::sync::atomic::Ordering;
     if SCAN_RUNNING.swap(true, Ordering::SeqCst) {
@@ -158,11 +219,13 @@ pub fn request_scan(
         // already false again — reporting true would stick the client's
         // loading bar forever
         let last = LAST_SCAN_DONE.lock().unwrap();
-        if let Some(t) = *last {
-            if t.elapsed() < SCAN_COOLDOWN && cache_has_rows(&db, profile.id) {
-                drop(last);
-                SCAN_RUNNING.store(false, Ordering::SeqCst);
-                return false;
+        if !force {
+            if let Some(t) = *last {
+                if t.elapsed() < SCAN_COOLDOWN && cache_has_rows(&db, profile.id) {
+                    drop(last);
+                    SCAN_RUNNING.store(false, Ordering::SeqCst);
+                    return false;
+                }
             }
         }
     }
@@ -423,15 +486,22 @@ fn resolve_date(path: &Path, mtime_ms: i64, tz: &str, offset_hours: i64) -> (Opt
 /// is mtime-origin exactly when captured_at == mtime; captured_at <= 0
 /// means date-only EXIF — no meaningful time. The day offset shifts the
 /// journal day, not the clock, so it does NOT apply here.
-fn taken_at_wall(captured_ms: i64, mtime_ms: i64, tz: &str) -> Option<String> {
+///
+/// The timezone is parsed ONCE by the caller (a per-row parse cost 10k
+/// string parses on a big library).
+fn taken_at_wall(
+    captured_ms: i64,
+    mtime_ms: i64,
+    tz: Option<chrono_tz::Tz>,
+) -> Option<String> {
     if captured_ms <= 0 {
         return None;
     }
     let utc = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(captured_ms)?;
     let naive = if captured_ms == mtime_ms {
-        match tz.parse::<chrono_tz::Tz>() {
-            Ok(t) => utc.with_timezone(&t).naive_local(),
-            Err(_) => utc.naive_utc(),
+        match tz {
+            Some(t) => utc.with_timezone(&t).naive_local(),
+            None => utc.naive_utc(),
         }
     } else {
         utc.naive_utc()
@@ -532,21 +602,23 @@ mod tests {
     #[test]
     fn taken_at_formats_wall_time_per_origin() {
         let ms = wall(2026, 1, 15, 1).and_utc().timestamp_millis();
+        let utc = "UTC".parse::<chrono_tz::Tz>().ok();
+        let plus2 = "Etc/GMT-2".parse::<chrono_tz::Tz>().ok();
         // EXIF wall-as-UTC origin (captured != mtime): UTC format recovers 01:00
         assert_eq!(
-            taken_at_wall(ms, ms + 5_000, "UTC").as_deref(),
+            taken_at_wall(ms, ms + 5_000, utc).as_deref(),
             Some("2026-01-15 01:00")
         );
         // mtime-origin real instant: formatted in the profile tz (UTC+2 → 03:00)
         assert_eq!(
-            taken_at_wall(ms, ms, "Etc/GMT-2").as_deref(),
+            taken_at_wall(ms, ms, plus2).as_deref(),
             Some("2026-01-15 03:00")
         );
         // date-only EXIF: captured_at 0 → no time
-        assert_eq!(taken_at_wall(0, 5_000, "UTC"), None);
+        assert_eq!(taken_at_wall(0, 5_000, utc), None);
         // unknown tz: UTC fallback
         assert_eq!(
-            taken_at_wall(ms, ms + 5_000, "Bogus/Zone").as_deref(),
+            taken_at_wall(ms, ms + 5_000, None).as_deref(),
             Some("2026-01-15 01:00")
         );
     }

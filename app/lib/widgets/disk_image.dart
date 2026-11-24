@@ -26,7 +26,12 @@ class MediaBytesCache {
   static const maxBytes = 256 << 20;
   Directory? _dir;
   bool _pruning = false;
-  int _writes = 0;
+
+  /// running total of cached bytes. The prune walks the whole cache dir
+  /// (2 stats per file), so it used to run every 32nd write — thousands of
+  /// syscalls while scrolling. Now it only walks when the cache is actually
+  /// near the cap.
+  int _totalBytes = -1;
 
   Future<Directory?> get dir async {
     if (kIsWeb) return null;
@@ -63,10 +68,28 @@ class MediaBytesCache {
     if (d == null) return;
     try {
       await _fileFor(d, url)!.writeAsBytes(bytes, flush: true);
-      if (++_writes % 32 == 0) unawaited(_prune());
+      if (_totalBytes < 0) {
+        _totalBytes = await _dirSize(d);
+      } else {
+        _totalBytes += bytes.length;
+      }
+      if (_totalBytes > maxBytes) unawaited(_prune());
     } catch (_) {
       // cache write failures must never break rendering
     }
+  }
+
+  Future<int> _dirSize(Directory d) async {
+    var total = 0;
+    try {
+      await for (final e in d.list()) {
+        if (e is! File) continue;
+        try {
+          total += await e.length();
+        } catch (_) {}
+      }
+    } catch (_) {}
+    return total;
   }
 
   /// Delete oldest files until the dir fits in maxBytes.
@@ -87,7 +110,10 @@ class MediaBytesCache {
           total += s;
         } catch (_) {}
       }
-      if (total <= maxBytes) return;
+      if (total <= maxBytes) {
+        _totalBytes = total;
+        return;
+      }
       final oldest = files.keys.toList()
         ..sort((a, b) => files[a]!.mtime.compareTo(files[b]!.mtime));
       for (final f in oldest) {
@@ -97,6 +123,7 @@ class MediaBytesCache {
           await f.delete();
         } catch (_) {}
       }
+      _totalBytes = total;
     } catch (_) {
       // pruning is best-effort
     } finally {
@@ -104,6 +131,10 @@ class MediaBytesCache {
     }
   }
 }
+
+/// Shared HTTP client for media bytes — one keep-alive connection instead of
+/// a new TCP + TLS handshake per image.
+final http.Client _client = http.Client();
 
 /// ImageProvider that serves bytes through [MediaBytesCache].
 /// Drop-in for Image.network's provider; cacheWidth etc. still apply via
@@ -134,7 +165,10 @@ class MediaImageProvider extends ImageProvider<MediaImageProvider> {
   ) async {
     Uint8List? bytes = await MediaBytesCache.instance.read(key.url);
     if (bytes == null) {
-      final res = await http.get(Uri.parse(key.url));
+      // one shared client for every image: http.get() opens (and closes) a
+      // fresh connection per call, so a screen full of tiles paid a TCP +
+      // TLS handshake each. keep-alive reuses one.
+      final res = await _client.get(Uri.parse(key.url));
       if (res.statusCode != 200) {
         throw StateError('HTTP ${res.statusCode} for ${key.url}');
       }

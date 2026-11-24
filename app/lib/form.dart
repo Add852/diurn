@@ -77,7 +77,9 @@ class _FormScreenState extends State<FormScreen> {
 
   Future<void> _loadMedia() async {
     try {
-      final (files, _, _) = await widget.api.mediaFiles();
+      // one cover per day — the strip only shows the selected day's media,
+      // and the full library was megabytes on a big library
+      final files = await widget.api.mediaDays();
       if (!mounted) return;
       setState(() => _allMedia = files);
     } catch (_) {
