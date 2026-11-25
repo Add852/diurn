@@ -269,7 +269,13 @@ pub fn create_entry(
             |r| r.get(0),
         )
         .ok();
-    if existing.is_some() && !overwrite {
+    // External/Obsidian notes may exist only on disk, with no entries row.
+    // They must get the same overwrite confirmation as app-created entries.
+    let note_exists = !profile.daily_note_folder.is_empty()
+        && Path::new(&profile.daily_note_folder)
+            .join(format!("{date}.md"))
+            .is_file();
+    if (existing.is_some() || note_exists) && !overwrite {
         return Err(CreateError::Exists);
     }
     if let Some(id) = existing {
@@ -322,9 +328,9 @@ pub fn create_entry(
     let rendered = crate::template::render_template(&template, &vars, chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d").unwrap());
 
     let file_path = if !profile.daily_note_folder.is_empty() {
-        write_note(Path::new(&profile.daily_note_folder), date, &rendered)
-            .map(|p| p.to_string_lossy().into_owned())
-            .ok()
+        let path = write_note(Path::new(&profile.daily_note_folder), date, &rendered)
+            .map_err(|e| CreateError::Db(format!("Could not write the note file: {e}")))?;
+        Some(path.to_string_lossy().into_owned())
     } else {
         None
     };

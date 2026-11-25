@@ -430,6 +430,50 @@ async fn media_days_and_status_endpoints() {
 }
 
 #[tokio::test]
+async fn external_note_requires_overwrite_confirmation() {
+    let root = tmp_root("external-note");
+    let router = app_with_profile(&root);
+    let notes = root.join("notes");
+    std::fs::create_dir_all(&notes).unwrap();
+    let note = notes.join("2026-01-10.md");
+    std::fs::write(&note, "written outside the app").unwrap();
+
+    // fs-only note: no entries DB row, but creating must still return 409.
+    let res = router
+        .clone()
+        .oneshot(
+            Request::post("/api/entries")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({"date": "2026-01-10", "answers": {}}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::CONFLICT);
+    assert_eq!(std::fs::read_to_string(&note).unwrap(), "written outside the app");
+
+    // Explicit confirmation overwrites it and indexes the new DB row.
+    let res = router
+        .oneshot(
+            Request::post("/api/entries")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "date": "2026-01-10", "overwrite": true, "answers": {}
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_ne!(std::fs::read_to_string(&note).unwrap(), "written outside the app");
+}
+
+#[tokio::test]
 async fn form_create_update_delete_roundtrip() {
     let root = tmp_root("form");
     let router = app_with_profile(&root);

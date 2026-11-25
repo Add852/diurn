@@ -120,6 +120,7 @@ class _SettingsFormState extends State<_SettingsForm> {
   bool _saving = false;
   String? _error;
   String? _savedFlash;
+  int _tab = 0;
   Timer? _flashTimer;
 
   /// suppresses dirty-marking while server values are loaded into fields
@@ -554,16 +555,28 @@ class _SettingsFormState extends State<_SettingsForm> {
             length: 3,
             child: Column(
               children: [
-                const TabBar(
-                  tabs: [
+                TabBar(
+                  onTap: (i) => setState(() => _tab = i),
+                  tabs: const [
                     Tab(text: 'General'),
                     Tab(text: 'Notes'),
                     Tab(text: 'Admin'),
                   ],
                 ),
                 Expanded(
-                  child: TabBarView(
-                    children: [_generalTab(), _notesTab(), _adminTab()],
+                  // Only build the selected subtab. TabBarView eagerly
+                  // constructed General + Notes + Admin on entering Settings,
+                  // which was the remaining navigation-frame spike.
+                  child: AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 160),
+                    child: KeyedSubtree(
+                      key: ValueKey(_tab),
+                      child: switch (_tab) {
+                        0 => _generalTab(),
+                        1 => _notesTab(),
+                        _ => _adminTab(),
+                      },
+                    ),
                   ),
                 ),
               ],

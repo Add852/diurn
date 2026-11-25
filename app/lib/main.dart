@@ -362,9 +362,26 @@ class _HomeScreenState extends State<HomeScreen> {
     }
     return Scaffold(
       body: SafeArea(
-        child: IndexedStack(
-          index: _index,
-          children: _pagesFor(api),
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            for (final (i, page) in _pagesFor(api).indexed)
+              AnimatedOpacity(
+                opacity: i == _index ? 1 : 0,
+                duration: const Duration(milliseconds: 160),
+                curve: Curves.easeOut,
+                child: IgnorePointer(
+                  ignoring: i != _index,
+                  child: ExcludeSemantics(
+                    excluding: i != _index,
+                    child: TickerMode(
+                      enabled: i == _index,
+                      child: page,
+                    ),
+                  ),
+                ),
+              ),
+          ],
         ),
       ),
       floatingActionButton: _index == 3

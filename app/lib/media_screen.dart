@@ -178,7 +178,7 @@ class _MediaScreenState extends State<MediaScreen> {
           }
           _lastData = data;
           final (files, folder, scanning, entryDates) = data;
-          final entryByDate = {for (final d in entryDates) d: true};
+          final entryDateSet = entryDates.toSet();
           if (files.isEmpty) {
             final message = folder.isEmpty
                 ? 'Media library folder is not configured'
@@ -261,7 +261,7 @@ class _MediaScreenState extends State<MediaScreen> {
                                   ),
                                 ),
                               ),
-                              if (entryByDate[day] != null)
+                              if (entryDateSet.contains(day))
                                 IconButton(
                                   icon:
                                       const Icon(Icons.description_outlined),

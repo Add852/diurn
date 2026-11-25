@@ -263,9 +263,13 @@ class Api {
   ///
   /// [refresh] forces the server to re-walk the folder now, ignoring its
   /// scan cooldown (pull-to-refresh).
-  Future<(List<MediaFile>, String, bool)> mediaFiles({bool refresh = false}) async {
+  Future<(List<MediaFile>, String, bool)> mediaFiles({
+    bool refresh = false,
+    String? date,
+  }) async {
     final v = await _getJson('/api/media', {
       if (refresh) 'refresh': '1',
+      'date': ?date,
     });
     final list = (v['files'] as List).cast<Map<String, dynamic>>();
     return (

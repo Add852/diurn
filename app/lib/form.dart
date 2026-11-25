@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import 'api.dart';
 import 'lightbox.dart';
+import 'widgets/entry_date_picker.dart';
 
 /// Today tab: the no-AI form interface (GET /api/form + POST /api/entries).
 /// Verbatim answers -> server renders the template -> {date}.md.
@@ -39,13 +40,15 @@ class _FormScreenState extends State<FormScreen> {
 
   /// Chosen entry day (null = the server's "today" from GET /api/form).
   String? _date;
-  List<MediaFile> _allMedia = const [];
+  List<MediaFile> _dayMedia = const [];
+  String? _mediaRequest;
+  Set<String> _entryDates = const {};
 
   @override
   void initState() {
     super.initState();
     _future = _loadForm();
-    _loadMedia();
+    _loadEntryDates();
     widget.refreshSignal?.addListener(_reload);
     widget.saveTrigger?.addListener(_onSaveTrigger);
   }
@@ -58,6 +61,9 @@ class _FormScreenState extends State<FormScreen> {
     // no-op listener so an orphaned future (refresh while pending) doesn't
     // log unhandled exceptions; FutureBuilder handles the live one's error
     f.then<void>((_) {}, onError: (_) {});
+    f.then((info) {
+      if (mounted) _loadDayMedia(_date ?? info.date);
+    }, onError: (_) {});
     return f;
   }
 
@@ -72,27 +78,38 @@ class _FormScreenState extends State<FormScreen> {
     setState(() {
       _future = _loadForm();
     });
-    _loadMedia();
+    _loadEntryDates();
   }
 
-  Future<void> _loadMedia() async {
+  Future<void> _loadEntryDates() async {
     try {
-      // one cover per day — the strip only shows the selected day's media,
-      // and the full library was megabytes on a big library
-      final files = await widget.api.mediaDays();
+      // Calendar dots + the pre-save overwrite warning.
+      final dates = await widget.api.entryDates();
       if (!mounted) return;
-      setState(() => _allMedia = files);
+      setState(() => _entryDates = dates.toSet());
+    } catch (_) {
+      // the server still guards conflicts if this prefetch fails
+    }
+  }
+
+  /// Only the selected day's media — the strip needs every file for that
+  /// day, not one cover per day and not the whole library.
+  Future<void> _loadDayMedia(String date) async {
+    _mediaRequest = date;
+    try {
+      final (files, _, _) = await widget.api.mediaFiles(date: date);
+      if (!mounted || _mediaRequest != date) return;
+      setState(() => _dayMedia = files);
     } catch (_) {
       // media strip is cosmetic — the form must still work without it
     }
   }
 
   Future<void> _pickDate(String current) async {
-    final picked = await showDatePicker(
-      context: context,
+    final picked = await showEntryDatePicker(
+      context,
       initialDate: DateTime.tryParse(current) ?? DateTime.now(),
-      firstDate: DateTime(2000),
-      lastDate: DateTime.now().add(const Duration(days: 365)),
+      entryDates: _entryDates,
     );
     if (picked == null || !mounted) return;
     final date =
@@ -107,6 +124,7 @@ class _FormScreenState extends State<FormScreen> {
         c.clear();
       }
     });
+    await _loadDayMedia(date);
   }
 
   @override
@@ -119,7 +137,38 @@ class _FormScreenState extends State<FormScreen> {
     super.dispose();
   }
 
+  Future<bool?> _confirmOverwrite(String date) {
+    return showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Overwrite existing entry?'),
+        content: Text(
+          'A note for $date already exists. Saving will replace its previous '
+          'content with the answers in this form. This cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text('Overwrite'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _save(String date, {bool overwrite = false}) async {
+    // Warn BEFORE the request when the locally known entry dates include the
+    // selected day. The server still guards fs-only/external notes that this
+    // list may not know about yet.
+    if (!overwrite && _entryDates.contains(date)) {
+      if (await _confirmOverwrite(date) != true) return;
+      overwrite = true;
+    }
     setState(() {
       _saving = true;
       _error = null;
@@ -134,28 +183,14 @@ class _FormScreenState extends State<FormScreen> {
       setState(() {
         _savedDate = date;
         _saving = false;
+        _entryDates = {..._entryDates, date};
       });
     } on EntryExistsException {
       if (!mounted) return;
       setState(() => _saving = false);
-      final overwriteIt = await showDialog<bool>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('Entry exists'),
-          content: Text('A note for $date already exists. Overwrite it?'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('Overwrite'),
-            ),
-          ],
-        ),
-      );
-      if (overwriteIt == true) await _save(date, overwrite: true);
+      if (await _confirmOverwrite(date) == true) {
+        await _save(date, overwrite: true);
+      }
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -206,7 +241,7 @@ class _FormScreenState extends State<FormScreen> {
         final info = snap.data!;
         _info = info;
         final selected = _date ?? info.date;
-        final dayMedia = _allMedia.where((f) => f.date == selected).toList();
+        final dayMedia = _dayMedia;
         if (_savedDate == selected) {
           return Center(
             child: Column(
