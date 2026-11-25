@@ -45,6 +45,10 @@ class _MediaScreenState extends State<MediaScreen> {
   /// indexed new files and the list needs refetching
   int _lastCount = -1;
 
+  /// day grouping depends only on the file list, not on rebuilds
+  List<MediaFile>? _groupSource;
+  Map<String, List<int>> _groups = {};
+
   @override
   void initState() {
     super.initState();
@@ -209,11 +213,16 @@ class _MediaScreenState extends State<MediaScreen> {
               ],
             );
           }
-        // group by day, keep API order (newest day first)
-        final groups = <String, List<int>>{};
-        for (var i = 0; i < files.length; i++) {
-          (groups.putIfAbsent(files[i].date ?? 'Undated', () => [])).add(i);
+        // group by day, keep API order (newest day first) — cached across
+        // rebuilds instead of regrouping the whole library on every one
+        if (!identical(files, _groupSource)) {
+          _groupSource = files;
+          _groups = <String, List<int>>{};
+          for (var i = 0; i < files.length; i++) {
+            (_groups.putIfAbsent(files[i].date ?? 'Undated', () => [])).add(i);
+          }
         }
+        final groups = _groups;
         return CustomScrollView(
           slivers: [
             if (scanning)

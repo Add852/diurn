@@ -121,6 +121,12 @@ class _HomeScreenState extends State<HomeScreen> {
   /// Settings form has unsaved changes — ask before navigating away.
   final ValueNotifier<bool> _settingsDirty = ValueNotifier(false);
 
+  /// Tab widgets are created once per connection. Rebuilding the IndexedStack
+  /// with fresh child widgets rebuilt every offstage tab on every tap —
+  /// including all journal parsing, media grouping, and the settings form.
+  Api? _pagesApi;
+  List<Widget>? _pages;
+
   @override
   void dispose() {
     _refreshTick.dispose();
@@ -174,8 +180,14 @@ class _HomeScreenState extends State<HomeScreen> {
       if (action == 'save') _saveTrigger.value++;
     }
     if (i == _index) return;
-    if (i == 3 || _index == 3) _refreshTick.value++;
     setState(() => _index = i);
+    if (i == 3 || _index == 3) {
+      // Let the navigation/ripple frame paint BEFORE the refresh listeners
+      // synchronously setState in every tab and kick their network loads.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _refreshTick.value++;
+      });
+    }
   }
 
   @override
@@ -291,6 +303,44 @@ class _HomeScreenState extends State<HomeScreen> {
     await prefs.remove(_kPrefPass);
   }
 
+  List<Widget> _pagesFor(Api api) {
+    if (_pagesApi == api && _pages != null) return _pages!;
+    _pagesApi = api;
+    _pages = [
+      FormScreen(
+        api: api,
+        refreshSignal: _refreshTick,
+        saveTrigger: _writeTrigger,
+        onOpenSettings: () => setState(() => _index = 3),
+      ),
+      JournalScreen(
+        api: api,
+        refreshSignal: _refreshTick,
+        gridScale: _journalGridScale,
+      ),
+      MediaScreen(
+        api: api,
+        refreshSignal: _refreshTick,
+        gridScale: _gridScale,
+        onOpenSettings: () => setState(() => _index = 3),
+      ),
+      SettingsScreen(
+        api: api,
+        onChangeServer: _forget,
+        onSaved: () => _refreshTick.value++,
+        saveTrigger: _saveTrigger,
+        refreshSignal: _refreshTick,
+        onCredentialsChanged: _setCredentials,
+        onAppearanceChanged: (p) {
+          widget.onAppearance?.call(p);
+          _applyGridScale(p);
+        },
+        dirtyNotifier: _settingsDirty,
+      ),
+    ];
+    return _pages!;
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_booting) {
@@ -314,38 +364,7 @@ class _HomeScreenState extends State<HomeScreen> {
       body: SafeArea(
         child: IndexedStack(
           index: _index,
-          children: [
-            FormScreen(
-              api: api,
-              refreshSignal: _refreshTick,
-              saveTrigger: _writeTrigger,
-              onOpenSettings: () => setState(() => _index = 3),
-            ),
-            JournalScreen(
-              api: api,
-              refreshSignal: _refreshTick,
-              gridScale: _journalGridScale,
-            ),
-            MediaScreen(
-              api: api,
-              refreshSignal: _refreshTick,
-              gridScale: _gridScale,
-              onOpenSettings: () => setState(() => _index = 3),
-            ),
-            SettingsScreen(
-              api: api,
-              onChangeServer: _forget,
-              onSaved: () => _refreshTick.value++,
-              saveTrigger: _saveTrigger,
-              refreshSignal: _refreshTick,
-              onCredentialsChanged: _setCredentials,
-              onAppearanceChanged: (p) {
-                widget.onAppearance?.call(p);
-                _applyGridScale(p);
-              },
-              dirtyNotifier: _settingsDirty,
-            ),
-          ],
+          children: _pagesFor(api),
         ),
       ),
       floatingActionButton: _index == 3

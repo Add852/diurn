@@ -103,6 +103,13 @@ class _JournalScreenState extends State<JournalScreen> {
   /// scan indexed new files and the list needs refetching
   int _lastMediaCount = -1;
 
+  /// Frontmatter parsing/filtering is cached across rebuilds; previously
+  /// every frame-worthy rebuild re-parsed every note's markdown.
+  List<Entry>? _filterSource;
+  String _filterQuery = '';
+  String _filterSignature = '';
+  (List<Entry>, Map<String, Map<String, int>>)? _filterResult;
+
   @override
   void initState() {
     super.initState();
@@ -223,6 +230,14 @@ class _JournalScreenState extends State<JournalScreen> {
   /// Also returns the distinct frontmatter keys -> value counts across ALL
   /// entries, for the filter picker.
   (List<Entry>, Map<String, Map<String, int>>) _filtered(List<Entry> entries) {
+    final signature =
+        _filters.entries.map((e) => '${e.key}\u0000${e.value}').join('\u0001');
+    if (identical(entries, _filterSource) &&
+        _query == _filterQuery &&
+        signature == _filterSignature &&
+        _filterResult != null) {
+      return _filterResult!;
+    }
     final keyValues = <String, Map<String, int>>{};
     for (final e in entries) {
       final (fm, _) = parseFrontmatter(e.markdown);
@@ -231,7 +246,13 @@ class _JournalScreenState extends State<JournalScreen> {
         (keyValues[k] ??= {})[v] = (keyValues[k]?[v] ?? 0) + 1;
       }
     }
-    return (filterEntries(entries, query: _query, filters: _filters), keyValues);
+    final result =
+        (filterEntries(entries, query: _query, filters: _filters), keyValues);
+    _filterSource = entries;
+    _filterQuery = _query;
+    _filterSignature = signature;
+    _filterResult = result;
+    return result;
   }
 
   /// Bottom sheet: pick a metadata key, then a value; tapping a value

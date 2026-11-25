@@ -1,7 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+
+/// Top-level so [compute] can run it on a background isolate.
+dynamic _parseLargeJson(String text) => jsonDecode(text);
 
 /// Compile-time default, used only to prefill the connect form:
 ///   flutter run --dart-define=DIURN_URL=http://192.168.1.20:12321
@@ -144,7 +148,7 @@ class Api {
     } catch (e) {
       throw ApiException('Cannot reach server: $e');
     }
-    return _decodeBody(res.statusCode, res.body);
+    return _decodeBodyAsync(res.statusCode, res.body);
   }
 
   Future<dynamic> _send(
@@ -167,7 +171,21 @@ class Api {
       throw ApiException('Cannot reach server: $e');
     }
     final text = await res.stream.bytesToString();
-    return _decodeBody(res.statusCode, text);
+    return _decodeBodyAsync(res.statusCode, text);
+  }
+
+  /// JSON decoding is synchronous. On a big media payload it can occupy the
+  /// UI isolate for several frames right after navigation; parse large bodies
+  /// on a worker isolate instead.
+  Future<dynamic> _decodeBodyAsync(int status, String text) async {
+    if (status != 401 && text.length > 256 * 1024 && !kIsWeb) {
+      try {
+        return await compute(_parseLargeJson, text);
+      } catch (_) {
+        // fall through to the normal error-body handling
+      }
+    }
+    return _decodeBody(status, text);
   }
 
   dynamic _decodeBody(int status, String text) {
