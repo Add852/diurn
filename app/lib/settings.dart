@@ -194,10 +194,14 @@ class _SettingsFormState extends State<_SettingsForm> {
         .cast<Map<String, dynamic>>()
         .map(Map<String, dynamic>.from)
         .toList();
-    _templateCtrl.text = fresh['template_content'] as String? ?? '';
+    final template = fresh['template_content'] as String? ?? '';
+    if (_templateCtrl.text != template) _templateCtrl.text = template;
     final freshProfile = _profile;
     for (final key in _fields.keys.toList()) {
-      _fields[key]!.text = '${freshProfile[key] ?? ''}';
+      final value = '${freshProfile[key] ?? ''}';
+      // Assigning .text rebuilds the field/autocomplete and updates
+      // semantics even when the value is identical.
+      if (_fields[key]!.text != value) _fields[key]!.text = value;
     }
     _applyingFresh = false;
   }

@@ -180,10 +180,12 @@ class _HomeScreenState extends State<HomeScreen> {
       if (action == 'save') _saveTrigger.value++;
     }
     if (i == _index) return;
+    final leavingSettings = _index == 3 && i != 3;
     setState(() => _index = i);
-    if (i == 3 || _index == 3) {
-      // Let the navigation/ripple frame paint BEFORE the refresh listeners
-      // synchronously setState in every tab and kick their network loads.
+    if (leavingSettings) {
+      // Refresh only AFTER leaving Settings. Checking `_index == 3` after the
+      // setState made this condition impossible, so the expensive form
+      // rebuild used to happen on ENTERING Settings instead — the spike.
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _refreshTick.value++;
       });
